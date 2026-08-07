@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+
+HERMES_BIN=${HERMES_BIN:-hermes}
+HERMES_PROFILE=${HERMES_PROFILE:-default}
+
+case "${1:-}" in
+  --version|-v|version)
+    exec "$HERMES_BIN" --version
+    ;;
+  *)
+    # T3's Grok driver appends `agent stdio`; Hermes exposes the same ACP
+    # transport as `hermes acp`, so the adapter intentionally ignores T3's
+    # driver-specific argv and preserves the working directory and stdio.
+    exec "$HERMES_BIN" --profile "$HERMES_PROFILE" acp
+    ;;
+esac

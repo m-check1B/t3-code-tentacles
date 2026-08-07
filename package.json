@@ -1,0 +1,45 @@
+{
+  "name": "t3-hermes-bridge",
+  "version": "0.1.0",
+  "description": "Put Hermes Agent in T3 Code with a source-independent bidirectional bridge",
+  "type": "module",
+  "author": "Matej Havlin (m-check1B)",
+  "homepage": "https://github.com/m-check1B/t3-hermes-bridge#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/m-check1B/t3-hermes-bridge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/m-check1B/t3-hermes-bridge/issues"
+  },
+  "keywords": [
+    "acp",
+    "agent-client-protocol",
+    "hermes-agent",
+    "t3-code",
+    "ai-agents",
+    "orchestration"
+  ],
+  "files": [
+    "bin",
+    "docs",
+    "integrations",
+    "src",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "README.md",
+    "SECURITY.md"
+  ],
+  "bin": {
+    "t3-hermes": "./bin/t3-hermes"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "check": "node --check src/cli.mjs && node --check src/t3-client.mjs && node --check src/bridge.mjs && node --check src/service.mjs",
+    "test": "node --test"
+  },
+  "license": "MIT"
+}
