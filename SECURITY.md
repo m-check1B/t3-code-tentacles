@@ -7,9 +7,9 @@ currently supported line.
 
 ## Reporting a vulnerability
 
-Please use GitHub's private vulnerability reporting for this repository. Do not
-open a public issue containing a working exploit, bearer token, private path,
-provider configuration, or user prompt.
+Email private reports to `axis@verduona.com` with the subject
+`SECURITY: t3-hermes-bridge`. Do not open a public issue containing a working
+exploit, bearer token, private path, provider configuration, or user prompt.
 
 Include the affected version, impact, minimal reproduction, and any proposed
 mitigation. You should receive an acknowledgement within five business days.
