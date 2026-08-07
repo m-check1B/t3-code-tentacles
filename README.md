@@ -131,12 +131,20 @@ t3_bridge_skill="$HOME/.hermes/profiles/default/skills/t3-code-bridge"
 if [ -e "$t3_bridge_skill" ] || [ -L "$t3_bridge_skill" ]; then
   printf 'Refusing to replace existing path: %s\n' "$t3_bridge_skill" >&2
 else
-  ln -s "$PWD/integrations/hermes-skill" "$t3_bridge_skill"
+  install -d -m 700 "$t3_bridge_skill"
+  install -m 600 \
+    "$PWD/integrations/hermes-skill/SKILL.md" \
+    "$t3_bridge_skill/SKILL.md"
+  printf '%s\n' "$PWD" > "$t3_bridge_skill/.t3-hermes-bridge-owned"
+  chmod 600 "$t3_bridge_skill/.t3-hermes-bridge-owned"
 fi
 unset t3_bridge_skill
 ```
 
 Use the same profile name you passed to `install-provider`.
+
+The skill is copied rather than symlinked because Hermes intentionally warns
+when a skill resolves outside the active profile's trusted `skills/` directory.
 
 ## Uninstall
 
@@ -152,8 +160,11 @@ else
 fi
 
 t3_bridge_skill="$HOME/.hermes/profiles/default/skills/t3-code-bridge"
-if [ "$(readlink "$t3_bridge_skill" 2>/dev/null)" = "$PWD/integrations/hermes-skill" ]; then
-  rm -- "$t3_bridge_skill"
+if [ -f "$t3_bridge_skill/.t3-hermes-bridge-owned" ] && \
+   [ "$(cat "$t3_bridge_skill/.t3-hermes-bridge-owned")" = "$PWD" ]; then
+  rm -- "$t3_bridge_skill/SKILL.md" \
+        "$t3_bridge_skill/.t3-hermes-bridge-owned"
+  rmdir "$t3_bridge_skill"
 else
   printf 'Refusing to remove unowned path: %s\n' "$t3_bridge_skill" >&2
 fi
