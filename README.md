@@ -30,6 +30,30 @@ scenes.
 The mention bridge deliberately creates a clearly labeled linked Hermes thread.
 It does not impersonate the assistant inside another provider's existing thread.
 
+## Why T3 shows Hermes as Grok
+
+The bridge registers Hermes through T3 Code's `grok` driver because that driver
+is T3's configurable ACP-over-stdio adapter. T3 starts the configured binary
+with `agent stdio`; the bridge wrapper accepts that command and starts
+`hermes --profile <profile> acp`.
+
+This selects a transport adapter, not a model provider. Hermes can still route
+the session to Codex, Claude, Gemini, or any other model available to the active
+Hermes profile.
+
+T3's `codex` driver is not a generic route to every Codex-backed model. It
+speaks the Codex-specific `app-server` protocol and expects Codex authentication,
+model discovery, thread lifecycle, and message semantics. Hermes speaks ACP, so
+using the Codex driver would require an unnecessary Codex `app-server`
+compatibility layer.
+
+On an unmodified T3 Code release, Hermes may therefore display the Grok icon.
+That is a cosmetic limitation only: the bridge and both communication
+directions still work. A small T3 UI patch can give the exact `grok` + `Hermes`
+instance its own logo, but the patch is optional and is not part of this bridge.
+The clean upstream solution is a neutral generic-ACP provider/icon extension in
+T3 Code.
+
 ## Five-minute setup
 
 ### 1. Prerequisites
@@ -224,7 +248,8 @@ refuses to delete a provider it did not create.
 - T3 → Hermes uses the Agent Client Protocol already implemented by both tools.
 - Hermes → T3 uses T3's authenticated local orchestration API.
 - Mention routing reads T3 state and dispatches immutable correlated commands.
-- The module modifies neither upstream repository.
+- The functional bridge modifies neither upstream repository. An optional T3 UI
+  patch only corrects the displayed Hermes logo.
 
 See [the architecture](docs/architecture.md), [the security policy](SECURITY.md),
 and [the v0.1.0 demo recipe](docs/demo.md).
