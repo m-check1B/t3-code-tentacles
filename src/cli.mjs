@@ -1,9 +1,11 @@
 #!/usr/bin/env node
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { T3Client } from "./t3-client.mjs";
 import {
+  ALLOW_ALL_MENTION_POLICY,
   doctor,
   installProvider,
   originate,
@@ -16,7 +18,13 @@ import {
   DEFAULT_MODEL,
   resolveExecutable,
 } from "./config.mjs";
-import { installService, serviceStatus, uninstallService } from "./service.mjs";
+import {
+  installService,
+  restartService,
+  serviceIdentity,
+  serviceStatus,
+  uninstallService,
+} from "./service.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -30,7 +38,7 @@ function parseArgs(argv) {
       continue;
     }
     const key = argument.slice(2);
-    if (key === "once") {
+    if (key === "once" || key === "allow-all-projects") {
       options[key] = true;
       continue;
     }
@@ -55,12 +63,21 @@ Usage:
   t3-hermes doctor
   t3-hermes install-provider [--instance hermes] [--profile default] [--model MODEL]
   t3-hermes remove-provider [--instance hermes]
-  t3-hermes originate --workspace PATH --title TITLE --message TEXT
-  t3-hermes watch --once
-  t3-hermes watch [--interval 2000]
-  t3-hermes install-service [--interval 2000]
-  t3-hermes service-status
-  t3-hermes uninstall-service
+  t3-hermes originate --workspace PATH --title TITLE --message TEXT [--idempotency-key KEY]
+  t3-hermes watch --once --allow-all-projects [--profile PROFILE] [--instance INSTANCE]
+  t3-hermes watch --allow-all-projects [--interval 2000] [--state-file PATH] [--max-messages 10]
+  t3-hermes install-service --profile PROFILE --instance INSTANCE [service options]
+  t3-hermes service-status --profile PROFILE --instance INSTANCE
+  t3-hermes restart-service --profile PROFILE --instance INSTANCE
+  t3-hermes uninstall-service --profile PROFILE --instance INSTANCE
+
+Environment:
+  Service options:
+  --model MODEL --interval MS --t3-url LOOPBACK_ORIGIN --hermes-url LOOPBACK_ORIGIN
+  --token-file PATH --state-file PATH --max-messages 1..100 --allow-all-projects
+
+Service operations are namespaced by an explicit filesystem-safe profile and
+instance. They never choose a profile implicitly.
 
 Environment:
   T3_URL                    default http://127.0.0.1:3773
@@ -68,6 +85,39 @@ Environment:
   T3_HERMES_MODEL           default openai-codex:gpt-5.6-sol
   HERMES_URL                default http://127.0.0.1:8642
   HERMES_PROFILE            used by bin/t3-hermes-acp; default default`;
+}
+
+function serviceOptions(options, { requireIdentity = true } = {}) {
+  const identity = requireIdentity
+    ? serviceIdentity({ profile: required(options, "profile"), instance: required(options, "instance") })
+    : { profile: options.profile || DEFAULT_HERMES_PROFILE, instance: options.instance || DEFAULT_INSTANCE_ID };
+  return {
+    ...identity,
+    model: options.model || DEFAULT_MODEL,
+    interval: options.interval || 2000,
+    t3Url: options["t3-url"] || process.env.T3_URL,
+    hermesUrl: options["hermes-url"] || process.env.HERMES_URL,
+    tokenFile: options["token-file"] || process.env.T3_HERMES_TOKEN_FILE,
+    stateFile: options["state-file"],
+    maxMessages: options["max-messages"] || 10,
+    allowAllProjects: options["allow-all-projects"] === true,
+  };
+}
+
+function writeWatchStatus(statusFile, event) {
+  if (!statusFile) return;
+  const destination = path.resolve(statusFile);
+  const directory = path.dirname(destination);
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  fs.chmodSync(directory, 0o700);
+  const temporary = `${destination}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temporary, JSON.stringify({ ...event, at: new Date().toISOString() }) + "\n", { mode: 0o600, flag: "wx" });
+    fs.renameSync(temporary, destination);
+    fs.chmodSync(destination, 0o600);
+  } finally {
+    try { fs.unlinkSync(temporary); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
 }
 
 async function main() {
@@ -80,17 +130,19 @@ async function main() {
   const model = options.model || DEFAULT_MODEL;
 
   if (command === "install-service") {
-    const interval = Number(options.interval || 2000);
-    if (!Number.isFinite(interval) || interval < 250) throw new Error("--interval must be at least 250ms");
-    console.log(JSON.stringify(installService({ cliPath: fileURLToPath(import.meta.url), interval }), null, 2));
+    console.log(JSON.stringify(installService({ cliPath: fileURLToPath(import.meta.url), ...serviceOptions(options) }), null, 2));
     return;
   }
   if (command === "service-status") {
-    console.log(JSON.stringify(serviceStatus(), null, 2));
+    console.log(JSON.stringify(serviceStatus(serviceOptions(options)), null, 2));
+    return;
+  }
+  if (command === "restart-service") {
+    console.log(JSON.stringify(restartService(serviceOptions(options)), null, 2));
     return;
   }
   if (command === "uninstall-service") {
-    console.log(JSON.stringify(uninstallService(), null, 2));
+    console.log(JSON.stringify(uninstallService(serviceOptions(options)), null, 2));
     return;
   }
 
@@ -124,19 +176,54 @@ async function main() {
       instanceId,
       model,
       runtimeMode: options["runtime-mode"] || "approval-required",
+      idempotencyKey: options["idempotency-key"],
+      stateFile: options["state-file"],
     });
     console.log(JSON.stringify(result, null, 2));
     return;
   }
   if (command === "watch") {
-    const interval = Number(options.interval || 2000);
-    if (!Number.isFinite(interval) || interval < 250) throw new Error("--interval must be at least 250ms");
+    const watch = serviceOptions(options, { requireIdentity: false });
+    if (!watch.allowAllProjects) {
+      throw new Error("Mention routing is deny-by-default; pass --allow-all-projects to explicitly authorise all non-Hermes T3 projects");
+    }
+    const interval = Number(watch.interval);
+    if (!Number.isFinite(interval) || interval < 250 || interval > 3_600_000) throw new Error("--interval must be between 250ms and 3600000ms");
+    let stopping = false;
+    let wake = null;
+    const stop = () => { stopping = true; wake?.(); };
+    process.once("SIGTERM", stop);
+    process.once("SIGINT", stop);
+    let consecutiveFailures = 0;
+    const wait = async (milliseconds) => {
+      await new Promise((resolve) => { wake = resolve; delay(milliseconds).then(resolve); });
+      wake = null;
+    };
     do {
-      const routed = await routeMentionsOnce(client, { instanceId, model });
-      for (const route of routed) console.log(JSON.stringify({ event: "mention.routed", ...route }));
+      try {
+        const routed = await routeMentionsOnce(client, {
+          stateFile: watch.stateFile,
+          instanceId: watch.instance,
+          model: watch.model,
+          maxMessages: Number(watch.maxMessages),
+          policy: ALLOW_ALL_MENTION_POLICY,
+        });
+        for (const route of routed) console.log(JSON.stringify({ event: "mention.routed", ...route }));
+        writeWatchStatus(options["status-file"], { event: "watch.ok", profile: watch.profile, instance: watch.instance, routed: routed.length });
+        consecutiveFailures = 0;
+      } catch (error) {
+        consecutiveFailures += 1;
+        const baseDelay = Math.min(60_000, 1_000 * (2 ** Math.min(consecutiveFailures - 1, 6)));
+        const retryDelayMs = Math.max(250, Math.floor(baseDelay * (0.8 + Math.random() * 0.4)));
+        writeWatchStatus(options["status-file"], { event: "watch.error", profile: watch.profile, instance: watch.instance, errorType: error?.name || "Error", consecutiveFailures, retryDelayMs });
+        console.error(JSON.stringify({ event: "watch.error", errorType: error?.name || "Error", consecutiveFailures, retryDelayMs }));
+        if (options.once) throw error;
+        await wait(retryDelayMs);
+        continue;
+      }
       if (options.once) break;
-      await delay(interval);
-    } while (true);
+      await wait(interval);
+    } while (!stopping);
     return;
   }
   throw new Error(`Unknown command: ${command}\n\n${usage()}`);

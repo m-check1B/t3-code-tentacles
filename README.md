@@ -106,20 +106,64 @@ A new Hermes-backed thread should appear in T3 Code.
 ### 5. Enable `@hermes`
 
 ```bash
-t3-hermes watch --once   # arms the initial watermark
-t3-hermes watch          # polls for new mentions
+t3-hermes watch --once --allow-all-projects   # arms the initial watermark
+t3-hermes watch --allow-all-projects          # polls for new mentions
 ```
 
 In any non-Hermes T3 thread, send `@hermes investigate this`. The watcher creates
 or continues one linked `[Hermes]` thread. The first pass never backfills old
 messages.
 
-On macOS, keep the watcher running as a per-user service:
+On macOS, keep the watcher running as a per-user service. Service operations
+require both a filesystem-safe Hermes profile and a bridge instance; this avoids
+accidentally replacing a different watcher:
 
 ```bash
-t3-hermes install-service
-t3-hermes service-status
+t3-hermes install-service \
+  --profile default \
+  --instance hermes \
+  --model openai-codex:gpt-5.6-sol \
+  --interval 2000 \
+  --t3-url http://127.0.0.1:3773 \
+  --hermes-url http://127.0.0.1:8642 \
+  --token-file ~/.local/state/t3-hermes-bridge/t3.token \
+  --state-file ~/.local/state/t3-hermes-bridge/profiles/default/instances/hermes/bridge-state.json \
+  --max-messages 10 \
+  --allow-all-projects
+t3-hermes service-status --profile default --instance hermes
 ```
+
+`install-service` snapshots the bridge runtime into private Application Support
+storage before activation. The LaunchAgent uses that immutable snapshot rather
+than the mutable checkout, and contains only non-secret settings: profile,
+instance, model, polling/routing policy, loopback origins, and token/state file
+paths. It never stores a bearer value, auth header, WebSocket ticket, or routed
+prompt.
+
+Mention routing is deny-by-default. `--allow-all-projects` is the explicit local
+policy used when every non-Hermes T3 project may summon this Hermes instance.
+The library also accepts project/provider allowlists for narrower embedders.
+
+The service uses no public, unbounded stdout/stderr logs. Instead it keeps a
+private structured watcher status file and reports its freshness, state-file
+freshness, token-file metadata (without reading the bearer), launchd PID/runs/
+last-exit data when available, and runtime identity through `service-status`.
+
+```bash
+t3-hermes restart-service --profile default --instance hermes
+t3-hermes uninstall-service --profile default --instance hermes
+```
+
+Uninstall removes only the owned namespaced LaunchAgent. It deliberately
+preserves the token, routing state, private status, and immutable runtime
+snapshot for recovery and audit. Existing pre-namespaced v0.1 services are
+reported as migration information and are never deleted implicitly; install a
+new namespaced service, verify it, then remove the old owned service manually
+when you are ready. A legacy routing state is likewise preserved; pass its path
+explicitly as `--state-file` only when intentionally migrating that watcher.
+The bridge atomically upgrades replay-safe v0.1.0 state before dispatch. It
+refuses to migrate unresolved legacy pending deliveries so they can be audited
+with v0.1.0 rather than silently dropped.
 
 ## Optional Hermes skill
 
@@ -149,7 +193,7 @@ when a skill resolves outside the active profile's trusted `skills/` directory.
 ## Uninstall
 
 ```bash
-t3-hermes uninstall-service
+t3-hermes uninstall-service --profile default --instance hermes
 t3-hermes remove-provider
 
 t3_bridge_command="$HOME/.local/bin/t3-hermes"

@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { T3Client, T3HttpError } from "../src/t3-client.mjs";
 import {
+  ALLOW_ALL_MENTION_POLICY,
   hasRedactedSecrets,
   installProvider,
   isBridgeOwnedProvider,
@@ -15,10 +16,11 @@ import {
   stripMention,
   writeBridgeState,
 } from "../src/bridge.mjs";
-import { readToken, requireLoopbackUrl } from "../src/config.mjs";
+import { readToken, requireLoopbackUrl, resolveExecutable } from "../src/config.mjs";
 import {
   LAUNCH_AGENT_LABEL,
   assertBridgeOwnedLaunchAgentFile,
+  createRuntimeSnapshot,
   isBridgeOwnedLaunchAgent,
   renderLaunchAgent,
 } from "../src/service.mjs";
@@ -49,6 +51,29 @@ test("T3 origin is loopback-only and token files reject symlinks", () => {
   assert.throws(() => readToken(tokenLink), /must not be a symlink/);
 });
 
+test("token, origin, and executable validation fail closed at their boundaries", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "t3-hermes-config-test-"));
+  const tokenFile = path.join(directory, "token");
+  fs.writeFileSync(tokenFile, "a".repeat(32), { mode: 0o600 });
+
+  fs.chmodSync(tokenFile, 0o644);
+  assert.throws(() => readToken(tokenFile), /permissions are too broad/);
+  fs.chmodSync(tokenFile, 0o600);
+  fs.writeFileSync(tokenFile, "short");
+  assert.throws(() => readToken(tokenFile), /size is outside/);
+  fs.writeFileSync(tokenFile, `${"a".repeat(31)}\u0000`);
+  assert.throws(() => readToken(tokenFile), /invalid format/);
+
+  assert.throws(() => requireLoopbackUrl("ftp://127.0.0.1:3773", "T3_URL"), /http or https/);
+  assert.throws(() => requireLoopbackUrl("http://user:pass@127.0.0.1:3773", "T3_URL"), /origin URL/);
+  assert.throws(() => requireLoopbackUrl("http://localhost:3773/not-an-origin", "T3_URL"), /origin URL/);
+
+  const executable = path.join(directory, "bridge-bin");
+  fs.writeFileSync(executable, "#!/bin/sh\n", { mode: 0o700 });
+  assert.equal(resolveExecutable("bridge-bin", `${directory}${path.delimiter}/missing`), fs.realpathSync(executable));
+  assert.throws(() => resolveExecutable("missing-bin", directory), /Executable not found/);
+});
+
 test("HTTP response bodies are size-bounded", async () => {
   const client = new T3Client({
     token: "test-token",
@@ -56,6 +81,109 @@ test("HTTP response bodies are size-bounded", async () => {
     fetchImpl: async () => new Response("x".repeat(101), { status: 200 }),
   });
   await assert.rejects(client.shell(), /exceeds 100 bytes/);
+});
+
+test("WebSocket RPC failures redact server-controlled token and prompt material", async () => {
+  class FailingWebSocket {
+    constructor() {
+      this.listeners = new Map();
+      queueMicrotask(() => this.emit("open"));
+    }
+
+    addEventListener(type, listener) {
+      this.listeners.set(type, listener);
+    }
+
+    send(payload) {
+      const { id } = JSON.parse(payload);
+      queueMicrotask(() => this.emit("message", {
+        data: JSON.stringify({
+          _tag: "Exit",
+          requestId: id,
+          exit: { _tag: "Failure", token: "rpc-token-leak", prompt: "rpc-prompt-leak" },
+        }),
+      }));
+    }
+
+    close() {}
+
+    emit(type, event = {}) {
+      this.listeners.get(type)?.(event);
+    }
+  }
+
+  const client = new T3Client({
+    token: "test-token",
+    WebSocketImpl: FailingWebSocket,
+    fetchImpl: async () => new Response(JSON.stringify({ ticket: "ticket" }), { status: 200 }),
+  });
+  await assert.rejects(
+    client.rpc("server.getSettings"),
+    (error) => error.message.includes("[redacted error body]")
+      && !error.message.includes("rpc-token-leak")
+      && !error.message.includes("rpc-prompt-leak"),
+  );
+});
+
+test("WebSocket RPC ignores malformed frames, answers pings, and returns its matching success", async () => {
+  class SuccessfulWebSocket {
+    constructor() {
+      this.listeners = new Map();
+      this.sent = [];
+      queueMicrotask(() => this.emit("open"));
+    }
+
+    addEventListener(type, listener) {
+      this.listeners.set(type, listener);
+    }
+
+    send(payload) {
+      this.sent.push(JSON.parse(payload));
+      if (this.sent.length !== 1) return;
+      const { id } = this.sent[0];
+      queueMicrotask(() => this.emit("message", { data: "not-json" }));
+      queueMicrotask(() => this.emit("message", { data: JSON.stringify({ _tag: "Ping" }) }));
+      queueMicrotask(() => this.emit("message", {
+        data: JSON.stringify({ _tag: "Exit", requestId: id, exit: { _tag: "Success", value: { ready: true } } }),
+      }));
+    }
+
+    close() {}
+
+    emit(type, event = {}) {
+      this.listeners.get(type)?.(event);
+    }
+  }
+
+  const sockets = [];
+  class TrackingWebSocket extends SuccessfulWebSocket {
+    constructor(...args) {
+      super(...args);
+      sockets.push(this);
+    }
+  }
+  const client = new T3Client({
+    token: "test-token",
+    WebSocketImpl: TrackingWebSocket,
+    fetchImpl: async () => new Response(JSON.stringify({ ticket: "ticket" }), { status: 200 }),
+  });
+  assert.deepEqual(await client.rpc("server.getSettings"), { ready: true });
+  assert.deepEqual(sockets[0].sent[1], { _tag: "Pong" });
+});
+
+test("runtime snapshots are immutable, reusable, and digest-verified", () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-hermes-runtime-snapshot-"));
+  const overrides = { homeDir };
+  const first = createRuntimeSnapshot({ cliPath: path.resolve("src/cli.mjs") }, overrides);
+  assert.equal(fs.statSync(first.path).isDirectory(), true);
+  assert.equal(fs.statSync(first.cliPath).isFile(), true);
+  assert.deepEqual(createRuntimeSnapshot({ cliPath: path.resolve("src/cli.mjs") }, overrides), first);
+  fs.chmodSync(first.cliPath, 0o600);
+  fs.appendFileSync(first.cliPath, "\n// tampered in test\n");
+  assert.throws(
+    () => createRuntimeSnapshot({ cliPath: path.resolve("src/cli.mjs") }, overrides),
+    /Runtime snapshot digest mismatch/,
+  );
 });
 
 test("provider install merges existing instances and uses the ACP wrapper", async () => {
@@ -100,6 +228,19 @@ test("provider install and removal refuse an unowned instance collision", async 
     /not owned by t3-hermes-bridge/,
   );
   await assert.rejects(removeProvider(client), /not owned by t3-hermes-bridge/);
+});
+
+test("provider mutation rejects relative wrappers and makes absent removal a safe no-op", async () => {
+  assert.equal(isBridgeOwnedProvider({ driver: "other", environment: [{ name: "T3_HERMES_BRIDGE_OWNER", value: "t3-hermes-bridge/v1" }] }), false);
+  assert.equal(hasRedactedSecrets(), false);
+  await assert.rejects(
+    installProvider({ getSettings: async () => ({ providerInstances: {} }) }, { wrapperPath: "relative/acp" }),
+    /absolute ACP wrapper path/,
+  );
+  assert.deepEqual(
+    await removeProvider({ getSettings: async () => ({ providerInstances: {} }) }),
+    { removed: false },
+  );
 });
 
 test("mention stripping is case-insensitive and preserves surrounding text", () => {
@@ -151,12 +292,12 @@ test("mention watcher arms without backfilling, then routes a future mention onc
       return { sequence: commands.length };
     },
   };
-  const routed = await routeMentionsOnce(client, { stateFile });
+  const routed = await routeMentionsOnce(client, { stateFile, policy: ALLOW_ALL_MENTION_POLICY });
   assert.equal(routed.length, 1);
   assert.equal(commands.length, 2);
   assert.equal(commands[0].type, "thread.create");
   assert.equal(commands[1].type, "thread.turn.start");
-  assert.equal((await routeMentionsOnce(client, { stateFile })).length, 0);
+  assert.equal((await routeMentionsOnce(client, { stateFile, policy: ALLOW_ALL_MENTION_POLICY })).length, 0);
   assert.equal(commands.length, 2);
 });
 
@@ -164,11 +305,17 @@ test("mention watcher lock prevents concurrent duplicate scans", async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "t3-hermes-lock-test-"));
   const stateFile = path.join(directory, "state.json");
   writeBridgeState({
-    version: 1,
+    version: 2,
+    mode: "watcher",
+    owner: "t3-hermes-bridge/v1",
     startedAt: "2026-01-01T00:00:00.000Z",
     processedMessageIds: [],
     links: {},
     pending: {},
+    deadLetters: {},
+    threadRetries: {},
+    lastSeenMessageByThread: {},
+    originations: {},
   }, stateFile);
   let shellCalls = 0;
   const client = {
@@ -178,8 +325,8 @@ test("mention watcher lock prevents concurrent duplicate scans", async () => {
       return { threads: [] };
     },
   };
-  const first = routeMentionsOnce(client, { stateFile });
-  const second = routeMentionsOnce(client, { stateFile });
+  const first = routeMentionsOnce(client, { stateFile, policy: ALLOW_ALL_MENTION_POLICY });
+  const second = routeMentionsOnce(client, { stateFile, policy: ALLOW_ALL_MENTION_POLICY });
   assert.deepEqual(await second, []);
   assert.deepEqual(await first, []);
   assert.equal(shellCalls, 1);
@@ -220,11 +367,17 @@ test("pending intent reconciles an ambiguous accepted turn without replay", asyn
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "t3-hermes-reconcile-test-"));
   const stateFile = path.join(directory, "state.json");
   writeBridgeState({
-    version: 1,
+    version: 2,
+    mode: "watcher",
+    owner: "t3-hermes-bridge/v1",
     startedAt: "2026-01-01T00:00:00.000Z",
     processedMessageIds: [],
     links: {},
     pending: {},
+    deadLetters: {},
+    threadRetries: {},
+    lastSeenMessageByThread: {},
+    originations: {},
   }, stateFile);
   const threads = new Map([[
     "source",
@@ -271,9 +424,12 @@ test("pending intent reconciles an ambiguous accepted turn without replay", asyn
       return { sequence: 2 };
     },
   };
-  await assert.rejects(routeMentionsOnce(client, { stateFile }), /ambiguous response/);
+  await routeMentionsOnce(client, { stateFile, policy: ALLOW_ALL_MENTION_POLICY });
   assert.equal(Object.keys(readBridgeState(stateFile).pending).length, 1);
-  const recovered = await routeMentionsOnce(client, { stateFile });
+  const pendingState = readBridgeState(stateFile);
+  pendingState.pending["source-message"].nextAttemptAt = 0;
+  writeBridgeState(pendingState, stateFile);
+  const recovered = await routeMentionsOnce(client, { stateFile, policy: ALLOW_ALL_MENTION_POLICY });
   assert.equal(recovered.length, 1);
   assert.equal(turnDispatches, 1);
   assert.equal(Object.keys(readBridgeState(stateFile).pending).length, 0);
@@ -284,11 +440,17 @@ test("per-thread cursor bounds the fallback dedupe ledger", async () => {
   const stateFile = path.join(directory, "state.json");
   const processedMessageIds = Array.from({ length: 1_000 }, (_, index) => `message-${index}`);
   writeBridgeState({
-    version: 1,
+    version: 2,
+    mode: "watcher",
+    owner: "t3-hermes-bridge/v1",
     startedAt: "2026-01-01T00:00:00.000Z",
     processedMessageIds,
     links: {},
     pending: {},
+    deadLetters: {},
+    threadRetries: {},
+    lastSeenMessageByThread: {},
+    originations: {},
   }, stateFile);
   const source = {
     id: "source",
@@ -308,10 +470,10 @@ test("per-thread cursor bounds the fallback dedupe ledger", async () => {
       },
     }),
   };
-  await routeMentionsOnce(client, { stateFile });
+  await routeMentionsOnce(client, { stateFile, policy: ALLOW_ALL_MENTION_POLICY });
   const state = readBridgeState(stateFile);
   assert.equal(state.processedMessageIds.length, 1_000);
-  assert.equal(state.lastSeenMessageByThread.source, "historical-message");
+  assert.equal(state.lastSeenMessageByThread.source.messageId, "historical-message");
 });
 
 test("LaunchAgent contains no bearer material and escapes paths", () => {
@@ -321,7 +483,8 @@ test("LaunchAgent contains no bearer material and escapes paths", () => {
   assert.match(plist, /\/tmp\/node&amp;one/);
   assert.match(plist, /\/tmp\/cli&lt;one/);
   assert.match(plist, /<string>2500<\/string>/);
-  assert.doesNotMatch(plist, /Bearer|token/i);
+  assert.doesNotMatch(plist, /Bearer/i);
+  assert.match(plist, /T3_HERMES_TOKEN_FILE/);
 });
 
 test("LaunchAgent ownership rejects foreign files and symlinks", () => {

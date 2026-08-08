@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are applied to the latest released version. Version 0.1.0 is the
+Security fixes are applied to the latest released version. Version 0.1.1 is the
 currently supported line.
 
 ## Reporting a vulnerability
@@ -19,9 +19,23 @@ mitigation. You should receive an acknowledgement within five business days.
 This bridge is intended for one user's local machine. It accepts only loopback
 T3/Hermes origins, reads a private T3 bearer from an owner-controlled `0600`
 regular file, rejects redirects, and refuses to replace or remove a provider it
-does not own. The macOS service and documented command/skill links also fail
-closed on ownership collisions. It does not make T3 Code or Hermes remotely
-accessible.
+does not own. It does not make T3 Code or Hermes remotely accessible.
+
+The macOS service is namespaced by explicit filesystem-safe `--profile` and
+`--instance` values. It fails closed on foreign files, symlinks, ownership
+changes, oversized plists, and missing identity instead of selecting a profile
+implicitly. Installation stages and plist-lints an owned private LaunchAgent,
+uses an immutable verified runtime snapshot outside the checkout, verifies the
+new job after bootstrap, and rolls back the prior owned plist/runtime reference
+if activation fails. It never deletes a legacy service implicitly.
+
+The service persists only non-secret operational configuration. Bearer values,
+authorization headers, WebSocket tickets, and routed prompts are excluded from
+the plist, runtime manifest, service config, and structured watcher status.
+Status inspects token metadata only; it never reads or prints the token. Per-
+service directories and status/config files are private (`0700`/`0600`), and the
+watcher uses a bounded structured-status contract instead of public unbounded
+log files.
 
 Treat Hermes profiles as privileged local processes: the bridge does not reduce
 or expand the filesystem, shell, network, or tool permissions already granted to
