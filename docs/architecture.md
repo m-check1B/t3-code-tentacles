@@ -17,10 +17,32 @@ Any non-Hermes T3 thread
 t3-hermes watch ──▶ linked Hermes-backed T3 thread
 ```
 
-The module changes neither upstream. It reuses the ACP contract already
-implemented by T3 Code's Grok-compatible driver and Hermes, then uses T3 Code's
-local orchestration HTTP and WebSocket RPC surfaces for settings and reverse
-dispatch.
+The functional bridge changes neither upstream. It reuses the ACP contract
+already implemented by T3 Code's Grok-compatible driver and Hermes, then uses
+T3 Code's local orchestration HTTP and WebSocket RPC surfaces for settings and
+reverse dispatch.
+
+## Why the Grok adapter is used
+
+T3's provider driver identifies the protocol adapter, not the model Hermes will
+run. The bridge installs an instance with `driver: "grok"` because this T3
+adapter supports a configurable binary and ACP over standard input/output. T3
+invokes the bridge wrapper as `t3-hermes-acp agent stdio`; the wrapper then
+executes `hermes --profile <profile> acp`.
+
+The Codex adapter is a different protocol boundary. It launches `codex
+app-server` and implements Codex-specific authentication, model discovery,
+thread lifecycle, approvals, and events. Pointing that adapter at Hermes would
+not make Hermes compatible with it; the bridge would need to emulate the Codex
+app-server protocol on top of ACP.
+
+The Grok choice therefore provides the smallest source-independent protocol
+match. It does not select Grok models or xAI routing. Model selection remains
+inside Hermes. The visible Grok icon in stock T3 Code is a cosmetic consequence
+of reusing that driver. An optional UI-only T3 patch can brand the exact Hermes
+instance correctly without changing bridge behavior. A neutral generic-ACP
+driver and provider-icon extension in upstream T3 would remove this cosmetic
+coupling entirely.
 
 ## Correlation and loop prevention
 
