@@ -39,10 +39,14 @@ app-server protocol on top of ACP.
 The Grok choice therefore provides the smallest source-independent protocol
 match. It does not select Grok models or xAI routing. Model selection remains
 inside Hermes. The visible Grok icon in stock T3 Code is a cosmetic consequence
-of reusing that driver. An optional UI-only T3 patch can brand the exact Hermes
-instance correctly without changing bridge behavior. A neutral generic-ACP
-driver and provider-icon extension in upstream T3 would remove this cosmetic
-coupling entirely.
+of reusing that driver. An optional UI-only T3 patch can brand the bridge's
+stable `grok:hermes` driver + instance identity correctly without relying on the
+editable display name or changing bridge behavior. The patch was submitted
+upstream as [T3 Code #5732](https://github.com/pingdotgg/t3code/pull/5732), which
+closed without merging; the reviewed patch remains available in our
+[public T3 Code fork](https://github.com/m-check1B/t3code/tree/fix/hermes-provider-logo).
+A neutral generic-ACP driver and provider-icon extension in upstream T3 would
+remove this cosmetic coupling entirely.
 
 ## Correlation and loop prevention
 
