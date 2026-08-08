@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Setup and compatibility discussion
+    url: https://github.com/m-check1B/t3-hermes-bridge/discussions
+    about: Ask setup questions or share Linux, Windows, T3 Code, and Hermes compatibility results.
+  - name: Private security report
+    url: https://github.com/m-check1B/t3-hermes-bridge/blob/main/SECURITY.md
+    about: Follow the private reporting process; do not publish vulnerability details.

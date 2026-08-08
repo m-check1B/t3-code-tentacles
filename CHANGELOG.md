@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here.
 
+## Unreleased
+
+### Security and reliability
+
+- Reject invalid mention-watcher work bounds before state or network activity.
+- Bound and validate the loopback Hermes health response used by `doctor`.
+
+### Community
+
+- Add contributor conduct and support policies, structured issue and pull
+  request templates, code ownership, release-note categories, and monthly
+  dependency update configuration.
+
 ## [0.1.1] - 2026-08-07
 
 ### Security

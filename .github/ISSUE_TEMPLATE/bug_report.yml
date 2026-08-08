@@ -1,0 +1,78 @@
+name: Bug report
+description: Report a reproducible bridge, provider, watcher, or service failure.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve the bridge. Never paste bearer tokens,
+        authorization headers, private prompts, local usernames, or complete
+        state files. Report security vulnerabilities through SECURITY.md.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and Discussions.
+          required: true
+        - label: I removed secrets, private paths, prompts, and project names from this report.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
+  - type: dropdown
+    id: flow
+    attributes:
+      label: Affected flow
+      options:
+        - T3 Code to Hermes over ACP
+        - Hermes or automation to T3 Code
+        - "@hermes mention routing"
+        - Provider install or removal
+        - Background service lifecycle
+        - CLI, documentation, or packaging
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Include bridge, Node.js, T3 Code, and Hermes Agent versions.
+      placeholder: "bridge 0.1.1; Node 22.x; T3 Code 0.0.31; Hermes Agent 0.20.0"
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: Include operating system version and CPU architecture.
+      placeholder: "macOS 15 arm64, Ubuntu 24.04 x64, or Windows 11 x64"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: List exact steps and commands using safe placeholder paths and data.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and redacted diagnostics
+      description: Include the smallest relevant redacted output from `t3-hermes doctor` or `service-status`.
+    validations:
+      required: true
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Add links to a minimal public reproduction if available.

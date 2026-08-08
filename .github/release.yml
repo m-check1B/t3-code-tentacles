@@ -1,0 +1,19 @@
+changelog:
+  categories:
+    - title: Security and hardening
+      labels:
+        - security
+    - title: Features
+      labels:
+        - enhancement
+    - title: Fixes
+      labels:
+        - bug
+    - title: Documentation and maintenance
+      labels:
+        - documentation
+        - dependencies
+        - github-actions
+    - title: Other changes
+      labels:
+        - "*"

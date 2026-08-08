@@ -2,6 +2,10 @@
 
 Thanks for helping make Hermes and T3 Code work better together.
 
+By participating, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+For setup help and security-reporting boundaries, see [SUPPORT.md](SUPPORT.md)
+and [SECURITY.md](SECURITY.md).
+
 ## Good first contributions
 
 - Verify a newer T3 Code or Hermes Agent release and report the exact versions.
@@ -40,3 +44,14 @@ bridge state files into an issue.
 Keep each pull request narrow, explain its security impact, and include the exact
 verification commands run. By contributing, you agree that your contribution is
 licensed under the MIT License.
+
+Before submitting:
+
+```bash
+npm run check
+npm test
+git diff --check
+```
+
+Do not include generated renders, credentials, private prompts, local state, or
+machine-specific paths.
