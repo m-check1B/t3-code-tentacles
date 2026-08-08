@@ -1,0 +1,442 @@
+[
+  {
+    "text": "Hermes",
+    "start": 0.1,
+    "end": 0.57
+  },
+  {
+    "text": "agent",
+    "start": 0.57,
+    "end": 1.04
+  },
+  {
+    "text": "runs",
+    "start": 1.04,
+    "end": 1.42
+  },
+  {
+    "text": "inside",
+    "start": 1.42,
+    "end": 1.97
+  },
+  {
+    "text": "T3",
+    "start": 1.98,
+    "end": 2.36
+  },
+  {
+    "text": "code",
+    "start": 2.36,
+    "end": 2.75
+  },
+  {
+    "text": "now.",
+    "start": 2.75,
+    "end": 3.58
+  },
+  {
+    "text": "No",
+    "start": 3.68,
+    "end": 3.74
+  },
+  {
+    "text": "forks",
+    "start": 3.74,
+    "end": 4.15
+  },
+  {
+    "text": "and",
+    "start": 4.15,
+    "end": 4.39
+  },
+  {
+    "text": "the",
+    "start": 4.39,
+    "end": 4.63
+  },
+  {
+    "text": "proof",
+    "start": 4.63,
+    "end": 5.04
+  },
+  {
+    "text": "is",
+    "start": 5.04,
+    "end": 5.2
+  },
+  {
+    "text": "public.",
+    "start": 5.2,
+    "end": 5.96
+  },
+  {
+    "text": "One",
+    "start": 6.06,
+    "end": 6.21
+  },
+  {
+    "text": "standalone",
+    "start": 6.21,
+    "end": 7.06
+  },
+  {
+    "text": "bridge",
+    "start": 7.06,
+    "end": 7.56
+  },
+  {
+    "text": "connects",
+    "start": 7.57,
+    "end": 8.04
+  },
+  {
+    "text": "them",
+    "start": 8.04,
+    "end": 8.28
+  },
+  {
+    "text": "in",
+    "start": 8.28,
+    "end": 8.39
+  },
+  {
+    "text": "both",
+    "start": 8.44,
+    "end": 8.68
+  },
+  {
+    "text": "directions",
+    "start": 8.68,
+    "end": 9.04
+  },
+  {
+    "text": "over",
+    "start": 9.42,
+    "end": 9.64
+  },
+  {
+    "text": "the",
+    "start": 9.64,
+    "end": 9.88
+  },
+  {
+    "text": "agent",
+    "start": 9.88,
+    "end": 10.28
+  },
+  {
+    "text": "client",
+    "start": 10.28,
+    "end": 10.75
+  },
+  {
+    "text": "protocol.",
+    "start": 10.75,
+    "end": 11.64
+  },
+  {
+    "text": "T3",
+    "start": 11.74,
+    "end": 12.03
+  },
+  {
+    "text": "code",
+    "start": 12.03,
+    "end": 12.43
+  },
+  {
+    "text": "stays",
+    "start": 12.43,
+    "end": 12.93
+  },
+  {
+    "text": "the",
+    "start": 12.93,
+    "end": 13.23
+  },
+  {
+    "text": "cockpit.",
+    "start": 13.23,
+    "end": 14.24
+  },
+  {
+    "text": "Hermes",
+    "start": 14.34,
+    "end": 14.7
+  },
+  {
+    "text": "stays",
+    "start": 14.7,
+    "end": 15.08
+  },
+  {
+    "text": "the",
+    "start": 15.08,
+    "end": 15.31
+  },
+  {
+    "text": "runtime.",
+    "start": 15.31,
+    "end": 16.08
+  },
+  {
+    "text": "T3",
+    "start": 16.18,
+    "end": 16.56
+  },
+  {
+    "text": "to",
+    "start": 16.56,
+    "end": 16.8
+  },
+  {
+    "text": "Hermes.",
+    "start": 16.8,
+    "end": 17.9
+  },
+  {
+    "text": "Hermes",
+    "start": 18,
+    "end": 18.74
+  },
+  {
+    "text": "to",
+    "start": 18.74,
+    "end": 19.02
+  },
+  {
+    "text": "T3.",
+    "start": 19.02,
+    "end": 19.6
+  },
+  {
+    "text": "Or",
+    "start": 19.7,
+    "end": 19.76
+  },
+  {
+    "text": "mention",
+    "start": 19.76,
+    "end": 20.33
+  },
+  {
+    "text": "at",
+    "start": 20.33,
+    "end": 20.46
+  },
+  {
+    "text": "Hermes",
+    "start": 20.5,
+    "end": 20.97
+  },
+  {
+    "text": "in",
+    "start": 20.97,
+    "end": 21.14
+  },
+  {
+    "text": "any",
+    "start": 21.14,
+    "end": 21.38
+  },
+  {
+    "text": "thread",
+    "start": 21.38,
+    "end": 21.9
+  },
+  {
+    "text": "and",
+    "start": 22,
+    "end": 22.1
+  },
+  {
+    "text": "one",
+    "start": 22.1,
+    "end": 22.29
+  },
+  {
+    "text": "linked",
+    "start": 22.29,
+    "end": 22.7
+  },
+  {
+    "text": "conversation",
+    "start": 22.7,
+    "end": 23.5
+  },
+  {
+    "text": "keeps",
+    "start": 23.51,
+    "end": 23.84
+  },
+  {
+    "text": "going.",
+    "start": 23.84,
+    "end": 24.4
+  },
+  {
+    "text": "39",
+    "start": 24.5,
+    "end": 24.95
+  },
+  {
+    "text": "tests",
+    "start": 24.95,
+    "end": 25.41
+  },
+  {
+    "text": "passing.",
+    "start": 25.41,
+    "end": 26.34
+  },
+  {
+    "text": "Three",
+    "start": 26.44,
+    "end": 26.8
+  },
+  {
+    "text": "live",
+    "start": 26.8,
+    "end": 27.17
+  },
+  {
+    "text": "flows.",
+    "start": 27.17,
+    "end": 27.92
+  },
+  {
+    "text": "Zero",
+    "start": 28.02,
+    "end": 28.3
+  },
+  {
+    "text": "upstream",
+    "start": 28.3,
+    "end": 29.06
+  },
+  {
+    "text": "forks.",
+    "start": 29.06,
+    "end": 29.77
+  },
+  {
+    "text": "Two",
+    "start": 29.94,
+    "end": 30.09
+  },
+  {
+    "text": "independent",
+    "start": 30.09,
+    "end": 31.03
+  },
+  {
+    "text": "reviews",
+    "start": 31.03,
+    "end": 31.64
+  },
+  {
+    "text": "verified",
+    "start": 31.64,
+    "end": 32.74
+  },
+  {
+    "text": "on",
+    "start": 32.74,
+    "end": 32.92
+  },
+  {
+    "text": "Mac",
+    "start": 32.92,
+    "end": 33.49
+  },
+  {
+    "text": "OS.",
+    "start": 33.49,
+    "end": 33.72
+  },
+  {
+    "text": "A",
+    "start": 33.72,
+    "end": 33.82
+  },
+  {
+    "text": "founder's",
+    "start": 33.82,
+    "end": 34.53
+  },
+  {
+    "text": "idea",
+    "start": 34.53,
+    "end": 34.85
+  },
+  {
+    "text": "executed",
+    "start": 34.85,
+    "end": 35.52
+  },
+  {
+    "text": "by",
+    "start": 35.52,
+    "end": 35.69
+  },
+  {
+    "text": "agents",
+    "start": 35.69,
+    "end": 36.24
+  },
+  {
+    "text": "reviewed",
+    "start": 36.24,
+    "end": 36.71
+  },
+  {
+    "text": "in",
+    "start": 36.71,
+    "end": 36.84
+  },
+  {
+    "text": "the",
+    "start": 37.1,
+    "end": 37.22
+  },
+  {
+    "text": "open.",
+    "start": 37.37,
+    "end": 37.92
+  },
+  {
+    "text": "MIT",
+    "start": 38.02,
+    "end": 38.24
+  },
+  {
+    "text": "licensed,",
+    "start": 38.24,
+    "end": 39.32
+  },
+  {
+    "text": "try",
+    "start": 39.32,
+    "end": 39.68
+  },
+  {
+    "text": "it,",
+    "start": 39.68,
+    "end": 40.16
+  },
+  {
+    "text": "break",
+    "start": 40.16,
+    "end": 40.51
+  },
+  {
+    "text": "it,",
+    "start": 40.51,
+    "end": 40.78
+  },
+  {
+    "text": "contribute.",
+    "start": 40.78,
+    "end": 41.7
+  }
+]

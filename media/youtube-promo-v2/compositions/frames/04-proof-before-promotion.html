@@ -1,0 +1,477 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      container-type: size;
+    }
+
+    .clip {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+    }
+
+    .f04-ground {
+      background: #000000;
+    }
+
+    /* — top chrome / provenance tab — */
+    .f04-chrome-row {
+      position: absolute;
+      top: 2cqh;
+      left: 5.5cqw;
+      width: 89cqw;
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      color: #FFFFFF;
+      font-family: monospace;
+      font-size: 0.9cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .f04-chrome-src::before {
+      content: "";
+      display: inline-block;
+      width: 2.4cqw;
+      height: 2px;
+      margin: 0 1cqw 0.16cqh 0;
+      background: #0055FF;
+      vertical-align: middle;
+    }
+
+    .f04-chrome-num {
+      color: #727578;
+    }
+
+    .f04-chrome-rule {
+      position: absolute;
+      top: 3.7cqh;
+      left: 5.5cqw;
+      width: 89cqw;
+      height: 1px;
+      background: #262728;
+    }
+
+    /* — evidence plate — */
+    .f04-plate {
+      position: absolute;
+      top: 5cqh;
+      left: 47cqw;
+      width: 47.5cqw;
+      border: 1px solid #262728;
+      will-change: transform, opacity;
+    }
+
+    .f04-plate img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .f04-headline {
+      position: absolute;
+      top: 9cqh;
+      left: 5.5cqw;
+      width: 37cqw;
+      color: #FFFFFF;
+      font-family: sans-serif;
+      font-size: 4.25cqw;
+      font-weight: 900;
+      letter-spacing: -0.045em;
+      line-height: 0.94;
+      text-transform: lowercase;
+      will-change: transform, opacity;
+    }
+
+    /* — stat grid: four top-border columns — */
+    .f04-col {
+      position: absolute;
+      top: 41cqh;
+      width: 20.75cqw;
+      height: 30cqh;
+      border-top: 1px solid #262728;
+    }
+
+    #f04-col-1 { left: 5.5cqw; }
+    #f04-col-2 { left: 28.25cqw; }
+    #f04-col-3 { left: 51cqw; }
+    #f04-col-4 { left: 73.75cqw; }
+
+    .f04-num-wrap {
+      position: absolute;
+      top: 2cqh;
+      left: 0;
+      display: flex;
+      align-items: baseline;
+      width: 100%;
+      color: #0055FF;
+      font-family: sans-serif;
+      font-size: 5.5cqw;
+      font-weight: 900;
+      letter-spacing: -0.04em;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .f04-num {
+      display: inline-block;
+      font-variant-numeric: tabular-nums;
+      transform-origin: left bottom;
+      will-change: transform;
+    }
+
+    .f04-suffix {
+      display: inline-block;
+      will-change: transform, opacity;
+    }
+
+    .f04-label {
+      position: absolute;
+      top: 13.5cqh;
+      left: 0;
+      width: 100%;
+      color: #FFFFFF;
+      font-family: monospace;
+      font-size: 1.02cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1.3;
+      text-transform: uppercase;
+      white-space: nowrap;
+      will-change: transform, opacity;
+    }
+
+    /* — col 2: three flow bars — */
+    .f04-flowbars {
+      position: absolute;
+      top: 18cqh;
+      left: 0;
+      width: 100%;
+    }
+
+    .f04-flowbar {
+      width: 70%;
+      height: 1.5cqh;
+      margin-bottom: 1.7cqh;
+      background: #18191A;
+      overflow: hidden;
+    }
+
+    .f04-flowbar .f04-fill {
+      width: 100%;
+      height: 100%;
+      background: #FFFFFF;
+      transform-origin: left center;
+      will-change: transform;
+    }
+
+    .f04-flowbar:last-child {
+      margin-bottom: 0;
+    }
+
+    .f04-flowbar:last-child .f04-fill {
+      background: #0055FF;
+    }
+
+    /* — col 3: the empty fork track (absence is the proof) — */
+    .f04-fork-track {
+      position: absolute;
+      top: 18.5cqh;
+      left: 0;
+      width: 70%;
+      height: 1.5cqh;
+      background: #18191A;
+      border: 1px solid #262728;
+      will-change: opacity;
+    }
+
+    /* — col 4: two review ticks — */
+    .f04-ticks {
+      position: absolute;
+      top: 18cqh;
+      left: 0;
+      display: flex;
+      gap: 1.4cqw;
+    }
+
+    .f04-ticks svg {
+      width: 3.6cqw;
+      height: auto;
+      display: block;
+    }
+
+    .f04-ticks path {
+      fill: none;
+      stroke: #FFFFFF;
+      stroke-width: 7;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    /* — scene 5: green rail + stamp + receipt + honesty line — */
+    .f04-rail {
+      position: absolute;
+      top: 73.5cqh;
+      left: 5.5cqw;
+      width: 89cqw;
+      height: 2px;
+      background: #20C55A;
+      transform-origin: left center;
+      will-change: transform;
+    }
+
+    .f04-stamp {
+      position: absolute;
+      top: 75.6cqh;
+      left: 5.5cqw;
+      display: flex;
+      align-items: center;
+    }
+
+    .f04-stamp svg {
+      width: 2.6cqw;
+      height: auto;
+      display: block;
+      margin-right: 1.2cqw;
+    }
+
+    .f04-stamp svg path {
+      fill: none;
+      stroke: #20C55A;
+      stroke-width: 8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .f04-stamp-text {
+      color: #FFFFFF;
+      font-family: sans-serif;
+      font-size: 2.4cqw;
+      font-weight: 900;
+      letter-spacing: -0.02em;
+      line-height: 1;
+      text-transform: lowercase;
+      white-space: nowrap;
+      will-change: transform, opacity;
+    }
+
+    .f04-receipt {
+      position: absolute;
+      top: 76.4cqh;
+      left: 47cqw;
+      padding: 0.9cqh 0;
+      border-top: 1px solid #262728;
+      border-bottom: 1px solid #262728;
+      color: #FFFFFF;
+      font-family: monospace;
+      font-size: 1.15cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      text-transform: uppercase;
+      white-space: nowrap;
+      will-change: transform, opacity;
+    }
+
+    .f04-macos {
+      position: absolute;
+      top: 76.7cqh;
+      left: 81.2cqw;
+      width: 13.3cqw;
+      text-align: right;
+      color: #FFFFFF;
+      font-family: monospace;
+      font-size: 1.02cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      text-transform: uppercase;
+      white-space: nowrap;
+      transform-origin: right center;
+      will-change: transform, opacity;
+    }
+  </style>
+
+  <div id="root" data-composition-id="04-proof-before-promotion" data-width="1920" data-height="1080" data-duration="9.709">
+    <div id="f04-ground-clip" class="clip f04-ground" data-start="0" data-duration="9.709" data-track-index="0"></div>
+
+    <div id="f04-plate-clip" class="clip" data-start="0" data-duration="9.709" data-track-index="1">
+      <div id="f04-chrome-row" class="f04-chrome-row">
+        <span class="f04-chrome-src">Source / live public page</span>
+        <span class="f04-chrome-num">No. 04</span>
+      </div>
+      <div class="f04-chrome-rule"></div>
+      <div id="f04-headline" class="f04-headline">proof before<br />promotion.</div>
+      <div id="f04-plate" class="f04-plate">
+        <img src="assets/site/plate-proof-band.png" alt="Live proof band: 39 of 39 tests, 3 live flows, 0 upstream forks, 2 independent reviews" />
+      </div>
+    </div>
+
+    <div id="f04-grid-clip" class="clip" data-start="0" data-duration="9.709" data-track-index="2">
+      <div id="f04-col-1" class="f04-col">
+        <div class="f04-num-wrap">
+          <span class="f04-num" id="f04-num-1">0</span><span class="f04-suffix" id="f04-suf-1">/39</span>
+        </div>
+        <div class="f04-label" id="f04-label-1">Tests passing / v0.1.1</div>
+      </div>
+
+      <div id="f04-col-2" class="f04-col">
+        <div class="f04-num-wrap">
+          <span class="f04-num" id="f04-num-2">0</span>
+        </div>
+        <div class="f04-label" id="f04-label-2">Live flows</div>
+        <div class="f04-flowbars">
+          <div class="f04-flowbar"><div class="f04-fill" id="f04-fill-1"></div></div>
+          <div class="f04-flowbar"><div class="f04-fill" id="f04-fill-2"></div></div>
+          <div class="f04-flowbar"><div class="f04-fill" id="f04-fill-3"></div></div>
+        </div>
+      </div>
+
+      <div id="f04-col-3" class="f04-col">
+        <div class="f04-num-wrap">
+          <span class="f04-num" id="f04-num-3">0</span>
+        </div>
+        <div class="f04-label" id="f04-label-3">Upstream forks</div>
+        <div class="f04-fork-track" id="f04-fork-track"></div>
+      </div>
+
+      <div id="f04-col-4" class="f04-col">
+        <div class="f04-num-wrap">
+          <span class="f04-num" id="f04-num-4">0</span><span class="f04-suffix" id="f04-suf-4">×</span>
+        </div>
+        <div class="f04-label" id="f04-label-4">Independent review gates</div>
+        <div class="f04-ticks">
+          <svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg"><path id="f04-tick-1" d="M 9 25 L 19 35 L 39 13" /></svg>
+          <svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg"><path id="f04-tick-2" d="M 9 25 L 19 35 L 39 13" /></svg>
+        </div>
+      </div>
+    </div>
+
+    <div id="f04-gate-clip" class="clip" data-start="0" data-duration="9.709" data-track-index="3">
+      <div class="f04-rail" id="f04-rail"></div>
+      <div class="f04-stamp">
+        <svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg"><path id="f04-stamp-check" d="M 9 25 L 19 35 L 39 13" /></svg>
+        <span class="f04-stamp-text" id="f04-stamp-text">independently reviewed</span>
+      </div>
+      <div class="f04-receipt" id="f04-receipt"># tests 39 · # pass 39 · # fail 0</div>
+      <div class="f04-macos" id="f04-macos">Verified on macOS</div>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const DURATION = 9.259;
+      const tl = gsap.timeline({ paused: true });
+
+      const plate = document.getElementById("f04-plate");
+      const headline = document.getElementById("f04-headline");
+      const chromeRow = document.getElementById("f04-chrome-row");
+      const num1 = document.getElementById("f04-num-1");
+      const suf1 = document.getElementById("f04-suf-1");
+      const label1 = document.getElementById("f04-label-1");
+      const num2 = document.getElementById("f04-num-2");
+      const label2 = document.getElementById("f04-label-2");
+      const num3 = document.getElementById("f04-num-3");
+      const label3 = document.getElementById("f04-label-3");
+      const forkTrack = document.getElementById("f04-fork-track");
+      const num4 = document.getElementById("f04-num-4");
+      const suf4 = document.getElementById("f04-suf-4");
+      const label4 = document.getElementById("f04-label-4");
+      const rail = document.getElementById("f04-rail");
+      const stampText = document.getElementById("f04-stamp-text");
+      const receipt = document.getElementById("f04-receipt");
+      const macos = document.getElementById("f04-macos");
+
+      // svg-path-draw setup — measured lengths, never hard-coded
+      ["f04-tick-1", "f04-tick-2", "f04-stamp-check"].forEach((id) => {
+        const p = document.getElementById(id);
+        const len = p.getTotalLength();
+        p.style.strokeDasharray = `${len}`;
+        p.style.strokeDashoffset = `${len}`;
+      });
+
+      // — Scene 1 (0.0–1.5s): plate cuts in, column 1 counts 39/39 —
+      tl.fromTo(chromeRow, { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.32, ease: "power3.out" }, 0.05);
+      tl.fromTo(headline, { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.42, ease: "power3.out" }, 0.08);
+      tl.fromTo(plate, { opacity: 0, y: -26 }, { opacity: 1, y: 0, duration: 0.42, ease: "power3.out" }, 0.08);
+
+      // counting-dynamic-scale: value proxy + scale share timing/ease
+      const COUNT_EASE = "power3.out";
+      const START_SCALE = 0.5;
+      const count1 = { value: 0 };
+      tl.fromTo(num1, { scale: START_SCALE }, { scale: 1, duration: 1.0, ease: COUNT_EASE }, 0.5);
+      tl.to(count1, {
+        value: 39,
+        duration: 1.0,
+        ease: COUNT_EASE,
+        onUpdate: () => {
+          num1.textContent = Math.round(count1.value).toLocaleString();
+        },
+      }, 0.5);
+      tl.fromTo(label1, { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" }, 0.65);
+      tl.fromTo(suf1, { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.35, ease: "back.out(1.7)" }, 1.5);
+
+      // — Scene 2 (1.5–3.0s): column 2 counts 3, three flow bars fill —
+      const count2 = { value: 0 };
+      tl.fromTo(num2, { scale: START_SCALE }, { scale: 1, duration: 1.0, ease: COUNT_EASE }, 1.6);
+      tl.to(count2, {
+        value: 3,
+        duration: 1.0,
+        ease: COUNT_EASE,
+        onUpdate: () => {
+          num2.textContent = Math.round(count2.value).toLocaleString();
+        },
+      }, 1.6);
+      tl.fromTo(label2, { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" }, 1.72);
+      // stat-bars-and-fills: same start/ease/duration as the count so they land as one beat
+      tl.fromTo(["#f04-fill-1", "#f04-fill-2", "#f04-fill-3"],
+        { scaleX: 0 },
+        { scaleX: 1, duration: 1.0, ease: COUNT_EASE, stagger: 0.1 }, 1.6);
+
+      // — Scene 3 (3.0–4.4s): column 3 — 0 settles fast, fork track stays empty —
+      tl.fromTo(num3, { opacity: 0, scale: 0.55 }, { opacity: 1, scale: 1, duration: 0.45, ease: COUNT_EASE }, 3.05);
+      tl.fromTo(label3, { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" }, 3.15);
+      tl.fromTo(forkTrack, { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power2.out" }, 3.35);
+      // deliberate stillness: the empty track never fills — absence is the proof
+
+      // — Scene 4 (4.4–6.2s): column 4 — 2×, two review ticks draw —
+      const count4 = { value: 0 };
+      tl.fromTo(num4, { scale: START_SCALE }, { scale: 1, duration: 0.7, ease: COUNT_EASE }, 4.45);
+      tl.to(count4, {
+        value: 2,
+        duration: 0.7,
+        ease: COUNT_EASE,
+        onUpdate: () => {
+          num4.textContent = Math.round(count4.value).toLocaleString();
+        },
+      }, 4.45);
+      tl.fromTo(label4, { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" }, 4.55);
+      tl.fromTo(suf4, { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.3, ease: "back.out(1.7)" }, 5.15);
+      // svg-path-draw: ticks draw sequentially, second starts at ~75% of the first
+      tl.to("#f04-tick-1", { strokeDashoffset: 0, duration: 0.4, ease: "power2.out" }, 5.25);
+      tl.to("#f04-tick-2", { strokeDashoffset: 0, duration: 0.4, ease: "power2.out" }, 5.55);
+
+      // — Scene 5 (6.2–8.2s): green rail travels, stamp, receipt, honesty line —
+      tl.fromTo(rail, { scaleX: 0 }, { scaleX: 1, duration: 0.95, ease: "power2.inOut" }, 6.2);
+      tl.to("#f04-stamp-check", { strokeDashoffset: 0, duration: 0.35, ease: "power2.out" }, 7.2);
+      tl.fromTo(stampText, { opacity: 0, x: -22 }, { opacity: 1, x: 0, duration: 0.4, ease: "power3.out" }, 7.35);
+      tl.fromTo(receipt, { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.45, ease: "power2.out" }, 7.55);
+      tl.fromTo(macos, { opacity: 0, scale: 1.12 }, { opacity: 1, scale: 1, duration: 0.3, ease: "power4.out" }, 7.9);
+
+      // full grid holds still to the cut — extend timeline to the fixed frame duration
+      tl.set(rail, {}, DURATION);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["04-proof-before-promotion"] = tl;
+    })();
+  </script>
+</template>

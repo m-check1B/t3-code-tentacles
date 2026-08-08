@@ -1,0 +1,823 @@
+{
+  "total_duration_s": 41.601,
+  "width": 1920,
+  "height": 1080,
+  "groups": [
+    {
+      "id": "caption-group-0",
+      "frame": 1,
+      "start": 0.1,
+      "end": 2.13,
+      "text": "Hermes agent runs inside",
+      "words": [
+        {
+          "id": "caption-word-0-0",
+          "text": "Hermes",
+          "start": 0.1,
+          "end": 0.61
+        },
+        {
+          "id": "caption-word-0-1",
+          "text": "agent",
+          "start": 0.61,
+          "end": 1.12
+        },
+        {
+          "id": "caption-word-0-2",
+          "text": "runs",
+          "start": 1.12,
+          "end": 1.52
+        },
+        {
+          "id": "caption-word-0-3",
+          "text": "inside",
+          "start": 1.52,
+          "end": 2.13
+        }
+      ]
+    },
+    {
+      "id": "caption-group-1",
+      "frame": 1,
+      "start": 2.13,
+      "end": 3.68,
+      "text": "T3 code now.",
+      "words": [
+        {
+          "id": "caption-word-1-0",
+          "text": "T3",
+          "start": 2.13,
+          "end": 2.53
+        },
+        {
+          "id": "caption-word-1-1",
+          "text": "code",
+          "start": 2.53,
+          "end": 2.93
+        },
+        {
+          "id": "caption-word-1-2",
+          "text": "now.",
+          "start": 2.93,
+          "end": 3.58
+        }
+      ]
+    },
+    {
+      "id": "caption-group-2",
+      "frame": 1,
+      "start": 3.68,
+      "end": 4.21,
+      "text": "No forks",
+      "words": [
+        {
+          "id": "caption-word-2-0",
+          "text": "No",
+          "start": 3.68,
+          "end": 3.76
+        },
+        {
+          "id": "caption-word-2-1",
+          "text": "forks",
+          "start": 3.76,
+          "end": 4.21
+        }
+      ]
+    },
+    {
+      "id": "caption-group-3",
+      "frame": 1,
+      "start": 4.21,
+      "end": 4.75,
+      "text": "and the",
+      "words": [
+        {
+          "id": "caption-word-3-0",
+          "text": "and",
+          "start": 4.21,
+          "end": 4.43
+        },
+        {
+          "id": "caption-word-3-1",
+          "text": "the",
+          "start": 4.48,
+          "end": 4.75
+        }
+      ]
+    },
+    {
+      "id": "caption-group-4",
+      "frame": 1,
+      "start": 4.75,
+      "end": 6.042,
+      "text": "proof is public.",
+      "words": [
+        {
+          "id": "caption-word-4-0",
+          "text": "proof",
+          "start": 4.75,
+          "end": 5.2
+        },
+        {
+          "id": "caption-word-4-1",
+          "text": "is",
+          "start": 5.2,
+          "end": 5.38
+        },
+        {
+          "id": "caption-word-4-2",
+          "text": "public.",
+          "start": 5.38,
+          "end": 6.08
+        }
+      ]
+    },
+    {
+      "id": "caption-group-5",
+      "frame": 2,
+      "start": 6.042,
+      "end": 7.352,
+      "text": "One standalone bridge",
+      "words": [
+        {
+          "id": "caption-word-5-0",
+          "text": "One",
+          "start": 6.042,
+          "end": 6.172
+        },
+        {
+          "id": "caption-word-5-1",
+          "text": "standalone",
+          "start": 6.172,
+          "end": 6.902
+        },
+        {
+          "id": "caption-word-5-2",
+          "text": "bridge",
+          "start": 6.902,
+          "end": 7.352
+        }
+      ]
+    },
+    {
+      "id": "caption-group-6",
+      "frame": 2,
+      "start": 7.352,
+      "end": 8.432,
+      "text": "connects them in",
+      "words": [
+        {
+          "id": "caption-word-6-0",
+          "text": "connects",
+          "start": 7.352,
+          "end": 7.882
+        },
+        {
+          "id": "caption-word-6-1",
+          "text": "them",
+          "start": 7.962,
+          "end": 8.272
+        },
+        {
+          "id": "caption-word-6-2",
+          "text": "in",
+          "start": 8.272,
+          "end": 8.432
+        }
+      ]
+    },
+    {
+      "id": "caption-group-7",
+      "frame": 2,
+      "start": 8.432,
+      "end": 9.552,
+      "text": "both directions over",
+      "words": [
+        {
+          "id": "caption-word-7-0",
+          "text": "both",
+          "start": 8.432,
+          "end": 8.702
+        },
+        {
+          "id": "caption-word-7-1",
+          "text": "directions",
+          "start": 8.762,
+          "end": 9.332
+        },
+        {
+          "id": "caption-word-7-2",
+          "text": "over",
+          "start": 9.332,
+          "end": 9.542
+        }
+      ]
+    },
+    {
+      "id": "caption-group-8",
+      "frame": 2,
+      "start": 9.552,
+      "end": 11.782,
+      "text": "the agent-client protocol.",
+      "words": [
+        {
+          "id": "caption-word-8-0",
+          "text": "the",
+          "start": 9.552,
+          "end": 9.722
+        },
+        {
+          "id": "caption-word-8-1",
+          "text": "agent-client",
+          "start": 9.722,
+          "end": 10.422
+        },
+        {
+          "id": "caption-word-8-2",
+          "text": "protocol.",
+          "start": 10.422,
+          "end": 11.712
+        }
+      ]
+    },
+    {
+      "id": "caption-group-9",
+      "frame": 2,
+      "start": 11.782,
+      "end": 12.972,
+      "text": "T3 code stays",
+      "words": [
+        {
+          "id": "caption-word-9-0",
+          "text": "T3",
+          "start": 11.782,
+          "end": 12.092
+        },
+        {
+          "id": "caption-word-9-1",
+          "text": "code",
+          "start": 12.092,
+          "end": 12.472
+        },
+        {
+          "id": "caption-word-9-2",
+          "text": "stays",
+          "start": 12.482,
+          "end": 12.972
+        }
+      ]
+    },
+    {
+      "id": "caption-group-10",
+      "frame": 2,
+      "start": 12.972,
+      "end": 14.352,
+      "text": "the cockpit.",
+      "words": [
+        {
+          "id": "caption-word-10-0",
+          "text": "the",
+          "start": 12.972,
+          "end": 13.222
+        },
+        {
+          "id": "caption-word-10-1",
+          "text": "cockpit.",
+          "start": 13.262,
+          "end": 14.232
+        }
+      ]
+    },
+    {
+      "id": "caption-group-11",
+      "frame": 2,
+      "start": 14.362,
+      "end": 15.062,
+      "text": "Hermey stays",
+      "words": [
+        {
+          "id": "caption-word-11-0",
+          "text": "Hermey",
+          "start": 14.362,
+          "end": 14.702
+        },
+        {
+          "id": "caption-word-11-1",
+          "text": "stays",
+          "start": 14.702,
+          "end": 15.062
+        }
+      ]
+    },
+    {
+      "id": "caption-group-12",
+      "frame": 2,
+      "start": 15.062,
+      "end": 16.127,
+      "text": "the runtime.",
+      "words": [
+        {
+          "id": "caption-word-12-0",
+          "text": "the",
+          "start": 15.062,
+          "end": 15.282
+        },
+        {
+          "id": "caption-word-12-1",
+          "text": "runtime.",
+          "start": 15.282,
+          "end": 16.032
+        }
+      ]
+    },
+    {
+      "id": "caption-group-13",
+      "frame": 3,
+      "start": 16.127,
+      "end": 17.997,
+      "text": "T3 to Hermes,",
+      "words": [
+        {
+          "id": "caption-word-13-0",
+          "text": "T3",
+          "start": 16.127,
+          "end": 16.637
+        },
+        {
+          "id": "caption-word-13-1",
+          "text": "to",
+          "start": 16.637,
+          "end": 16.897
+        },
+        {
+          "id": "caption-word-13-2",
+          "text": "Hermes,",
+          "start": 16.897,
+          "end": 17.947
+        }
+      ]
+    },
+    {
+      "id": "caption-group-14",
+      "frame": 3,
+      "start": 17.997,
+      "end": 19.767,
+      "text": "Hermes to T3,",
+      "words": [
+        {
+          "id": "caption-word-14-0",
+          "text": "Hermes",
+          "start": 17.997,
+          "end": 18.767
+        },
+        {
+          "id": "caption-word-14-1",
+          "text": "to",
+          "start": 18.917,
+          "end": 19.067
+        },
+        {
+          "id": "caption-word-14-2",
+          "text": "T3,",
+          "start": 19.067,
+          "end": 19.767
+        }
+      ]
+    },
+    {
+      "id": "caption-group-15",
+      "frame": 3,
+      "start": 19.767,
+      "end": 20.337,
+      "text": "or mention",
+      "words": [
+        {
+          "id": "caption-word-15-0",
+          "text": "or",
+          "start": 19.767,
+          "end": 19.887
+        },
+        {
+          "id": "caption-word-15-1",
+          "text": "mention",
+          "start": 19.887,
+          "end": 20.337
+        }
+      ]
+    },
+    {
+      "id": "caption-group-16",
+      "frame": 3,
+      "start": 20.337,
+      "end": 21.047,
+      "text": "at Hermes",
+      "words": [
+        {
+          "id": "caption-word-16-0",
+          "text": "at",
+          "start": 20.337,
+          "end": 20.497
+        },
+        {
+          "id": "caption-word-16-1",
+          "text": "Hermes",
+          "start": 20.587,
+          "end": 21.047
+        }
+      ]
+    },
+    {
+      "id": "caption-group-17",
+      "frame": 3,
+      "start": 21.047,
+      "end": 21.437,
+      "text": "in any",
+      "words": [
+        {
+          "id": "caption-word-17-0",
+          "text": "in",
+          "start": 21.047,
+          "end": 21.107
+        },
+        {
+          "id": "caption-word-17-1",
+          "text": "any",
+          "start": 21.107,
+          "end": 21.317
+        }
+      ]
+    },
+    {
+      "id": "caption-group-18",
+      "frame": 3,
+      "start": 21.467,
+      "end": 21.867,
+      "text": "thread",
+      "words": [
+        {
+          "id": "caption-word-18-0",
+          "text": "thread",
+          "start": 21.467,
+          "end": 21.747
+        }
+      ]
+    },
+    {
+      "id": "caption-group-19",
+      "frame": 3,
+      "start": 21.957,
+      "end": 22.347,
+      "text": "and one",
+      "words": [
+        {
+          "id": "caption-word-19-0",
+          "text": "and",
+          "start": 21.957,
+          "end": 22.107
+        },
+        {
+          "id": "caption-word-19-1",
+          "text": "one",
+          "start": 22.107,
+          "end": 22.347
+        }
+      ]
+    },
+    {
+      "id": "caption-group-20",
+      "frame": 3,
+      "start": 22.347,
+      "end": 24.467,
+      "text": "linked conversation keeps going.",
+      "words": [
+        {
+          "id": "caption-word-20-0",
+          "text": "linked",
+          "start": 22.347,
+          "end": 22.587
+        },
+        {
+          "id": "caption-word-20-1",
+          "text": "conversation",
+          "start": 22.667,
+          "end": 23.507
+        },
+        {
+          "id": "caption-word-20-2",
+          "text": "keeps",
+          "start": 23.527,
+          "end": 23.927
+        },
+        {
+          "id": "caption-word-20-3",
+          "text": "going.",
+          "start": 23.927,
+          "end": 24.347
+        }
+      ]
+    },
+    {
+      "id": "caption-group-21",
+      "frame": 4,
+      "start": 24.506,
+      "end": 26.446,
+      "text": "39 tests passing,",
+      "words": [
+        {
+          "id": "caption-word-21-0",
+          "text": "39",
+          "start": 24.506,
+          "end": 25.046
+        },
+        {
+          "id": "caption-word-21-1",
+          "text": "tests",
+          "start": 25.046,
+          "end": 25.576
+        },
+        {
+          "id": "caption-word-21-2",
+          "text": "passing,",
+          "start": 25.576,
+          "end": 26.346
+        }
+      ]
+    },
+    {
+      "id": "caption-group-22",
+      "frame": 4,
+      "start": 26.446,
+      "end": 27.966,
+      "text": "3 live flows,",
+      "words": [
+        {
+          "id": "caption-word-22-0",
+          "text": "3",
+          "start": 26.446,
+          "end": 26.726
+        },
+        {
+          "id": "caption-word-22-1",
+          "text": "live",
+          "start": 26.726,
+          "end": 27.236
+        },
+        {
+          "id": "caption-word-22-2",
+          "text": "flows,",
+          "start": 27.236,
+          "end": 27.926
+        }
+      ]
+    },
+    {
+      "id": "caption-group-23",
+      "frame": 4,
+      "start": 27.966,
+      "end": 29.906,
+      "text": "0 upstream forks,",
+      "words": [
+        {
+          "id": "caption-word-23-0",
+          "text": "0",
+          "start": 27.966,
+          "end": 28.406
+        },
+        {
+          "id": "caption-word-23-1",
+          "text": "upstream",
+          "start": 28.406,
+          "end": 29.266
+        },
+        {
+          "id": "caption-word-23-2",
+          "text": "forks,",
+          "start": 29.276,
+          "end": 29.846
+        }
+      ]
+    },
+    {
+      "id": "caption-group-24",
+      "frame": 4,
+      "start": 29.906,
+      "end": 31.786,
+      "text": "2 independent reviews,",
+      "words": [
+        {
+          "id": "caption-word-24-0",
+          "text": "2",
+          "start": 29.906,
+          "end": 30.186
+        },
+        {
+          "id": "caption-word-24-1",
+          "text": "independent",
+          "start": 30.266,
+          "end": 30.826
+        },
+        {
+          "id": "caption-word-24-2",
+          "text": "reviews,",
+          "start": 30.876,
+          "end": 31.786
+        }
+      ]
+    },
+    {
+      "id": "caption-group-25",
+      "frame": 4,
+      "start": 31.786,
+      "end": 33.745,
+      "text": "verified on macOS.",
+      "words": [
+        {
+          "id": "caption-word-25-0",
+          "text": "verified",
+          "start": 31.786,
+          "end": 32.366
+        },
+        {
+          "id": "caption-word-25-1",
+          "text": "on",
+          "start": 32.366,
+          "end": 32.526
+        },
+        {
+          "id": "caption-word-25-2",
+          "text": "macOS.",
+          "start": 32.526,
+          "end": 33.656
+        }
+      ]
+    },
+    {
+      "id": "caption-group-26",
+      "frame": 5,
+      "start": 33.745,
+      "end": 34.855,
+      "text": "A founder's idea",
+      "words": [
+        {
+          "id": "caption-word-26-0",
+          "text": "A",
+          "start": 33.745,
+          "end": 33.765
+        },
+        {
+          "id": "caption-word-26-1",
+          "text": "founder's",
+          "start": 33.765,
+          "end": 34.515
+        },
+        {
+          "id": "caption-word-26-2",
+          "text": "idea",
+          "start": 34.515,
+          "end": 34.855
+        }
+      ]
+    },
+    {
+      "id": "caption-group-27",
+      "frame": 5,
+      "start": 34.855,
+      "end": 36.285,
+      "text": "executed by agents",
+      "words": [
+        {
+          "id": "caption-word-27-0",
+          "text": "executed",
+          "start": 34.855,
+          "end": 35.545
+        },
+        {
+          "id": "caption-word-27-1",
+          "text": "by",
+          "start": 35.545,
+          "end": 35.695
+        },
+        {
+          "id": "caption-word-27-2",
+          "text": "agents",
+          "start": 35.765,
+          "end": 36.215
+        }
+      ]
+    },
+    {
+      "id": "caption-group-28",
+      "frame": 5,
+      "start": 36.285,
+      "end": 37.305,
+      "text": "reviewed in the",
+      "words": [
+        {
+          "id": "caption-word-28-0",
+          "text": "reviewed",
+          "start": 36.285,
+          "end": 36.955
+        },
+        {
+          "id": "caption-word-28-1",
+          "text": "in",
+          "start": 37.015,
+          "end": 37.155
+        },
+        {
+          "id": "caption-word-28-2",
+          "text": "the",
+          "start": 37.235,
+          "end": 37.305
+        }
+      ]
+    },
+    {
+      "id": "caption-group-29",
+      "frame": 5,
+      "start": 37.305,
+      "end": 37.965,
+      "text": "open.",
+      "words": [
+        {
+          "id": "caption-word-29-0",
+          "text": "open.",
+          "start": 37.305,
+          "end": 37.965
+        }
+      ]
+    },
+    {
+      "id": "caption-group-30",
+      "frame": 5,
+      "start": 37.965,
+      "end": 39.295,
+      "text": "MIT-licensed,",
+      "words": [
+        {
+          "id": "caption-word-30-0",
+          "text": "MIT-licensed,",
+          "start": 37.965,
+          "end": 39.285
+        }
+      ]
+    },
+    {
+      "id": "caption-group-31",
+      "frame": 5,
+      "start": 39.295,
+      "end": 40.245,
+      "text": "try it.",
+      "words": [
+        {
+          "id": "caption-word-31-0",
+          "text": "try",
+          "start": 39.295,
+          "end": 39.605
+        },
+        {
+          "id": "caption-word-31-1",
+          "text": "it.",
+          "start": 39.605,
+          "end": 40.145
+        }
+      ]
+    },
+    {
+      "id": "caption-group-32",
+      "frame": 5,
+      "start": 40.245,
+      "end": 40.865,
+      "text": "Break it.",
+      "words": [
+        {
+          "id": "caption-word-32-0",
+          "text": "Break",
+          "start": 40.245,
+          "end": 40.455
+        },
+        {
+          "id": "caption-word-32-1",
+          "text": "it.",
+          "start": 40.455,
+          "end": 40.765
+        }
+      ]
+    },
+    {
+      "id": "caption-group-33",
+      "frame": 5,
+      "start": 40.865,
+      "end": 42.425,
+      "text": "Contribute.",
+      "words": [
+        {
+          "id": "caption-word-33-0",
+          "text": "Contribute.",
+          "start": 40.865,
+          "end": 42.305
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "provider": "kokoro",
+  "speed": 1,
+  "lines": [
+    {
+      "id": "01",
+      "text": "Hermes Agent runs inside T3 Code now. No forks — and the proof is public."
+    },
+    {
+      "id": "02",
+      "text": "One standalone bridge connects them in both directions over the Agent Client Protocol. T3 Code stays the cockpit. Hermes stays the runtime."
+    },
+    {
+      "id": "03",
+      "text": "T3 to Hermes. Hermes to T3. Or mention at Hermes in any thread — and one linked conversation keeps going."
+    },
+    {
+      "id": "04",
+      "text": "Thirty-nine tests passing. Three live flows. Zero upstream forks. Two independent reviews. Verified on macOS."
+    },
+    {
+      "id": "05",
+      "text": "A founder's idea, executed by agents, reviewed in the open. MIT licensed. Try it. Break it. Contribute."
+    }
+  ],
+  "bgm": {
+    "mode": "none"
+  },
+  "voice": "am_michael"
+}

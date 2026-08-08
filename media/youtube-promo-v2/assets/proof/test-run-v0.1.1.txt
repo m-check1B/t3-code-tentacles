@@ -1,0 +1,25 @@
+  ---
+  duration_ms: 1.974084
+  type: 'test'
+  ...
+# Subtest: LaunchAgent contains no bearer material and escapes paths
+ok 38 - LaunchAgent contains no bearer material and escapes paths
+  ---
+  duration_ms: 0.458541
+  type: 'test'
+  ...
+# Subtest: LaunchAgent ownership rejects foreign files and symlinks
+ok 39 - LaunchAgent ownership rejects foreign files and symlinks
+  ---
+  duration_ms: 0.68375
+  type: 'test'
+  ...
+1..39
+# tests 39
+# suites 0
+# pass 39
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 371.056625
