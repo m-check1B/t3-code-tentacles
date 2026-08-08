@@ -1,0 +1,338 @@
+<template>
+  <style>
+    #root {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      container-type: size;
+      color: #ffffff;
+      font-family: sans-serif;
+    }
+
+    .clip.f04-ground {
+      position: absolute;
+      inset: 0;
+      background: #000000;
+    }
+
+    .f04-chrome {
+      position: absolute;
+      top: 5.5cqh;
+      left: 5.5cqw;
+      right: 5.5cqw;
+      display: flex;
+      justify-content: space-between;
+      color: #b0b3b6;
+      font-family: monospace;
+      font-size: 0.72cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+    }
+
+    .f04-kicker {
+      position: absolute;
+      top: 12.6cqh;
+      left: 5.5cqw;
+      color: #a0beff;
+      font-family: monospace;
+      font-size: 0.72cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+    }
+
+    .f04-heading {
+      position: absolute;
+      top: 17cqh;
+      left: 5.5cqw;
+      margin: 0;
+      color: #ffffff;
+      font-size: 5.5cqw;
+      font-weight: 900;
+      letter-spacing: -0.04em;
+      line-height: 0.9;
+      text-transform: lowercase;
+    }
+
+    .f04-heading-accent { color: #0055ff; }
+
+    .f04-grid {
+      position: absolute;
+      top: 36cqh;
+      left: 5.5cqw;
+      right: 5.5cqw;
+      height: 34cqh;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      column-gap: 1.9cqw;
+    }
+
+    .f04-card {
+      position: relative;
+      min-width: 0;
+      padding-top: 2.3cqh;
+      border-top: 1px solid #262728;
+    }
+
+    .f04-card-blue { border-top-color: #0055ff; }
+
+    .f04-value {
+      display: block;
+      width: 100%;
+      color: #0055ff;
+      font-size: 8.2cqw;
+      font-weight: 900;
+      letter-spacing: -0.06em;
+      line-height: 0.78;
+      font-variant-numeric: tabular-nums;
+      transform-origin: left bottom;
+    }
+
+    .f04-label {
+      display: block;
+      margin-top: 3.5cqh;
+      color: #ffffff;
+      font-family: monospace;
+      font-size: 1.05cqw;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1.25;
+    }
+
+    .f04-note {
+      display: block;
+      margin-top: 1.4cqh;
+      color: #b0b3b6;
+      font-family: monospace;
+      font-size: 0.72cqw;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      line-height: 1.25;
+    }
+
+    .f04-flow-bars {
+      position: absolute;
+      left: 0;
+      bottom: 0;
+      display: flex;
+      align-items: flex-end;
+      gap: 0.42cqw;
+      height: 7.5cqh;
+    }
+
+    .f04-flow-bar {
+      width: 1.15cqw;
+      background: #484b50;
+      transform-origin: bottom center;
+    }
+
+    .f04-flow-bar:nth-child(1) { height: 3.1cqh; }
+    .f04-flow-bar:nth-child(2) { height: 5.2cqh; }
+    .f04-flow-bar:nth-child(3) { height: 7.5cqh; background: #0055ff; }
+
+    .f04-empty-track {
+      position: absolute;
+      left: 0;
+      right: 1.8cqw;
+      bottom: 2.3cqh;
+      height: 1px;
+      background: #484b50;
+    }
+
+    .f04-empty-track::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: -1.7cqh;
+      height: 3.4cqh;
+      border-left: 1px solid #262728;
+    }
+
+    .f04-review-icon {
+      position: absolute;
+      left: 0;
+      bottom: 1.1cqh;
+      width: 9.8cqw;
+      height: 8.2cqh;
+      overflow: visible;
+    }
+
+    .f04-review-icon path,
+    .f04-release-icon path {
+      fill: none;
+      stroke: #ffffff;
+      stroke-width: 8;
+      stroke-linecap: square;
+      stroke-linejoin: miter;
+    }
+
+    .f04-release {
+      position: absolute;
+      top: 74.3cqh;
+      left: 5.5cqw;
+      right: 5.5cqw;
+      height: 8.5cqh;
+      border-top: 1px solid #262728;
+    }
+
+    .f04-rail {
+      position: absolute;
+      top: -1px;
+      left: 0;
+      width: 100%;
+      height: 3px;
+      background: #20c55a;
+      transform-origin: left center;
+    }
+
+    .f04-release-copy {
+      position: absolute;
+      top: 2.5cqh;
+      left: 0;
+      display: flex;
+      align-items: center;
+      gap: 1.1cqw;
+      color: #20c55a;
+      font-family: monospace;
+      font-size: 1.05cqw;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1.1;
+    }
+
+    .f04-release-icon {
+      width: 2.2cqw;
+      height: 2.2cqw;
+      overflow: visible;
+    }
+
+    .f04-release-icon path { stroke: #20c55a; stroke-width: 12; }
+
+    .f04-bottom-rule {
+      position: absolute;
+      left: 5.5cqw;
+      right: 5.5cqw;
+      top: 87.7cqh;
+      height: 1px;
+      background: #262728;
+    }
+  </style>
+
+  <div id="root" data-composition-id="04-proof-before-promotion" data-duration="8.706" data-width="1920" data-height="1080">
+    <div id="f04-ground-clip" class="clip f04-ground" data-start="0" data-duration="8.706" data-track-index="0"></div>
+    <div class="f04-chrome"><span>RELEASE EVIDENCE</span><span>04 / 05</span></div>
+    <div class="f04-kicker">AUDITABLE, NOT ASPIRATIONAL</div>
+    <h1 class="f04-heading">proof <span class="f04-heading-accent">locks</span></h1>
+
+    <section class="f04-grid" aria-label="Release evidence metrics">
+      <article class="f04-card f04-card-blue f04-tests">
+        <span id="f04-tests-value" class="f04-value">0</span>
+        <span class="f04-label">TESTS</span>
+        <span class="f04-note">PASS</span>
+      </article>
+      <article class="f04-card f04-flows">
+        <span id="f04-flows-value" class="f04-value">0</span>
+        <span class="f04-label">LIVE FLOWS</span>
+        <span class="f04-note">CONNECTED</span>
+        <div class="f04-flow-bars" aria-hidden="true">
+          <span class="f04-flow-bar"></span>
+          <span class="f04-flow-bar"></span>
+          <span class="f04-flow-bar"></span>
+        </div>
+      </article>
+      <article class="f04-card f04-forks">
+        <span id="f04-forks-value" class="f04-value">0</span>
+        <span class="f04-label">UPSTREAM<br>FORKS</span>
+        <span class="f04-note">NONE</span>
+        <div class="f04-empty-track" aria-hidden="true"></div>
+      </article>
+      <article class="f04-card f04-reviews">
+        <span id="f04-reviews-value" class="f04-value">0</span>
+        <span class="f04-label">INDEPENDENT<br>REVIEWS</span>
+        <span class="f04-note">TWO GATES</span>
+        <svg class="f04-review-icon" viewBox="0 0 180 100" aria-hidden="true">
+          <path id="f04-review-one" d="M 12 52 L 40 80 L 79 19"></path>
+          <path id="f04-review-two" d="M 99 52 L 127 80 L 166 19"></path>
+        </svg>
+      </article>
+    </section>
+
+    <div class="f04-release" aria-label="Release corrected">
+      <div class="f04-rail"></div>
+      <div class="f04-release-copy">
+        <svg class="f04-release-icon" viewBox="0 0 100 100" aria-hidden="true"><path id="f04-release-check" d="M 13 54 L 39 79 L 87 20"></path></svg>
+        <span>FINDINGS FIXED BEFORE RELEASE</span>
+      </div>
+    </div>
+    <div class="f04-bottom-rule"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js" integrity="sha384-g4NTh/Iv5PPU4xPyhEWqPcwtNXOvdaDI8LLnyYfyNZOjKJeYQyjzQ9X5275eBjpt" crossorigin="anonymous"></script>
+  <script>
+    (() => {
+      const frameId = '04-proof-before-promotion';
+      const tl = gsap.timeline({ paused: true });
+      const q = (selector) => document.querySelector(selector);
+
+      const drawPaths = [
+        q('#f04-review-one'),
+        q('#f04-review-two'),
+        q('#f04-release-check'),
+      ];
+      drawPaths.forEach((path) => {
+        const length = path.getTotalLength();
+        path.style.strokeDasharray = `${length}`;
+        path.style.strokeDashoffset = `${length}`;
+      });
+
+      const count = (selector, target, start, duration) => {
+        const element = q(selector);
+        const state = { value: 0 };
+        tl.to(state, {
+          value: target,
+          duration,
+          ease: 'power3.out',
+          onUpdate: () => { element.textContent = Math.round(state.value).toLocaleString(); },
+        }, start);
+        tl.fromTo(element, { scale: 0.5 }, { scale: 1, duration, ease: 'power3.out' }, start);
+      };
+
+      const tests = q('.f04-tests');
+      tl.fromTo(tests, { y: 26, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: 'power3.out' }, 0.15);
+      count('#f04-tests-value', 14, 0.28, 1.02);
+      tl.fromTo(q('.f04-tests .f04-label'), { y: 12, opacity: 0 }, { y: 0, opacity: 1, duration: 0.35, ease: 'power2.out' }, 0.62);
+      tl.fromTo(q('.f04-tests .f04-note'), { opacity: 0 }, { opacity: 1, duration: 0.28, ease: 'power1.out' }, 1.12);
+
+      const flows = q('.f04-flows');
+      tl.fromTo(flows, { y: 26, opacity: 0 }, { y: 0, opacity: 1, duration: 0.42, ease: 'power3.out' }, 1.48);
+      count('#f04-flows-value', 3, 1.62, 0.88);
+      tl.fromTo(q('.f04-flows .f04-label'), { y: 12, opacity: 0 }, { y: 0, opacity: 1, duration: 0.32, ease: 'power2.out' }, 1.86);
+      tl.fromTo(q('.f04-flows .f04-note'), { opacity: 0 }, { opacity: 1, duration: 0.25, ease: 'power1.out' }, 2.28);
+      tl.fromTo('.f04-flow-bar', { scaleY: 0 }, { scaleY: 1, duration: 0.62, ease: 'power3.out', stagger: 0.08 }, 1.62);
+
+      const forks = q('.f04-forks');
+      tl.fromTo(forks, { y: 26, opacity: 0 }, { y: 0, opacity: 1, duration: 0.42, ease: 'power3.out' }, 2.68);
+      count('#f04-forks-value', 0, 2.78, 0.34);
+      tl.fromTo(q('.f04-forks .f04-label'), { y: 12, opacity: 0 }, { y: 0, opacity: 1, duration: 0.32, ease: 'power2.out' }, 2.92);
+      tl.fromTo(q('.f04-forks .f04-note'), { opacity: 0 }, { opacity: 1, duration: 0.25, ease: 'power1.out' }, 3.23);
+      tl.fromTo(q('.f04-empty-track'), { scaleX: 0, opacity: 0 }, { scaleX: 1, opacity: 1, duration: 0.42, ease: 'power2.out' }, 3.37);
+
+      const reviews = q('.f04-reviews');
+      tl.fromTo(reviews, { y: 26, opacity: 0 }, { y: 0, opacity: 1, duration: 0.42, ease: 'power3.out' }, 4.22);
+      count('#f04-reviews-value', 2, 4.35, 0.9);
+      tl.fromTo(q('.f04-reviews .f04-label'), { y: 12, opacity: 0 }, { y: 0, opacity: 1, duration: 0.32, ease: 'power2.out' }, 4.62);
+      tl.fromTo(q('.f04-reviews .f04-note'), { opacity: 0 }, { opacity: 1, duration: 0.25, ease: 'power1.out' }, 4.94);
+      tl.to(q('#f04-review-one'), { strokeDashoffset: 0, duration: 0.48, ease: 'power2.out' }, 5.02);
+      tl.to(q('#f04-review-two'), { strokeDashoffset: 0, duration: 0.48, ease: 'power2.out' }, 5.38);
+
+      tl.fromTo(q('.f04-rail'), { scaleX: 0, opacity: 0 }, { scaleX: 1, opacity: 1, duration: 0.74, ease: 'power3.out' }, 6.08);
+      tl.fromTo(q('.f04-release-copy'), { y: 16, opacity: 0 }, { y: 0, opacity: 1, duration: 0.42, ease: 'power2.out' }, 6.72);
+      tl.to(q('#f04-release-check'), { strokeDashoffset: 0, duration: 0.46, ease: 'power2.out' }, 7.13);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines[frameId] = tl;
+    })();
+  </script>
+</template>

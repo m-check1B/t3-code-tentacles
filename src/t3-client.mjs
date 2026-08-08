@@ -2,8 +2,11 @@ import { randomUUID } from "node:crypto";
 import { DEFAULT_T3_URL, readToken, requireLoopbackUrl } from "./config.mjs";
 
 function safeErrorBody(body) {
-  if (typeof body === "string") return body.slice(0, 500);
-  return JSON.stringify(body).slice(0, 500);
+  // T3 error payloads are not a trusted logging surface: they can echo bearer
+  // material or the prompt that caused a rejected command. Keep diagnostics to
+  // the status/path and never reflect a server-controlled body.
+  void body;
+  return "[redacted error body]";
 }
 
 async function readBoundedResponseText(response, maxBytes) {

@@ -24,18 +24,32 @@ dispatch.
 
 ## Correlation and loop prevention
 
-- A private state file maps source thread IDs to linked Hermes thread IDs.
+- A private, versioned, ownership-marked state file maps source thread IDs to
+  linked Hermes thread IDs. Invalid, oversized, or unknown-version state fails
+  closed; it is never reset as a deduplication recovery tactic.
+- v0.1.0 state is upgraded before network dispatch with links, cursors, and
+  replay guards preserved. Unresolved legacy pending deliveries require an
+  explicit operator audit and are never discarded by migration.
 - The first watcher pass records a start watermark and does not backfill
-  historical mentions.
+  historical mentions. Per-thread cursors include a timestamp; when a cursor
+  was pruned, timestamp-less or equal/older messages are consumed without
+  routing rather than replayed.
 - Every routed mention receives a random correlation ID and `hop=1/1` marker.
 - Only user messages from non-Hermes threads are considered.
 - A durable per-thread message cursor is the primary replay guard; a bounded
   1,000-ID ledger covers cursor recovery and migrations.
 - Routing intent and immutable command/message IDs are persisted before T3
   dispatch, allowing ambiguous accepted turns to reconcile without replay.
-- An interprocess lock prevents a background watcher and manual scan from
-  routing concurrently.
+- An ownership-token interprocess lock prevents a background watcher and manual
+  scan from routing concurrently. A stale lock is recovered only after its PID
+  is provably absent; releases remove only their own lock identity.
 - Hermes-backed target threads are excluded from mention scanning.
+- Mention routing is deny-by-default. Callers must pass a policy explicitly
+  authorising both source project IDs and provider instance IDs (or the explicit
+  allow-all policy for a deliberately unconstrained local deployment).
+- Source-thread excerpts are transferred as a bounded, role-labelled untrusted
+  context window. The linked Hermes prompt treats that excerpt as reference
+  material, never as authority.
 
 ## Security boundary
 
@@ -55,7 +69,11 @@ dispatch.
 T3 command dispatch is accepted asynchronously. The bridge waits for each exact
 project, thread, and initial-message projection before sending the dependent
 command. Pending correlation data is written before dispatch and reconciled by
-immutable IDs if the final response is ambiguous.
+immutable IDs if the final response is ambiguous. Per-intent retries are
+bounded with backoff and dead-letter terminal failures, so a malformed or
+unavailable source cannot block later healthy work. `originate` records the
+same immutable IDs when given an idempotency key, including across an ambiguous
+accepted response.
 
 ## Known semantic limit
 

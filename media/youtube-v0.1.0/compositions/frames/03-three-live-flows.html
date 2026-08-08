@@ -1,0 +1,360 @@
+<template>
+  <style>
+    #root {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      container-type: size;
+      color: #ffffff;
+      font-family: sans-serif;
+    }
+
+    .clip.f03-ground {
+      position: absolute;
+      inset: 0;
+      background: #000000;
+    }
+
+    .f03-chrome {
+      position: absolute;
+      left: 5.5cqw;
+      right: 5.5cqw;
+      top: 5.5cqw;
+      display: flex;
+      justify-content: space-between;
+      color: #b0b3b6;
+      font-family: monospace;
+      font-size: 0.72cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+    }
+
+    .f03-kicker {
+      position: absolute;
+      left: 5.5cqw;
+      top: 12.3cqh;
+      color: #a0beff;
+      font-family: monospace;
+      font-size: 0.72cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+    }
+
+    .f03-title {
+      position: absolute;
+      left: 5.5cqw;
+      top: 17.5cqh;
+      margin: 0;
+      color: #ffffff;
+      font-size: 7.5cqw;
+      font-weight: 900;
+      letter-spacing: -0.04em;
+      line-height: 0.88;
+      text-transform: lowercase;
+    }
+
+    .f03-title-accent { color: #0055ff; }
+
+    .f03-panel-zone {
+      position: absolute;
+      left: 5.5cqw;
+      right: 5.5cqw;
+      top: 35.5cqh;
+      height: 39cqh;
+    }
+
+    .f03-hairline {
+      position: absolute;
+      top: 0;
+      width: 29.4%;
+      height: 2px;
+      background: #0055ff;
+      transform-origin: left center;
+    }
+
+    .f03-hairline-left { left: 0; }
+    .f03-hairline-middle { left: 35.3%; }
+    .f03-hairline-right { right: 0; }
+
+    .f03-stage {
+      position: absolute;
+      inset: 0;
+    }
+
+    .f03-burst {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      white-space: nowrap;
+      will-change: transform, opacity;
+    }
+
+    .f03-flow-word {
+      color: #ffffff;
+      font-size: 2.8cqw;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+    }
+
+    .f03-flow-arrow {
+      color: #0055ff;
+      font-size: 3.2cqw;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .f03-panel-note {
+      position: absolute;
+      color: #b0b3b6;
+      font-family: monospace;
+      font-size: 0.72cqw;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .f03-note-left { left: 0; top: 70%; }
+    .f03-note-middle { left: 35.3%; top: 70%; }
+    .f03-note-right { right: 0; top: 70%; }
+
+    .f03-thread {
+      position: absolute;
+      right: 0;
+      top: 22%;
+      width: 29.4%;
+      color: #ffffff;
+    }
+
+    .f03-thread-label {
+      margin-bottom: 2.2cqh;
+      color: #b0b3b6;
+      font-family: monospace;
+      font-size: 0.72cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+    }
+
+    .f03-thread-row {
+      display: flex;
+      align-items: baseline;
+      min-width: 27cqw;
+      white-space: pre;
+      font-family: monospace;
+      font-size: 2.15cqw;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .f03-thread-prefix { color: #ffffff; }
+    .f03-thread-text { color: #0055ff; white-space: pre; }
+    .f03-cursor {
+      display: inline-block;
+      width: 0.75cqw;
+      height: 2.05cqw;
+      margin-left: 0.35cqw;
+      background: #0055ff;
+      vertical-align: -0.15cqw;
+    }
+
+    .f03-conversation {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 79%;
+      height: 1px;
+      background: #0055ff;
+      transform-origin: right center;
+    }
+
+    .f03-tick {
+      position: absolute;
+      top: 82%;
+      width: 6.4cqw;
+      height: 0.7cqh;
+      background: #ffffff;
+      transform-origin: left center;
+    }
+
+    .f03-tick::after {
+      content: '';
+      position: absolute;
+      top: 1.35cqh;
+      left: 0;
+      width: 3.8cqw;
+      height: 0.55cqh;
+      background: #b0b3b6;
+    }
+
+    .f03-tick-left { left: 5%; }
+    .f03-tick-middle { left: 40.3%; }
+    .f03-tick-right { right: 5%; }
+
+    .f03-footer {
+      position: absolute;
+      left: 5.5cqw;
+      right: 5.5cqw;
+      top: 76.5cqh;
+      border-top: 1px solid #262728;
+    }
+  </style>
+
+  <div id="root" data-composition-id="03-three-live-flows" data-duration="7.596" data-width="1920" data-height="1080">
+    <div id="f03-ground-clip" class="clip f03-ground" data-start="0" data-duration="7.596" data-track-index="0"></div>
+    <div class="f03-chrome"><span>LIVE FLOWS</span><span>03 / 05</span></div>
+    <div class="f03-kicker">ONE LINKED SYSTEM</div>
+    <h1 class="f03-title">three <span class="f03-title-accent">ways</span></h1>
+
+    <div class="f03-panel-zone">
+      <div class="f03-hairline f03-hairline-left"></div>
+      <div class="f03-hairline f03-hairline-middle"></div>
+      <div class="f03-hairline f03-hairline-right"></div>
+
+      <div class="f03-stage" aria-hidden="true">
+        <span class="f03-burst f03-left-t3 f03-flow-word" data-target-x="-840" data-target-y="-30">T3</span>
+        <span class="f03-burst f03-left-arrow f03-flow-arrow" data-target-x="-735" data-target-y="-33">→</span>
+        <span class="f03-burst f03-left-hermes f03-flow-word" data-target-x="-585" data-target-y="-30">HERMES</span>
+      </div>
+
+      <div class="f03-stage" aria-hidden="true">
+        <span class="f03-burst f03-middle-hermes f03-flow-word" data-target-x="-170" data-target-y="-30">HERMES</span>
+        <span class="f03-burst f03-middle-arrow f03-flow-arrow" data-target-x="-35" data-target-y="-33">→</span>
+        <span class="f03-burst f03-middle-t3 f03-flow-word" data-target-x="55" data-target-y="-30">T3</span>
+      </div>
+
+      <div class="f03-thread">
+        <div class="f03-thread-label">NATIVE THREAD</div>
+        <div class="f03-thread-row"><span class="f03-thread-prefix">call </span><span id="f03-thread-text" class="f03-thread-text"></span><span id="f03-cursor" class="f03-cursor"></span></div>
+      </div>
+
+      <span class="f03-panel-note f03-note-left">OUTBOUND</span>
+      <span class="f03-panel-note f03-note-middle">INBOUND</span>
+      <span class="f03-panel-note f03-note-right">IN THREAD</span>
+      <div class="f03-conversation"></div>
+      <div class="f03-tick f03-tick-left"></div>
+      <div class="f03-tick f03-tick-middle"></div>
+      <div class="f03-tick f03-tick-right"></div>
+    </div>
+    <div class="f03-footer"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js" integrity="sha384-g4NTh/Iv5PPU4xPyhEWqPcwtNXOvdaDI8LLnyYfyNZOjKJeYQyjzQ9X5275eBjpt" crossorigin="anonymous"></script>
+  <script>
+    (() => {
+      const frameId = '03-three-live-flows';
+      const tl = gsap.timeline({ paused: true });
+      const q = (selector) => document.querySelector(selector);
+      const qa = (selector) => Array.from(document.querySelectorAll(selector));
+
+      const leftItems = [
+        q('.f03-left-t3'),
+        q('.f03-left-arrow'),
+        q('.f03-left-hermes'),
+      ];
+      leftItems.forEach((el, index) => {
+        tl.fromTo(
+          el,
+          { xPercent: -50, yPercent: -50, x: 0, y: 0, scale: 0.6, opacity: 0 },
+          { x: Number(el.dataset.targetX), y: Number(el.dataset.targetY), scale: 1, opacity: 1, duration: 1.05, ease: 'power3.out' },
+          0.30 + index * 0.07,
+        );
+      });
+      tl.fromTo(q('.f03-hairline-left'), { scaleX: 0, opacity: 0 }, { scaleX: 1, opacity: 1, duration: 0.48, ease: 'power3.out' }, 0.08);
+      tl.fromTo(q('.f03-note-left'), { y: 12, opacity: 0 }, { y: 0, opacity: 1, duration: 0.35, ease: 'power2.out' }, 1.32);
+
+      const middleFlow = [
+        { el: q('.f03-middle-hermes'), text: 'HERMES' },
+        { el: q('.f03-middle-arrow'), text: '→' },
+        { el: q('.f03-middle-t3'), text: 'T3' },
+      ];
+      const middleStarts = middleFlow.reduce((acc, item) => {
+        const start = acc.cursor;
+        acc.cursor += 0.20 + item.text.length * 0.035;
+        acc.items.push(start);
+        return acc;
+      }, { cursor: 1.96, items: [] }).items;
+      tl.fromTo(q('.f03-hairline-middle'), { scaleX: 0, opacity: 0 }, { scaleX: 1, opacity: 1, duration: 0.42, ease: 'power3.out' }, 1.84);
+      middleFlow.forEach((item, index) => {
+        tl.fromTo(
+          item.el,
+          { xPercent: -50, yPercent: -50, x: 0, y: -10, scale: 0.92, opacity: 0 },
+          { x: Number(item.el.dataset.targetX), y: Number(item.el.dataset.targetY), scale: 1, opacity: 1, duration: 0.46, ease: 'power3.out' },
+          middleStarts[index],
+        );
+      });
+      tl.to(leftItems, { opacity: 0.58, duration: 0.34, ease: 'power1.out' }, 2.62);
+      tl.fromTo(q('.f03-note-middle'), { y: 12, opacity: 0 }, { y: 0, opacity: 1, duration: 0.35, ease: 'power2.out' }, 2.76);
+
+      tl.fromTo(q('.f03-hairline-right'), { scaleX: 0, opacity: 0 }, { scaleX: 1, opacity: 1, duration: 0.44, ease: 'power3.out' }, 3.20);
+      tl.fromTo(q('.f03-thread'), { y: 18, opacity: 0 }, { y: 0, opacity: 1, duration: 0.42, ease: 'power3.out' }, 3.42);
+      tl.fromTo(q('.f03-note-right'), { y: 12, opacity: 0 }, { y: 0, opacity: 1, duration: 0.32, ease: 'power2.out' }, 4.92);
+
+      const SEQUENCE = [
+        { t: 3.70, text: '', segment: 'main', color: '#ffffff' },
+        { t: 3.88, text: '@', segment: 'brand', color: '#0055ff' },
+        { t: 4.05, text: '@h', segment: 'brand', color: '#0055ff' },
+        { t: 4.19, text: '@he', segment: 'brand', color: '#0055ff' },
+        { t: 4.36, text: '@her', segment: 'brand', color: '#0055ff' },
+        { t: 4.54, text: '@herm', segment: 'brand', color: '#0055ff' },
+        { t: 4.72, text: '@herme', segment: 'brand', color: '#0055ff' },
+        { t: 4.90, text: '@hermes', segment: 'brand', color: '#0055ff' },
+      ];
+      const entryAt = (time) => {
+        for (let index = SEQUENCE.length - 1; index >= 0; index -= 1) {
+          if (time >= SEQUENCE[index].t) return SEQUENCE[index];
+        }
+        return SEQUENCE[0];
+      };
+      const typingTimes = SEQUENCE.filter((entry, index) => index > 0 && entry.text !== SEQUENCE[index - 1].text).map((entry) => entry.t);
+      const threadText = q('#f03-thread-text');
+      const cursor = q('#f03-cursor');
+      const driver = { t: 0 };
+      const blink = { p: 0 };
+      tl.to(driver, {
+        t: 7.296,
+        duration: 7.296,
+        ease: 'none',
+        onUpdate: () => {
+          const entry = entryAt(driver.t);
+          threadText.textContent = entry.text;
+          cursor.style.background = entry.color;
+          const isTyping = typingTimes.some((time) => time <= driver.t && driver.t - time < 0.16);
+          cursor.style.opacity = isTyping || Math.sin(blink.p) > 0 ? '1' : '0';
+        },
+      }, 0);
+      tl.to(blink, {
+        p: Math.PI * 2 * 8,
+        duration: 7.296,
+        ease: 'none',
+        onUpdate: () => {
+          const isTyping = typingTimes.some((time) => time <= driver.t && driver.t - time < 0.16);
+          cursor.style.opacity = isTyping || Math.sin(blink.p) > 0 ? '1' : '0';
+        },
+      }, 0);
+
+      tl.fromTo(q('.f03-conversation'), { scaleX: 0, opacity: 0 }, { scaleX: 1, opacity: 1, duration: 0.68, ease: 'power3.out' }, 5.44);
+      const tickSequence = [
+        { selector: '.f03-tick-left', label: 'T3' },
+        { selector: '.f03-tick-middle', label: 'HERMES' },
+        { selector: '.f03-tick-right', label: 'THREAD' },
+      ];
+      const tickStarts = tickSequence.reduce((acc, item) => {
+        const start = acc.cursor;
+        acc.cursor += 0.18 + item.label.length * 0.035;
+        acc.items.push(start);
+        return acc;
+      }, { cursor: 5.76, items: [] }).items;
+      tickSequence.forEach((item, index) => {
+        tl.fromTo(q(item.selector), { scaleX: 0, opacity: 0 }, { scaleX: 1, opacity: 1, duration: 0.34, ease: 'power3.out' }, tickStarts[index]);
+      });
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines[frameId] = tl;
+    })();
+  </script>
+</template>

@@ -1,0 +1,269 @@
+<template>
+  <style>
+    #root {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      container-type: size;
+      color: #FFFFFF;
+      font-family: sans-serif;
+    }
+
+    #root [class~="clip"] {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    #root [class~="02-ground"] { background: #000000; }
+
+    #root [class~="02-poster"] {
+      object-fit: cover;
+      object-position: center;
+      opacity: 0.55;
+    }
+
+    #root [class~="02-scrim"] { background: rgba(0, 0, 0, 0.45); }
+
+    #root [class~="02-scene"] {
+      position: absolute;
+      inset: 0 0 180px;
+      overflow: hidden;
+    }
+
+    #root #f02-world {
+      position: absolute;
+      inset: 0;
+      transform-origin: 50% 50%;
+      will-change: transform;
+    }
+
+    #root [class~="02-station"] {
+      position: absolute;
+      top: 228px;
+      width: 390px;
+      padding-top: 18px;
+      border-top: 1px solid #484B50;
+    }
+
+    #root #f02-t3 { left: 615px; }
+    #root #f02-bridge { left: 1095px; }
+    #root #f02-hermes { left: 1575px; }
+
+    #root [class~="02-station-index"],
+    #root [class~="02-station-role"] {
+      color: #FFFFFF;
+      font-family: monospace;
+      font-size: 14px;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1.2;
+      text-transform: uppercase;
+    }
+
+    #root [class~="02-station-index"] { color: #A0BEFF; }
+
+    #root [class~="02-station-name"] {
+      margin-top: 16px;
+      color: #FFFFFF;
+      font-size: 82px;
+      font-weight: 900;
+      letter-spacing: -0.05em;
+      line-height: 0.88;
+      text-transform: lowercase;
+    }
+
+    #root [class~="02-bridge-name"] { font-size: 69px; }
+
+    #root [class~="02-station-role"] {
+      margin-top: 15px;
+      color: #B0B3B6;
+    }
+
+    #root [class~="02-emphasis"] {
+      position: absolute;
+      left: 615px;
+      top: 490px;
+      color: #A0BEFF;
+      font-family: monospace;
+      font-size: 27px;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    #root #f02-powerful {
+      left: 1575px;
+      top: 490px;
+      display: flex;
+      gap: 13px;
+    }
+
+    #root [class~="02-power-word"] { display: inline-block; }
+
+    #root #f02-connectors {
+      position: absolute;
+      left: 610px;
+      top: 535px;
+      width: 1360px;
+      height: 160px;
+      overflow: visible;
+    }
+
+    #root #f02-connectors path {
+      fill: none;
+      stroke-linecap: square;
+      stroke-linejoin: miter;
+      stroke-width: 6;
+    }
+
+    #root #f02-blue-t3-bridge,
+    #root #f02-blue-bridge-hermes { stroke: #0055FF; }
+
+    #root #f02-white-hermes-bridge,
+    #root #f02-white-bridge-t3 { stroke: #FFFFFF; }
+
+    #root [class~="02-node"] {
+      fill: #000000;
+      stroke: #FFFFFF;
+      stroke-width: 3;
+    }
+
+    #root [class~="02-node-center"] { stroke: #0055FF; }
+
+    #root #f02-both-directions {
+      position: absolute;
+      left: 730px;
+      top: 704px;
+      width: 980px;
+      color: #A0BEFF;
+      font-family: monospace;
+      font-size: 35px;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      text-align: center;
+      text-transform: uppercase;
+    }
+
+    #root [class~="02-blue-rule"] {
+      position: absolute;
+      left: 615px;
+      top: 564px;
+      width: 42px;
+      height: 2px;
+      background: #0055FF;
+    }
+  </style>
+
+  <div id="root" data-composition-id="02-both-directions" data-width="1920" data-height="1080" data-duration="6.899">
+    <div id="f02-ground" class="clip 02-ground" data-start="0" data-duration="6.899" data-track-index="0"></div>
+    <img id="f02-poster" class="clip 02-poster" data-start="0" data-duration="6.899" data-track-index="1" src="assets/hermes-t3-youtube-thumbnail.png" alt="" />
+    <div id="f02-scrim" class="clip 02-scrim" data-start="0" data-duration="6.899" data-track-index="2"></div>
+
+    <div class="02-scene">
+      <div id="f02-world">
+        <div id="f02-t3" class="02-station">
+          <div class="02-station-index">01 / cockpit</div>
+          <div class="02-station-name">t3 code</div>
+          <div class="02-station-role">visible interface</div>
+        </div>
+
+        <div id="f02-bridge" class="02-station">
+          <div class="02-station-index">02 / bridge</div>
+          <div class="02-station-name 02-bridge-name">bridge</div>
+          <div class="02-station-role">two-way link</div>
+        </div>
+
+        <div id="f02-hermes" class="02-station">
+          <div class="02-station-index">03 / runtime</div>
+          <div class="02-station-name">hermes</div>
+          <div class="02-station-role">power layer</div>
+        </div>
+
+        <div class="02-blue-rule"></div>
+        <div class="02-emphasis" id="f02-visible">stays visible</div>
+        <div class="02-emphasis" id="f02-powerful" aria-label="stays powerful">
+          <span class="02-power-word">stays</span><span class="02-power-word">powerful</span>
+        </div>
+
+        <svg id="f02-connectors" viewBox="0 0 1360 160" aria-hidden="true">
+          <path id="f02-blue-t3-bridge" data-path="blue" d="M 200 54 H 680" />
+          <path id="f02-blue-bridge-hermes" data-path="blue" d="M 680 54 H 1160" />
+          <path id="f02-white-hermes-bridge" data-path="white" d="M 1160 108 H 680" />
+          <path id="f02-white-bridge-t3" data-path="white" d="M 680 108 H 200" />
+          <rect class="02-node" x="184" y="38" width="32" height="32" />
+          <rect class="02-node 02-node-center" x="664" y="38" width="32" height="32" />
+          <rect class="02-node" x="1144" y="38" width="32" height="32" />
+        </svg>
+
+        <div id="f02-both-directions">both directions</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js" integrity="sha384-g4NTh/Iv5PPU4xPyhEWqPcwtNXOvdaDI8LLnyYfyNZOjKJeYQyjzQ9X5275eBjpt" crossorigin="anonymous"></script>
+  <script>
+    (() => {
+      const root = document.querySelector('[data-composition-id="02-both-directions"]');
+      const world = root.querySelector('#f02-world');
+      const t3 = root.querySelector('#f02-t3');
+      const bridge = root.querySelector('#f02-bridge');
+      const hermes = root.querySelector('#f02-hermes');
+      const visible = root.querySelector('#f02-visible');
+      const powerful = root.querySelector('#f02-powerful');
+      const direction = root.querySelector('#f02-both-directions');
+      const tl = gsap.timeline({ paused: true });
+      const cam = { scale: 0.95, x: 85, y: 8 };
+
+      function applyCamera() {
+        world.style.transform = `translate(${cam.x}px, ${cam.y}px) scale(${cam.scale})`;
+      }
+
+      applyCamera();
+
+      root.querySelectorAll('[data-path]').forEach((path) => {
+        const length = path.getTotalLength();
+        path.style.strokeDasharray = `${length}`;
+        path.style.strokeDashoffset = `${length}`;
+      });
+
+      gsap.set([bridge, hermes, visible, powerful, direction, root.querySelector('#f02-connectors')], { opacity: 0 });
+      tl.fromTo(t3, { opacity: 0, y: 34 }, { opacity: 1, y: 0, duration: 0.42, ease: 'power2.out' }, 0.08);
+      tl.to(cam, { scale: 1, x: 0, y: 0, duration: 1.22, ease: 'power2.out', onUpdate: applyCamera }, 0);
+      tl.fromTo(visible, { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.36, ease: 'power2.out' }, 1.38);
+
+      tl.fromTo(hermes, { opacity: 0, y: 34 }, { opacity: 1, y: 0, duration: 0.38, ease: 'power2.out' }, 2.48);
+      tl.to(cam, { scale: 1.05, x: -880, y: -8, duration: 0.84, ease: 'power3.inOut', onUpdate: applyCamera }, 2.36);
+
+      const powerWords = [...powerful.querySelectorAll('[class~="02-power-word"]')];
+      const wordPacing = powerWords.reduce((timeline, word) => {
+        const start = timeline.cursor;
+        const duration = 0.2 + word.textContent.trim().length * 0.025;
+        timeline.items.push({ word, start, duration });
+        timeline.cursor += duration * 0.76;
+        return timeline;
+      }, { cursor: 0, items: [] });
+      wordPacing.items.forEach(({ word, start, duration }) => {
+        tl.fromTo(word, { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration, ease: 'power2.out' }, 3.34 + start);
+      });
+
+      tl.fromTo(bridge, { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.34, ease: 'power2.out' }, 4.18);
+      tl.to(cam, { scale: 0.82, x: -330, y: 2, duration: 0.76, ease: 'power3.inOut', onUpdate: applyCamera }, 4.18);
+      tl.fromTo(root.querySelector('#f02-connectors'), { opacity: 0 }, { opacity: 1, duration: 0.18, ease: 'power1.out' }, 4.45);
+      tl.to(root.querySelector('#f02-blue-t3-bridge'), { strokeDashoffset: 0, duration: 0.42, ease: 'power2.out' }, 4.56);
+      tl.to(root.querySelector('#f02-blue-bridge-hermes'), { strokeDashoffset: 0, duration: 0.42, ease: 'power2.out' }, 4.87);
+
+      tl.to(root.querySelector('#f02-white-hermes-bridge'), { strokeDashoffset: 0, duration: 0.34, ease: 'power2.out' }, 5.54);
+      tl.to(root.querySelector('#f02-white-bridge-t3'), { strokeDashoffset: 0, duration: 0.34, ease: 'power2.out' }, 5.79);
+      tl.fromTo(direction, { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.36, ease: 'power2.out' }, 6.02);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines['02-both-directions'] = tl;
+    })();
+  </script>
+</template>

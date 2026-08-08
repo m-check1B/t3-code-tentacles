@@ -3,3 +3,11 @@ coverage/
 node_modules/
 *.log
 
+# Reproducible launch-video source is tracked; local engines and generated media are not.
+media/**/.venv/
+media/**/capture/
+media/**/renders/
+media/**/snapshots/
+media/**/.media/
+media/**/.hyperframes/frame-packets/
+media/**/CLAUDE.md
