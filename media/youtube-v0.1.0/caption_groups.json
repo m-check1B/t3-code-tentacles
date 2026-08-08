@@ -1,0 +1,694 @@
+{
+  "total_duration_s": 35.008,
+  "width": 1920,
+  "height": 1080,
+  "groups": [
+    {
+      "id": "caption-group-0",
+      "frame": 1,
+      "start": 0.11,
+      "end": 1.56,
+      "text": "Agents shouldn't disappear",
+      "words": [
+        {
+          "id": "caption-word-0-0",
+          "text": "Agents",
+          "start": 0.11,
+          "end": 0.39
+        },
+        {
+          "id": "caption-word-0-1",
+          "text": "shouldn't",
+          "start": 0.39,
+          "end": 0.97
+        },
+        {
+          "id": "caption-word-0-2",
+          "text": "disappear",
+          "start": 1.03,
+          "end": 1.56
+        }
+      ]
+    },
+    {
+      "id": "caption-group-1",
+      "frame": 1,
+      "start": 1.56,
+      "end": 2.71,
+      "text": "behind terminals.",
+      "words": [
+        {
+          "id": "caption-word-1-0",
+          "text": "behind",
+          "start": 1.56,
+          "end": 1.95
+        },
+        {
+          "id": "caption-word-1-1",
+          "text": "terminals.",
+          "start": 1.95,
+          "end": 2.6
+        }
+      ]
+    },
+    {
+      "id": "caption-group-2",
+      "frame": 1,
+      "start": 2.71,
+      "end": 3.8,
+      "text": "One cockpit,",
+      "words": [
+        {
+          "id": "caption-word-2-0",
+          "text": "One",
+          "start": 2.71,
+          "end": 2.9
+        },
+        {
+          "id": "caption-word-2-1",
+          "text": "cockpit,",
+          "start": 2.9,
+          "end": 3.8
+        }
+      ]
+    },
+    {
+      "id": "caption-group-3",
+      "frame": 1,
+      "start": 3.8,
+      "end": 4.82,
+      "text": "every agent.",
+      "words": [
+        {
+          "id": "caption-word-3-0",
+          "text": "every",
+          "start": 3.8,
+          "end": 4.21
+        },
+        {
+          "id": "caption-word-3-1",
+          "text": "agent.",
+          "start": 4.25,
+          "end": 4.7
+        }
+      ]
+    },
+    {
+      "id": "caption-group-4",
+      "frame": 2,
+      "start": 4.83,
+      "end": 6.19,
+      "text": "T3 code stays",
+      "words": [
+        {
+          "id": "caption-word-4-0",
+          "text": "T3",
+          "start": 4.83,
+          "end": 5.22
+        },
+        {
+          "id": "caption-word-4-1",
+          "text": "code",
+          "start": 5.22,
+          "end": 5.65
+        },
+        {
+          "id": "caption-word-4-2",
+          "text": "stays",
+          "start": 5.65,
+          "end": 6.19
+        }
+      ]
+    },
+    {
+      "id": "caption-group-5",
+      "frame": 2,
+      "start": 6.19,
+      "end": 7.16,
+      "text": "visible,",
+      "words": [
+        {
+          "id": "caption-word-5-0",
+          "text": "visible,",
+          "start": 6.19,
+          "end": 7.16
+        }
+      ]
+    },
+    {
+      "id": "caption-group-6",
+      "frame": 2,
+      "start": 7.16,
+      "end": 8.98,
+      "text": "Hermes stays powerful,",
+      "words": [
+        {
+          "id": "caption-word-6-0",
+          "text": "Hermes",
+          "start": 7.16,
+          "end": 7.7
+        },
+        {
+          "id": "caption-word-6-1",
+          "text": "stays",
+          "start": 7.7,
+          "end": 8.15
+        },
+        {
+          "id": "caption-word-6-2",
+          "text": "powerful,",
+          "start": 8.15,
+          "end": 8.98
+        }
+      ]
+    },
+    {
+      "id": "caption-group-7",
+      "frame": 2,
+      "start": 8.98,
+      "end": 9.51,
+      "text": "the bridge",
+      "words": [
+        {
+          "id": "caption-word-7-0",
+          "text": "the",
+          "start": 8.98,
+          "end": 9.14
+        },
+        {
+          "id": "caption-word-7-1",
+          "text": "bridge",
+          "start": 9.14,
+          "end": 9.43
+        }
+      ]
+    },
+    {
+      "id": "caption-group-8",
+      "frame": 2,
+      "start": 9.51,
+      "end": 10.08,
+      "text": "connects them",
+      "words": [
+        {
+          "id": "caption-word-8-0",
+          "text": "connects",
+          "start": 9.51,
+          "end": 9.87
+        },
+        {
+          "id": "caption-word-8-1",
+          "text": "them",
+          "start": 9.87,
+          "end": 10.08
+        }
+      ]
+    },
+    {
+      "id": "caption-group-9",
+      "frame": 2,
+      "start": 10.08,
+      "end": 11.369,
+      "text": "in both directions.",
+      "words": [
+        {
+          "id": "caption-word-9-0",
+          "text": "in",
+          "start": 10.08,
+          "end": 10.25
+        },
+        {
+          "id": "caption-word-9-1",
+          "text": "both",
+          "start": 10.25,
+          "end": 10.53
+        },
+        {
+          "id": "caption-word-9-2",
+          "text": "directions.",
+          "start": 10.63,
+          "end": 11.34
+        }
+      ]
+    },
+    {
+      "id": "caption-group-10",
+      "frame": 3,
+      "start": 11.369,
+      "end": 13.219,
+      "text": "T3 to Hermes,",
+      "words": [
+        {
+          "id": "caption-word-10-0",
+          "text": "T3",
+          "start": 11.369,
+          "end": 11.869
+        },
+        {
+          "id": "caption-word-10-1",
+          "text": "to",
+          "start": 11.869,
+          "end": 12.129
+        },
+        {
+          "id": "caption-word-10-2",
+          "text": "Hermes,",
+          "start": 12.129,
+          "end": 13.189
+        }
+      ]
+    },
+    {
+      "id": "caption-group-11",
+      "frame": 3,
+      "start": 13.219,
+      "end": 14.589,
+      "text": "Hermes to T3",
+      "words": [
+        {
+          "id": "caption-word-11-0",
+          "text": "Hermes",
+          "start": 13.219,
+          "end": 14.009
+        },
+        {
+          "id": "caption-word-11-1",
+          "text": "to",
+          "start": 14.009,
+          "end": 14.299
+        },
+        {
+          "id": "caption-word-11-2",
+          "text": "T3",
+          "start": 14.299,
+          "end": 14.469
+        }
+      ]
+    },
+    {
+      "id": "caption-group-12",
+      "frame": 3,
+      "start": 14.889,
+      "end": 15.289,
+      "text": "and any",
+      "words": [
+        {
+          "id": "caption-word-12-0",
+          "text": "and",
+          "start": 14.889,
+          "end": 15.079
+        },
+        {
+          "id": "caption-word-12-1",
+          "text": "any",
+          "start": 15.079,
+          "end": 15.289
+        }
+      ]
+    },
+    {
+      "id": "caption-group-13",
+      "frame": 3,
+      "start": 15.289,
+      "end": 15.919,
+      "text": "thread can",
+      "words": [
+        {
+          "id": "caption-word-13-0",
+          "text": "thread",
+          "start": 15.289,
+          "end": 15.709
+        },
+        {
+          "id": "caption-word-13-1",
+          "text": "can",
+          "start": 15.709,
+          "end": 15.919
+        }
+      ]
+    },
+    {
+      "id": "caption-group-14",
+      "frame": 3,
+      "start": 15.919,
+      "end": 16.399,
+      "text": "call at",
+      "words": [
+        {
+          "id": "caption-word-14-0",
+          "text": "call",
+          "start": 15.919,
+          "end": 16.009
+        },
+        {
+          "id": "caption-word-14-1",
+          "text": "at",
+          "start": 16.179,
+          "end": 16.279
+        }
+      ]
+    },
+    {
+      "id": "caption-group-15",
+      "frame": 3,
+      "start": 16.729,
+      "end": 16.979,
+      "text": "Hermes and",
+      "words": [
+        {
+          "id": "caption-word-15-0",
+          "text": "Hermes",
+          "start": 16.729,
+          "end": 16.789
+        },
+        {
+          "id": "caption-word-15-1",
+          "text": "and",
+          "start": 16.809,
+          "end": 16.979
+        }
+      ]
+    },
+    {
+      "id": "caption-group-16",
+      "frame": 3,
+      "start": 16.979,
+      "end": 18.299,
+      "text": "keep the conversation",
+      "words": [
+        {
+          "id": "caption-word-16-0",
+          "text": "keep",
+          "start": 16.979,
+          "end": 17.239
+        },
+        {
+          "id": "caption-word-16-1",
+          "text": "the",
+          "start": 17.239,
+          "end": 17.429
+        },
+        {
+          "id": "caption-word-16-2",
+          "text": "conversation",
+          "start": 17.429,
+          "end": 18.179
+        }
+      ]
+    },
+    {
+      "id": "caption-group-17",
+      "frame": 3,
+      "start": 18.549,
+      "end": 18.755,
+      "text": "going.",
+      "words": [
+        {
+          "id": "caption-word-17-0",
+          "text": "going.",
+          "start": 18.549,
+          "end": 18.769
+        }
+      ]
+    },
+    {
+      "id": "caption-group-18",
+      "frame": 4,
+      "start": 18.755,
+      "end": 20.115,
+      "text": "14 tests,",
+      "words": [
+        {
+          "id": "caption-word-18-0",
+          "text": "14",
+          "start": 18.755,
+          "end": 19.385
+        },
+        {
+          "id": "caption-word-18-1",
+          "text": "tests,",
+          "start": 19.385,
+          "end": 20.045
+        }
+      ]
+    },
+    {
+      "id": "caption-group-19",
+      "frame": 4,
+      "start": 20.115,
+      "end": 21.385,
+      "text": "3 live flows,",
+      "words": [
+        {
+          "id": "caption-word-19-0",
+          "text": "3",
+          "start": 20.115,
+          "end": 20.325
+        },
+        {
+          "id": "caption-word-19-1",
+          "text": "live",
+          "start": 20.325,
+          "end": 20.625
+        },
+        {
+          "id": "caption-word-19-2",
+          "text": "flows,",
+          "start": 20.775,
+          "end": 21.265
+        }
+      ]
+    },
+    {
+      "id": "caption-group-20",
+      "frame": 4,
+      "start": 21.385,
+      "end": 22.795,
+      "text": "0 forks,",
+      "words": [
+        {
+          "id": "caption-word-20-0",
+          "text": "0",
+          "start": 21.385,
+          "end": 21.805
+        },
+        {
+          "id": "caption-word-20-1",
+          "text": "forks,",
+          "start": 21.955,
+          "end": 22.795
+        }
+      ]
+    },
+    {
+      "id": "caption-group-21",
+      "frame": 4,
+      "start": 22.795,
+      "end": 24.665,
+      "text": "2 independent reviews,",
+      "words": [
+        {
+          "id": "caption-word-21-0",
+          "text": "2",
+          "start": 22.795,
+          "end": 22.975
+        },
+        {
+          "id": "caption-word-21-1",
+          "text": "independent",
+          "start": 22.975,
+          "end": 23.645
+        },
+        {
+          "id": "caption-word-21-2",
+          "text": "reviews,",
+          "start": 23.645,
+          "end": 24.645
+        }
+      ]
+    },
+    {
+      "id": "caption-group-22",
+      "frame": 4,
+      "start": 24.665,
+      "end": 25.945,
+      "text": "every finding fixed",
+      "words": [
+        {
+          "id": "caption-word-22-0",
+          "text": "every",
+          "start": 24.665,
+          "end": 24.905
+        },
+        {
+          "id": "caption-word-22-1",
+          "text": "finding",
+          "start": 25.055,
+          "end": 25.445
+        },
+        {
+          "id": "caption-word-22-2",
+          "text": "fixed",
+          "start": 25.445,
+          "end": 25.825
+        }
+      ]
+    },
+    {
+      "id": "caption-group-23",
+      "frame": 4,
+      "start": 25.955,
+      "end": 26.985,
+      "text": "before release.",
+      "words": [
+        {
+          "id": "caption-word-23-0",
+          "text": "before",
+          "start": 25.955,
+          "end": 26.325
+        },
+        {
+          "id": "caption-word-23-1",
+          "text": "release.",
+          "start": 26.325,
+          "end": 26.865
+        }
+      ]
+    },
+    {
+      "id": "caption-group-24",
+      "frame": 5,
+      "start": 27.051,
+      "end": 28.141,
+      "text": "Founder idea",
+      "words": [
+        {
+          "id": "caption-word-24-0",
+          "text": "Founder",
+          "start": 27.051,
+          "end": 27.841
+        },
+        {
+          "id": "caption-word-24-1",
+          "text": "idea",
+          "start": 27.841,
+          "end": 28.021
+        }
+      ]
+    },
+    {
+      "id": "caption-group-25",
+      "frame": 5,
+      "start": 28.511,
+      "end": 28.951,
+      "text": "Hermes and",
+      "words": [
+        {
+          "id": "caption-word-25-0",
+          "text": "Hermes",
+          "start": 28.511,
+          "end": 28.761
+        },
+        {
+          "id": "caption-word-25-1",
+          "text": "and",
+          "start": 28.761,
+          "end": 28.951
+        }
+      ]
+    },
+    {
+      "id": "caption-group-26",
+      "frame": 5,
+      "start": 28.951,
+      "end": 31.931,
+      "text": "orbit orchestrated codex executed",
+      "words": [
+        {
+          "id": "caption-word-26-0",
+          "text": "orbit",
+          "start": 28.951,
+          "end": 29.271
+        },
+        {
+          "id": "caption-word-26-1",
+          "text": "orchestrated",
+          "start": 29.271,
+          "end": 30.061
+        },
+        {
+          "id": "caption-word-26-2",
+          "text": "codex",
+          "start": 30.061,
+          "end": 31.181
+        },
+        {
+          "id": "caption-word-26-3",
+          "text": "executed",
+          "start": 31.181,
+          "end": 31.931
+        }
+      ]
+    },
+    {
+      "id": "caption-group-27",
+      "frame": 5,
+      "start": 31.931,
+      "end": 33.431,
+      "text": "public proof try it",
+      "words": [
+        {
+          "id": "caption-word-27-0",
+          "text": "public",
+          "start": 31.931,
+          "end": 32.491
+        },
+        {
+          "id": "caption-word-27-1",
+          "text": "proof",
+          "start": 32.491,
+          "end": 32.961
+        },
+        {
+          "id": "caption-word-27-2",
+          "text": "try",
+          "start": 32.961,
+          "end": 33.241
+        },
+        {
+          "id": "caption-word-27-3",
+          "text": "it",
+          "start": 33.241,
+          "end": 33.311
+        }
+      ]
+    },
+    {
+      "id": "caption-group-28",
+      "frame": 5,
+      "start": 33.641,
+      "end": 34.891,
+      "text": "break it contribute",
+      "words": [
+        {
+          "id": "caption-word-28-0",
+          "text": "break",
+          "start": 33.641,
+          "end": 33.871
+        },
+        {
+          "id": "caption-word-28-1",
+          "text": "it",
+          "start": 33.931,
+          "end": 34.071
+        },
+        {
+          "id": "caption-word-28-2",
+          "text": "contribute",
+          "start": 34.251,
+          "end": 34.771
+        }
+      ]
+    }
+  ]
+}

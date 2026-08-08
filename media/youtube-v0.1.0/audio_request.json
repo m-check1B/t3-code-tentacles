@@ -1,0 +1,30 @@
+{
+  "provider": "kokoro",
+  "voice": "am_michael",
+  "speed": 1,
+  "lines": [
+    {
+      "id": "01",
+      "text": "Agents shouldn't disappear behind terminals. One cockpit. Every agent."
+    },
+    {
+      "id": "02",
+      "text": "T3 Code stays visible. Hermes stays powerful. The bridge connects them in both directions."
+    },
+    {
+      "id": "03",
+      "text": "T3 to Hermes. Hermes to T3. And any thread can call at Hermes—and keep the conversation going."
+    },
+    {
+      "id": "04",
+      "text": "Fourteen tests. Three live flows. Zero forks. Two independent reviews. Every finding fixed before release."
+    },
+    {
+      "id": "05",
+      "text": "Founder idea. Hermes and Orbit orchestrated. Codex executed. Public proof. Try it. Break it. Contribute."
+    }
+  ],
+  "bgm": {
+    "mode": "none"
+  }
+}

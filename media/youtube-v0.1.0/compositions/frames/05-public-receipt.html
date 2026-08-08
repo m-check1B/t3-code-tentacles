@@ -1,0 +1,359 @@
+<template>
+  <style>
+    #root {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      container-type: size;
+      color: #ffffff;
+      font-family: system-ui, sans-serif;
+    }
+
+    #root *,
+    #root *::before,
+    #root *::after { box-sizing: border-box; }
+
+    .clip { position: absolute; inset: 0; }
+    .frame05-base { background: #000000; }
+    .frame05-poster {
+      background-image: url("assets/hermes-t3-youtube-thumbnail.png");
+      background-position: center;
+      background-size: cover;
+      opacity: 0.45;
+    }
+
+    .frame05-field {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.58);
+      pointer-events: none;
+    }
+
+    .frame05-kicker {
+      position: absolute;
+      top: 12cqh;
+      left: 12cqw;
+      color: #a0beff;
+      font-family: ui-monospace, monospace;
+      font-size: 0.82cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+    }
+
+    .frame05-terminal {
+      position: absolute;
+      top: 25cqh;
+      left: 17cqw;
+      width: 66cqw;
+      height: 31cqh;
+      border-top: 1px solid #484b50;
+      border-bottom: 1px solid #262728;
+      overflow: hidden;
+    }
+
+    .frame05-terminal::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 3.6cqw;
+      height: 2px;
+      background: #0055ff;
+    }
+
+    .frame05-line {
+      position: absolute;
+      left: 4.2cqw;
+      display: flex;
+      align-items: baseline;
+      min-width: 57cqw;
+      color: #ffffff;
+      font-family: ui-monospace, monospace;
+      font-size: 2.8cqw;
+      font-weight: 600;
+      letter-spacing: -0.035em;
+      line-height: 1;
+      white-space: pre;
+      will-change: transform, opacity;
+    }
+
+    .frame05-line-one { top: 7cqh; }
+    .frame05-line-two { top: 14cqh; }
+    .frame05-line-three { top: 21cqh; }
+    .frame05-line-label {
+      color: #b0b3b6;
+      font-size: 1.2cqw;
+      letter-spacing: 0.08em;
+      margin-right: 1.2cqw;
+    }
+    .frame05-line-text { white-space: pre; }
+    .frame05-caret {
+      display: inline-block;
+      width: 0.8cqw;
+      height: 2.45cqw;
+      margin-left: 0.55cqw;
+      background: #0055ff;
+      vertical-align: -0.22cqw;
+    }
+
+    .frame05-connector {
+      position: absolute;
+      top: 13.35cqh;
+      left: 4.2cqw;
+      width: 0;
+      height: 1px;
+      background: #0055ff;
+      transform-origin: left center;
+    }
+
+    .frame05-check {
+      display: inline-block;
+      margin-left: 1.1cqw;
+      color: #20c55a;
+      font-family: ui-monospace, monospace;
+      font-size: 2.45cqw;
+      line-height: 1;
+      will-change: transform, opacity;
+    }
+
+    .frame05-proof {
+      position: absolute;
+      top: 47cqh;
+      left: 11cqw;
+      width: 78cqw;
+      color: #ffffff;
+      font-size: 12.2cqw;
+      font-weight: 900;
+      letter-spacing: -0.055em;
+      line-height: 0.86;
+      text-transform: lowercase;
+      white-space: nowrap;
+      will-change: transform, opacity;
+    }
+
+    .frame05-proof-word { display: inline-block; }
+    .frame05-proof-word + .frame05-proof-word { margin-left: 2.2cqw; }
+
+    .frame05-cta-card {
+      position: absolute;
+      top: 61cqh;
+      left: 21cqw;
+      width: 58cqw;
+      height: 10.3cqh;
+      padding: 2.4cqw 2.9cqw;
+      background: #18191a;
+      border: 1px solid #484b50;
+      border-radius: 0;
+      overflow: hidden;
+      transform-origin: center center;
+      will-change: transform, background-color, border-radius, opacity;
+    }
+
+    .frame05-cta-old,
+    .frame05-cta-new {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+    }
+
+    .frame05-cta-old {
+      justify-content: center;
+      color: #a0beff;
+      font-family: ui-monospace, monospace;
+      font-size: 1.5cqw;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+    }
+
+    .frame05-cta-new {
+      display: block;
+      padding: 2.2cqw 2.9cqw;
+      opacity: 0;
+    }
+
+    .frame05-url-row {
+      display: flex;
+      align-items: baseline;
+      min-width: 51cqw;
+      color: #ffffff;
+      font-family: ui-monospace, monospace;
+      font-size: 1.75cqw;
+      font-weight: 600;
+      letter-spacing: -0.045em;
+      line-height: 1;
+      white-space: pre;
+    }
+
+    .frame05-url { white-space: pre; }
+    .frame05-url-caret {
+      display: inline-block;
+      width: 0.58cqw;
+      height: 1.52cqw;
+      margin-left: 0.45cqw;
+      background: #0055ff;
+      vertical-align: -0.12cqw;
+    }
+
+    .frame05-actions {
+      display: flex;
+      gap: 2.5cqw;
+      margin-top: 1.4cqh;
+      color: #20c55a;
+      font-family: ui-monospace, monospace;
+      font-size: 0.86cqw;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      line-height: 1;
+    }
+
+    .frame05-action {
+      opacity: 0;
+      will-change: transform, opacity;
+    }
+  </style>
+
+  <div id="root" data-composition-id="05-public-receipt" data-width="1920" data-height="1080" data-duration="8.107">
+    <div id="frame05-base-clip" class="clip frame05-base" data-start="0" data-duration="8.107" data-track-index="0"></div>
+    <div id="frame05-poster-clip" class="clip frame05-poster" data-start="0" data-duration="8.107" data-track-index="1"></div>
+    <div class="frame05-field">
+      <div class="frame05-kicker">OPEN RECEIPT / 05</div>
+      <div class="frame05-terminal">
+        <div class="frame05-line frame05-line-one">
+          <span class="frame05-line-label">01</span><span id="frame05-line-one-text" class="frame05-line-text"></span><span id="frame05-line-one-caret" class="frame05-caret"></span>
+        </div>
+        <div id="frame05-connector" class="frame05-connector"></div>
+        <div class="frame05-line frame05-line-two">
+          <span class="frame05-line-label">02</span><span id="frame05-line-two-text" class="frame05-line-text"></span><span id="frame05-line-two-caret" class="frame05-caret"></span>
+        </div>
+        <div class="frame05-line frame05-line-three">
+          <span class="frame05-line-label">03</span><span id="frame05-line-three-text" class="frame05-line-text"></span><span id="frame05-line-three-caret" class="frame05-caret"></span><span id="frame05-check" class="frame05-check">✓</span>
+        </div>
+      </div>
+
+      <div id="frame05-proof" class="frame05-proof" data-layout-allow-overlap aria-label="public proof">
+        <span class="frame05-proof-word">public</span><span class="frame05-proof-word">proof</span>
+      </div>
+
+      <div id="frame05-cta-card" class="frame05-cta-card" data-layout-allow-overlap>
+        <div id="frame05-cta-old" class="frame05-cta-old">SOURCE</div>
+        <div id="frame05-cta-new" class="frame05-cta-new">
+          <div class="frame05-url-row"><span id="frame05-url" class="frame05-url"></span><span id="frame05-url-caret" class="frame05-url-caret"></span></div>
+          <div class="frame05-actions">
+            <span id="frame05-try" class="frame05-action">TRY IT</span>
+            <span id="frame05-break" class="frame05-action">BREAK IT</span>
+            <span id="frame05-contribute" class="frame05-action">CONTRIBUTE</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js" integrity="sha384-g4NTh/Iv5PPU4xPyhEWqPcwtNXOvdaDI8LLnyYfyNZOjKJeYQyjzQ9X5275eBjpt" crossorigin="anonymous"></script>
+  <script>
+    (() => {
+      const DURATION = 8.107;
+      const BLUE = "#0055ff";
+      const GREEN = "#20c55a";
+      const tl = gsap.timeline({ paused: true });
+
+      gsap.set(["#frame05-proof", "#frame05-cta-card"], { opacity: 0 });
+
+      const sequenceAt = (sequence, time) => {
+        for (let index = sequence.length - 1; index >= 0; index -= 1) {
+          if (time >= sequence[index].t) return sequence[index];
+        }
+        return sequence[0];
+      };
+
+      const addTyping = ({ sequence, textId, caretId, start, end, color = BLUE, blinkCycles = 3 }) => {
+        const text = document.getElementById(textId);
+        const caret = document.getElementById(caretId);
+        const driver = { t: start };
+        const blink = { p: 0 };
+        const changeTimes = sequence.slice(1).map((entry) => entry.t);
+        tl.to(driver, {
+          t: end,
+          duration: end - start,
+          ease: "none",
+          onUpdate: () => {
+            const entry = sequenceAt(sequence, driver.t);
+            const typing = changeTimes.some((time) => time <= driver.t && driver.t - time < 0.19);
+            text.textContent = entry.text;
+            caret.style.background = entry.color || color;
+            caret.style.opacity = typing || Math.sin(blink.p) > 0 ? "1" : "0";
+          },
+        }, start);
+        tl.to(blink, { p: Math.PI * 2 * blinkCycles, duration: end - start, ease: "none" }, start);
+      };
+
+      const lineOne = [
+        { t: 0, text: "", color: BLUE },
+        { t: 0.18, text: "FOU", color: BLUE },
+        { t: 0.38, text: "FOUNDER", color: BLUE },
+        { t: 0.66, text: "FOUNDER ", color: BLUE },
+        { t: 0.96, text: "FOUNDER IDEA", color: BLUE },
+      ];
+      const lineTwo = [
+        { t: 1.12, text: "", color: BLUE },
+        { t: 1.31, text: "HERMES", color: BLUE },
+        { t: 1.62, text: "HERMES + ORBIT", color: BLUE },
+        { t: 2.08, text: "HERMES + ORBIT /", color: BLUE },
+        { t: 2.42, text: "HERMES + ORBIT / ORCHESTRATED", color: BLUE },
+      ];
+      const lineThree = [
+        { t: 3.16, text: "", color: BLUE },
+        { t: 3.38, text: "CODEX", color: BLUE },
+        { t: 3.74, text: "CODEX /", color: BLUE },
+        { t: 4.11, text: "CODEX / EXECUTED", color: BLUE },
+      ];
+      const urlSequence = [
+        { t: 6.56, text: "", color: BLUE },
+        { t: 6.72, text: "github.com/", color: BLUE },
+        { t: 7.06, text: "github.com/m-check1B/", color: BLUE },
+        { t: 7.53, text: "github.com/m-check1B/t3-hermes", color: BLUE },
+        { t: 7.89, text: "github.com/m-check1B/t3-hermes-bridge", color: BLUE },
+      ];
+
+      tl.fromTo(".frame05-terminal", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.28, ease: "power2.out" }, 0.04);
+      addTyping({ sequence: lineOne, textId: "frame05-line-one-text", caretId: "frame05-line-one-caret", start: 0, end: 1.12, blinkCycles: 2 });
+
+      tl.to(".frame05-line-one", { y: -4.8 * 10.8, opacity: 0.38, duration: 0.38, ease: "power2.inOut" }, 1.12);
+      tl.fromTo("#frame05-connector", { width: 0, opacity: 0 }, { width: "57cqw", opacity: 1, duration: 0.44, ease: "power2.out" }, 1.34);
+      addTyping({ sequence: lineTwo, textId: "frame05-line-two-text", caretId: "frame05-line-two-caret", start: 1.12, end: 3.16, blinkCycles: 3 });
+
+      tl.to(".frame05-line-two", { y: -3.2 * 10.8, opacity: 0.45, duration: 0.36, ease: "power2.inOut" }, 3.16);
+      addTyping({ sequence: lineThree, textId: "frame05-line-three-text", caretId: "frame05-line-three-caret", start: 3.16, end: 5.03, blinkCycles: 3 });
+      tl.fromTo("#frame05-check", { opacity: 0, scale: 0.35 }, { opacity: 1, scale: 1, duration: 0.24, ease: "power2.out" }, 4.46);
+
+      tl.fromTo("#frame05-proof", { opacity: 0 }, { opacity: 1, duration: 0.08, ease: "none" }, 5.03);
+      tl.fromTo(".frame05-proof-word", { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.42, stagger: 0.16, ease: "power3.out" }, 5.04);
+      tl.set(".frame05-terminal", { opacity: 0 }, 5.03);
+
+      tl.to("#frame05-proof", { scale: 0.34, y: -22 * 10.8, opacity: 0.3, duration: 0.58, ease: "power2.inOut" }, 6.06);
+      tl.fromTo("#frame05-cta-card", {
+        scale: 0.27,
+        borderRadius: "4cqw",
+        backgroundColor: BLUE,
+        opacity: 1,
+      }, {
+        scale: 1,
+        borderRadius: "0cqw",
+        backgroundColor: "#18191a",
+        duration: 0.86,
+        ease: "power2.inOut",
+      }, 6.06);
+      tl.to("#frame05-cta-old", { opacity: 0, duration: 0.3, ease: "power1.in" }, 6.08);
+      tl.to("#frame05-cta-new", { opacity: 1, duration: 0.34, ease: "power1.out" }, 6.46);
+      addTyping({ sequence: urlSequence, textId: "frame05-url", caretId: "frame05-url-caret", start: 6.56, end: DURATION, blinkCycles: 3 });
+      tl.fromTo("#frame05-try", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.22, ease: "power2.out" }, 7.02);
+      tl.fromTo("#frame05-break", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.22, ease: "power2.out" }, 7.39);
+      tl.fromTo("#frame05-contribute", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.22, ease: "power2.out" }, 7.72);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["05-public-receipt"] = tl;
+    })();
+  </script>
+</template>
