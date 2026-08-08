@@ -44,7 +44,7 @@ stable `grok:hermes` driver + instance identity correctly without relying on the
 editable display name or changing bridge behavior. The patch was submitted
 upstream as [T3 Code #5732](https://github.com/pingdotgg/t3code/pull/5732), which
 closed without merging; the reviewed patch remains available in our
-[public T3 Code fork](https://github.com/m-check1B/t3code/tree/fix/hermes-provider-logo).
+[public patch repository](https://github.com/m-check1B/t3code-hermes-ui).
 A neutral generic-ACP driver and provider-icon extension in upstream T3 would
 remove this cosmetic coupling entirely.
 

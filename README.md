@@ -54,7 +54,7 @@ directions still work. A small T3 UI patch can give the bridge's stable
 editable display name. The patch is optional and remains outside this bridge.
 It was submitted upstream as [T3 Code #5732](https://github.com/pingdotgg/t3code/pull/5732),
 which closed without merging; the reviewed patch remains available in our
-[public T3 Code fork](https://github.com/m-check1B/t3code/tree/fix/hermes-provider-logo).
+[public patch repository](https://github.com/m-check1B/t3code-hermes-ui).
 A neutral generic-ACP provider/icon extension in T3 Code remains the clean
 long-term solution.
 
