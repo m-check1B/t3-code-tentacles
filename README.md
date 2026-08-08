@@ -52,8 +52,9 @@ That is a cosmetic limitation only: the bridge and both communication
 directions still work. A small T3 UI patch can give the bridge's stable
 `grok:hermes` driver + instance identity its own logo, without relying on its
 editable display name. The patch is optional and remains outside this bridge.
-It is available in our [public T3 Code fork](https://github.com/m-check1B/t3code/tree/fix/hermes-provider-logo)
-and was submitted upstream as [T3 Code #5732](https://github.com/pingdotgg/t3code/pull/5732).
+It was submitted upstream as [T3 Code #5732](https://github.com/pingdotgg/t3code/pull/5732),
+which closed without merging; the reviewed patch remains available in our
+[public T3 Code fork](https://github.com/m-check1B/t3code/tree/fix/hermes-provider-logo).
 A neutral generic-ACP provider/icon extension in T3 Code remains the clean
 long-term solution.
 
