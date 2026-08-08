@@ -9,10 +9,10 @@ function safeErrorBody(body) {
   return "[redacted error body]";
 }
 
-async function readBoundedResponseText(response, maxBytes) {
+export async function readBoundedResponseText(response, maxBytes, label = "T3 response") {
   const declaredLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
-    throw new Error(`T3 response exceeds ${maxBytes} bytes`);
+    throw new Error(`${label} exceeds ${maxBytes} bytes`);
   }
   if (!response.body) return "";
   const reader = response.body.getReader();
@@ -24,7 +24,7 @@ async function readBoundedResponseText(response, maxBytes) {
     total += value.byteLength;
     if (total > maxBytes) {
       await reader.cancel();
-      throw new Error(`T3 response exceeds ${maxBytes} bytes`);
+      throw new Error(`${label} exceeds ${maxBytes} bytes`);
     }
     chunks.push(Buffer.from(value));
   }

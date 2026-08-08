@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   ALLOW_ALL_MENTION_POLICY,
   acquireStateLock,
+  doctor,
   formatUntrustedContext,
   originate,
   readBridgeState,
@@ -62,6 +63,41 @@ function waitForChildOutput(child, expected) {
     });
   });
 }
+
+test("mention routing rejects invalid work bounds before touching state", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "t3-bridge-max-messages-"));
+  const stateFile = path.join(directory, "state.json");
+  for (const maxMessages of [Number.NaN, 0, 101, 1.5]) {
+    await assert.rejects(
+      routeMentionsOnce({}, { stateFile, maxMessages, policy: ALLOW_ALL_MENTION_POLICY }),
+      /integer between 1 and 100/,
+    );
+  }
+  assert.equal(fs.existsSync(stateFile), false);
+  assert.equal(fs.existsSync(`${stateFile}.lock`), false);
+});
+
+test("doctor bounds and validates the Hermes health response", async () => {
+  const client = {
+    shell: async () => ({ projects: [], threads: [] }),
+    getSettings: async () => ({ providerInstances: {} }),
+    rpc: async () => ({ providers: [] }),
+  };
+  await assert.rejects(
+    doctor(client, {
+      fetchImpl: async () => new Response(JSON.stringify({ status: "ok", padding: "x".repeat(65_536) })),
+    }),
+    /Hermes health response exceeds 65536 bytes/,
+  );
+  await assert.rejects(
+    doctor(client, { fetchImpl: async () => new Response("not-json") }),
+    /invalid JSON/,
+  );
+  const result = await doctor(client, {
+    fetchImpl: async () => new Response(JSON.stringify({ status: "ok", version: "test-version" })),
+  });
+  assert.equal(result.hermes.version, "test-version");
+});
 
 test("missing or pruned cursor never replays an evicted historical mention", async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "t3-bridge-cursor-"));

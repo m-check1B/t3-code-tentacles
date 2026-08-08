@@ -189,6 +189,8 @@ async function main() {
     }
     const interval = Number(watch.interval);
     if (!Number.isFinite(interval) || interval < 250 || interval > 3_600_000) throw new Error("--interval must be between 250ms and 3600000ms");
+    const maxMessages = Number(watch.maxMessages);
+    if (!Number.isInteger(maxMessages) || maxMessages < 1 || maxMessages > 100) throw new Error("--max-messages must be an integer between 1 and 100");
     let stopping = false;
     let wake = null;
     const stop = () => { stopping = true; wake?.(); };
@@ -205,7 +207,7 @@ async function main() {
           stateFile: watch.stateFile,
           instanceId: watch.instance,
           model: watch.model,
-          maxMessages: Number(watch.maxMessages),
+          maxMessages,
           policy: ALLOW_ALL_MENTION_POLICY,
         });
         for (const route of routed) console.log(JSON.stringify({ event: "mention.routed", ...route }));

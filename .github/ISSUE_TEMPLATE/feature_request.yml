@@ -1,0 +1,42 @@
+name: Feature request
+description: Propose a source-independent bridge improvement or compatibility target.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The bridge must remain source-independent and must not require a fork of
+        T3 Code or Hermes Agent.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: Describe the workflow limitation, not only the desired implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Explain the user-visible result and any protocol or platform boundary.
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Security, ownership, and compatibility considerations
+      description: Cover credentials, local data, retries, replay, concurrency, cleanup, and upstream versions where relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to help implement or test this change.

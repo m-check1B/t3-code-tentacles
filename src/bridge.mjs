@@ -11,7 +11,7 @@ import {
   ensurePrivateDirectory,
   requireLoopbackUrl,
 } from "./config.mjs";
-import { T3HttpError } from "./t3-client.mjs";
+import { readBoundedResponseText, T3HttpError } from "./t3-client.mjs";
 
 const HERMES_MENTION = /(^|\s)@hermes\b/i;
 const BRIDGE_OWNER_VARIABLE = "T3_HERMES_BRIDGE_OWNER";
@@ -29,6 +29,7 @@ const MAX_RETRY_ATTEMPTS = 5;
 const CONTEXT_MESSAGE_LIMIT = 6;
 const CONTEXT_CHAR_LIMIT = 6_000;
 const CONTEXT_ENTRY_CHAR_LIMIT = 1_500;
+const MAX_HERMES_HEALTH_BYTES = 64 * 1024;
 
 export const ALLOW_ALL_MENTION_POLICY = Object.freeze({ allowAll: true });
 
@@ -496,6 +497,9 @@ async function attemptIntent(client, state, messageId, intent, options, routed) 
 }
 
 export async function routeMentionsOnce(client, { stateFile = DEFAULT_BRIDGE_STATE_FILE, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, maxMessages = 10, policy } = {}) {
+  if (!Number.isInteger(maxMessages) || maxMessages < 1 || maxMessages > 100) {
+    throw new Error("maxMessages must be an integer between 1 and 100");
+  }
   const release = acquireStateLock(stateFile);
   if (!release) return [];
   try { return await routeMentionsLocked(client, { stateFile, instanceId, model, maxMessages, policy }); }
@@ -553,14 +557,24 @@ async function routeMentionsLocked(client, { stateFile, instanceId, model, maxMe
   return routed;
 }
 
-export async function doctor(client, { hermesUrl = process.env.HERMES_URL || DEFAULT_HERMES_URL, instanceId = DEFAULT_INSTANCE_ID } = {}) {
+export async function doctor(client, {
+  hermesUrl = process.env.HERMES_URL || DEFAULT_HERMES_URL,
+  instanceId = DEFAULT_INSTANCE_ID,
+  fetchImpl = globalThis.fetch,
+} = {}) {
   const shell = await client.shell();
   const settings = await client.getSettings();
   const config = await client.rpc("server.getConfig", {});
   const provider = config.providers.find((entry) => entry.instanceId === instanceId);
   const hermesOrigin = requireLoopbackUrl(hermesUrl, "HERMES_URL");
-  const hermesResponse = await fetch(`${hermesOrigin}/health`, { redirect: "error", signal: AbortSignal.timeout(10_000) });
+  const hermesResponse = await fetchImpl(`${hermesOrigin}/health`, { redirect: "error", signal: AbortSignal.timeout(10_000) });
   if (!hermesResponse.ok) throw new Error(`Hermes health check failed (${hermesResponse.status})`);
-  const health = await hermesResponse.json();
+  const healthText = await readBoundedResponseText(hermesResponse, MAX_HERMES_HEALTH_BYTES, "Hermes health response");
+  let health;
+  try { health = JSON.parse(healthText); }
+  catch { throw new Error("Hermes health check returned invalid JSON"); }
+  if (!health || typeof health !== "object" || Array.isArray(health)) {
+    throw new Error("Hermes health check returned an invalid payload");
+  }
   return { t3: { reachable: true, projects: shell.projects.length, threads: shell.threads.length }, hermes: { reachable: true, status: health.status || "ok", version: health.version || null }, provider: { configured: Boolean(settings.providerInstances?.[instanceId]), instanceId, ready: provider?.status === "ready", installed: provider?.installed === true, status: provider?.status || null, modelCount: provider?.models?.length || 0 } };
 }
