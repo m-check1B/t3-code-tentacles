@@ -1,0 +1,420 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      container-type: size;
+    }
+
+    .clip {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+    }
+
+    .f03-ground {
+      background: #000000;
+    }
+
+    .f03-kicker {
+      position: absolute;
+      top: 8.2cqh;
+      left: 5.5cqw;
+      color: #FFFFFF;
+      font-family: monospace;
+      font-size: 0.9cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      text-transform: uppercase;
+      white-space: nowrap;
+      will-change: transform, opacity;
+    }
+
+    .f03-kicker::before {
+      content: "";
+      display: inline-block;
+      width: 1.9cqw;
+      height: 2px;
+      margin: 0 1.1cqw 0.18cqh 0;
+      background: #0055FF;
+      vertical-align: middle;
+    }
+
+    .f03-divider {
+      position: absolute;
+      top: 24cqh;
+      width: 1px;
+      height: 46cqh;
+      background: #262728;
+      will-change: opacity;
+    }
+
+    #f03-div-1 { left: 34.83cqw; }
+    #f03-div-2 { left: 65.16cqw; }
+
+    .f03-panel {
+      position: absolute;
+      top: 24cqh;
+      width: 28.33cqw;
+      height: 46cqh;
+    }
+
+    #f03-panel-1 { left: 5.5cqw; }
+    #f03-panel-2 { left: 35.83cqw; }
+    #f03-panel-3 { left: 66.16cqw; }
+
+    .f03-burst-wrap {
+      position: absolute;
+      inset: 0;
+    }
+
+    .f03-item {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      will-change: transform, opacity;
+    }
+
+    .f03-hairline {
+      width: 28.33cqw;
+      height: 2px;
+      background: #0055FF;
+    }
+
+    .f03-num {
+      color: #727578;
+      font-family: monospace;
+      font-size: 0.85cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .f03-headline {
+      margin: 0;
+      color: #FFFFFF;
+      font-family: sans-serif;
+      font-size: 3.4cqw;
+      font-weight: 900;
+      letter-spacing: -0.03em;
+      line-height: 1;
+      text-transform: lowercase;
+      white-space: nowrap;
+    }
+
+    .f03-headline .f03-arrow {
+      color: #0055FF;
+    }
+
+    .f03-sub {
+      color: #727578;
+      font-family: monospace;
+      font-size: 0.85cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    /* panel 1 dims to 0.55 opacity — its small mono text starts brighter so the
+       effective blended color still resolves to >= 4.5:1 on the black ground */
+    .f03-dimtext {
+      color: #D9DCDE;
+    }
+
+    .f03-thread-row {
+      display: flex;
+      align-items: center;
+      padding: 0.9cqw 1.1cqw;
+      border: 1px solid #262728;
+      font-family: monospace;
+      font-size: 2.2cqw;
+      line-height: 1;
+      white-space: pre;
+    }
+
+    .f03-thread-dot {
+      display: inline-block;
+      width: 0.65cqw;
+      height: 0.65cqw;
+      margin-right: 0.9cqw;
+      background: #0055FF;
+    }
+
+    .f03-thread-text-wrap {
+      display: inline-flex;
+      align-items: baseline;
+      min-width: 15.6cqw;
+      white-space: nowrap;
+    }
+
+    #f03-thread-text {
+      color: #FFFFFF;
+      white-space: pre;
+    }
+
+    #f03-thread-cursor {
+      display: inline-block;
+      width: 0.72cqw;
+      height: 1.98cqw;
+      margin-left: 0.18cqw;
+      background: #484B50;
+      vertical-align: -0.3cqw;
+    }
+
+    .f03-convo {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    #f03-convo-line {
+      position: absolute;
+      top: 73cqh;
+      left: 5.5cqw;
+      width: 89cqw;
+      height: 2px;
+      background: #0055FF;
+      will-change: transform, opacity;
+    }
+
+    .f03-tick {
+      position: absolute;
+      top: 72.1cqh;
+      width: 0.95cqw;
+      height: 0.95cqw;
+      background: #0055FF;
+      will-change: transform, opacity;
+    }
+
+    #f03-tick-1 { left: 19.2cqw; }
+    #f03-tick-2 { left: 49.5cqw; }
+    #f03-tick-3 { left: 79.8cqw; }
+
+    #f03-convo-label {
+      position: absolute;
+      top: 76.2cqh;
+      left: 5.5cqw;
+      color: #FFFFFF;
+      font-family: monospace;
+      font-size: 0.9cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      text-transform: uppercase;
+      white-space: nowrap;
+      will-change: transform, opacity;
+    }
+  </style>
+
+  <div id="root" data-composition-id="03-three-live-flows" data-width="1920" data-height="1080" data-duration="8.599">
+    <div id="f03-ground-clip" class="clip f03-ground" data-start="0" data-duration="8.599" data-track-index="0"></div>
+
+    <div id="f03-chrome-clip" class="clip" data-start="0" data-duration="8.599" data-track-index="1">
+      <div id="f03-kicker" class="f03-kicker" data-layout-allow-overflow>LIVE FLOWS / 03</div>
+      <div id="f03-div-1" class="f03-divider"></div>
+      <div id="f03-div-2" class="f03-divider"></div>
+    </div>
+
+    <div id="f03-panel-1-clip" class="clip" data-start="0" data-duration="8.599" data-track-index="2">
+      <div id="f03-panel-1" class="f03-panel">
+        <div class="f03-burst-wrap">
+          <div class="f03-item f03-hairline" data-target-x="0" data-target-y="-210"></div>
+          <div class="f03-item f03-num f03-dimtext" data-target-x="230" data-target-y="-204">01</div>
+          <div class="f03-item f03-headline" data-target-x="0" data-target-y="-40">t3 <span class="f03-arrow">→</span> hermes</div>
+          <div class="f03-item f03-sub f03-dimtext" data-target-x="0" data-target-y="110">OVER ACP</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="f03-panel-2-clip" class="clip" data-start="2.131" data-duration="6.468" data-track-index="3">
+      <div id="f03-panel-2" class="f03-panel">
+        <div class="f03-burst-wrap">
+          <div class="f03-item f03-hairline" data-target-x="0" data-target-y="-210"></div>
+          <div class="f03-item f03-num" data-target-x="230" data-target-y="-204">02</div>
+          <div class="f03-item f03-headline" data-target-x="0" data-target-y="-40">hermes <span class="f03-arrow">→</span> t3</div>
+          <div class="f03-item f03-sub" data-target-x="0" data-target-y="110">VISIBLE THREAD + TURN</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="f03-panel-3-clip" class="clip" data-start="3.813" data-duration="4.786" data-track-index="4">
+      <div id="f03-panel-3" class="f03-panel">
+        <div class="f03-burst-wrap">
+          <div class="f03-item f03-hairline" data-target-x="0" data-target-y="-210"></div>
+          <div class="f03-item f03-num" data-target-x="230" data-target-y="-204">03</div>
+          <div class="f03-item f03-sub" data-target-x="0" data-target-y="110">ANY THREAD</div>
+        </div>
+        <div id="f03-thread-row" class="f03-item f03-thread-row">
+          <span class="f03-thread-dot"></span>
+          <span class="f03-thread-text-wrap">
+            <span id="f03-thread-text"></span><span id="f03-thread-cursor"></span>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <div id="f03-convo-clip" class="clip" data-start="6.28" data-duration="2.319" data-track-index="5">
+      <div class="f03-convo">
+        <div id="f03-convo-line"></div>
+        <div id="f03-tick-1" class="f03-tick"></div>
+        <div id="f03-tick-2" class="f03-tick"></div>
+        <div id="f03-tick-3" class="f03-tick"></div>
+        <div id="f03-convo-label">ONE LINKED CONVERSATION</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const D = 8.299;
+      const K = D / 7.4; // packet scene timings scaled so the last scene ends exactly at D
+      const S1 = 0;
+      const S2 = 1.9 * K; // 2.131
+      const S3 = 3.4 * K; // 3.813
+      const S4 = 5.6 * K; // 6.280
+
+      const tl = gsap.timeline({ paused: true });
+
+      // chrome
+      tl.fromTo("#f03-kicker", { opacity: 0, x: -28 }, { opacity: 1, x: 0, duration: 0.32, ease: "power3.out" }, 0.05);
+      tl.fromTo(".f03-divider", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.out" }, 0.2);
+
+      // item stagger-assemble (center-outward-expansion) per panel
+      function assemble(panelSel, at) {
+        const items = document.querySelectorAll(panelSel + " .f03-burst-wrap .f03-item");
+        items.forEach((item, i) => {
+          tl.fromTo(item, {
+            xPercent: -50,
+            yPercent: -50,
+            x: 0,
+            y: 0,
+            scale: 0.6,
+            opacity: 0,
+          }, {
+            x: Number(item.dataset.targetX),
+            y: Number(item.dataset.targetY),
+            scale: 1,
+            opacity: 1,
+            duration: 0.9,
+            ease: "power3.out",
+          }, at + i * 0.06);
+        });
+      }
+
+      // Scene 1 (0.000–2.131): left panel assembles on the first cue
+      assemble("#f03-panel-1", S1 + 0.1);
+
+      // Scene 2 (2.131–3.813): middle panel arrives; first panel dims to 55%
+      assemble("#f03-panel-2", S2 + 0.08);
+      tl.to("#f03-panel-1 .f03-burst-wrap", { opacity: 0.55, duration: 0.4, ease: "power2.out" }, S2 + 0.15);
+
+      // Scene 3 (3.813–6.280): right panel hairline draws; @hermes types with a block caret
+      assemble("#f03-panel-3", S3 + 0.08);
+      tl.fromTo("#f03-thread-row", {
+        xPercent: -50,
+        yPercent: -50,
+        x: 0,
+        y: 14,
+        opacity: 0,
+      }, {
+        x: 0,
+        y: -40,
+        opacity: 1,
+        duration: 0.55,
+        ease: "power3.out",
+      }, S3 + 0.2);
+
+      // discrete-text-sequence + context-sensitive-cursor (driver local to Scene 3)
+      const TYPE_DUR = S4 - S3; // 2.467s
+      const SEQUENCE = [
+        { t: 0.0, text: "", color: "#484B50", textColor: "#FFFFFF" },
+        { t: 0.49, text: "@", color: "#0055FF", textColor: "#FFFFFF" },
+        { t: 0.61, text: "@h", color: "#0055FF", textColor: "#FFFFFF" },
+        { t: 0.73, text: "@he", color: "#0055FF", textColor: "#FFFFFF" },
+        { t: 0.85, text: "@her", color: "#0055FF", textColor: "#FFFFFF" },
+        { t: 0.97, text: "@herm", color: "#0055FF", textColor: "#FFFFFF" },
+        { t: 1.09, text: "@herme", color: "#0055FF", textColor: "#FFFFFF" },
+        { t: 1.21, text: "@hermes", color: "#0055FF", textColor: "#FFFFFF" },
+        { t: 1.79, text: "@hermes", color: "#0055FF", textColor: "#0055FF" },
+      ];
+      const CHANGE_TIMES = SEQUENCE.filter((e, i) => i > 0 && e.text !== SEQUENCE[i - 1].text).map((e) => e.t);
+      const TYPING_GRACE = 0.2;
+
+      function entryAt(time) {
+        for (let i = SEQUENCE.length - 1; i >= 0; i -= 1) {
+          if (time >= SEQUENCE[i].t) return SEQUENCE[i];
+        }
+        return SEQUENCE[0];
+      }
+
+      const textEl = document.getElementById("f03-thread-text");
+      const cursorEl = document.getElementById("f03-thread-cursor");
+      let lastText = "__uninitialized__";
+      let lastColor = "";
+      let lastTextColor = "";
+
+      const driver = { t: 0 };
+      tl.to(driver, {
+        t: TYPE_DUR,
+        duration: TYPE_DUR,
+        ease: "none",
+        onUpdate: () => {
+          const entry = entryAt(driver.t);
+          if (entry.text !== lastText) {
+            textEl.textContent = entry.text;
+            lastText = entry.text;
+          }
+          if (entry.color !== lastColor) {
+            cursorEl.style.background = entry.color;
+            lastColor = entry.color;
+          }
+          if (entry.textColor !== lastTextColor) {
+            textEl.style.color = entry.textColor;
+            lastTextColor = entry.textColor;
+          }
+        },
+      }, S3);
+
+      // deterministic square-wave blink, solid while typing (baked change times)
+      const blink = { p: 0 };
+      tl.to(blink, {
+        p: Math.PI * 2 * 3, // 3 whole cycles across TYPE_DUR
+        duration: TYPE_DUR,
+        ease: "none",
+        onUpdate: () => {
+          const isTyping = CHANGE_TIMES.some((t) => t <= driver.t && driver.t - t < TYPING_GRACE);
+          cursorEl.style.opacity = isTyping ? "1" : Math.sin(blink.p) > 0 ? "1" : "0";
+        },
+      }, S3);
+
+      // Scene 4 (6.280–8.299): one conversation line extends from @hermes across all panels;
+      // three message ticks reveal sequentially; triptych holds for the last phrase
+      tl.fromTo("#f03-convo-line", {
+        scaleX: 0,
+        transformOrigin: "right center",
+      }, {
+        scaleX: 1,
+        duration: 0.85,
+        ease: "power2.inOut",
+      }, S4 + 0.05);
+
+      tl.fromTo("#f03-convo-label", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, S4 + 0.35);
+
+      ["#f03-tick-1", "#f03-tick-2", "#f03-tick-3"].forEach((sel, i) => {
+        tl.fromTo(sel, { opacity: 0, scale: 0 }, { opacity: 1, scale: 1, duration: 0.3, ease: "power3.out" }, S4 + 0.72 + i * 0.2);
+      });
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["03-three-live-flows"] = tl;
+    })();
+  </script>
+</template>

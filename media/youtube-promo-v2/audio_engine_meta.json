@@ -1,0 +1,562 @@
+{
+  "tts_provider": "kokoro",
+  "voice_id": "am_michael",
+  "bgm": null,
+  "bgm_pending": false,
+  "bgm_provider": null,
+  "bgm_pid": null,
+  "bgm_log": null,
+  "bgm_mode": null,
+  "bgm_target_duration_s": null,
+  "bgm_seed_duration_s": null,
+  "bgm_loop_count": null,
+  "voices": [
+    {
+      "id": "01",
+      "path": "assets/voice/01.wav",
+      "duration_s": 5.952,
+      "words": [
+        {
+          "id": "w0",
+          "text": "Hermes",
+          "start": 0.1,
+          "end": 0.61
+        },
+        {
+          "id": "w1",
+          "text": "agent",
+          "start": 0.61,
+          "end": 1.12
+        },
+        {
+          "id": "w2",
+          "text": "runs",
+          "start": 1.12,
+          "end": 1.52
+        },
+        {
+          "id": "w3",
+          "text": "inside",
+          "start": 1.52,
+          "end": 2.13
+        },
+        {
+          "id": "w4",
+          "text": "T3",
+          "start": 2.13,
+          "end": 2.53
+        },
+        {
+          "id": "w5",
+          "text": "code",
+          "start": 2.53,
+          "end": 2.93
+        },
+        {
+          "id": "w6",
+          "text": "now.",
+          "start": 2.93,
+          "end": 3.58
+        },
+        {
+          "id": "w7",
+          "text": "No",
+          "start": 3.68,
+          "end": 3.76
+        },
+        {
+          "id": "w8",
+          "text": "forks",
+          "start": 3.76,
+          "end": 4.21
+        },
+        {
+          "id": "w9",
+          "text": "and",
+          "start": 4.21,
+          "end": 4.43
+        },
+        {
+          "id": "w10",
+          "text": "the",
+          "start": 4.48,
+          "end": 4.75
+        },
+        {
+          "id": "w11",
+          "text": "proof",
+          "start": 4.75,
+          "end": 5.2
+        },
+        {
+          "id": "w12",
+          "text": "is",
+          "start": 5.2,
+          "end": 5.38
+        },
+        {
+          "id": "w13",
+          "text": "public.",
+          "start": 5.38,
+          "end": 6.08
+        }
+      ]
+    },
+    {
+      "id": "02",
+      "path": "assets/voice/02.wav",
+      "duration_s": 10.155,
+      "words": [
+        {
+          "id": "w0",
+          "text": "One",
+          "start": 0.09,
+          "end": 0.22
+        },
+        {
+          "id": "w1",
+          "text": "standalone",
+          "start": 0.22,
+          "end": 0.95
+        },
+        {
+          "id": "w2",
+          "text": "bridge",
+          "start": 0.95,
+          "end": 1.4
+        },
+        {
+          "id": "w3",
+          "text": "connects",
+          "start": 1.4,
+          "end": 1.93
+        },
+        {
+          "id": "w4",
+          "text": "them",
+          "start": 2.01,
+          "end": 2.32
+        },
+        {
+          "id": "w5",
+          "text": "in",
+          "start": 2.32,
+          "end": 2.48
+        },
+        {
+          "id": "w6",
+          "text": "both",
+          "start": 2.48,
+          "end": 2.75
+        },
+        {
+          "id": "w7",
+          "text": "directions",
+          "start": 2.81,
+          "end": 3.38
+        },
+        {
+          "id": "w8",
+          "text": "over",
+          "start": 3.38,
+          "end": 3.59
+        },
+        {
+          "id": "w9",
+          "text": "the",
+          "start": 3.6,
+          "end": 3.77
+        },
+        {
+          "id": "w10",
+          "text": "agent-client",
+          "start": 3.77,
+          "end": 4.47
+        },
+        {
+          "id": "w11",
+          "text": "protocol.",
+          "start": 4.47,
+          "end": 5.76
+        },
+        {
+          "id": "w12",
+          "text": "T3",
+          "start": 5.83,
+          "end": 6.14
+        },
+        {
+          "id": "w13",
+          "text": "code",
+          "start": 6.14,
+          "end": 6.52
+        },
+        {
+          "id": "w14",
+          "text": "stays",
+          "start": 6.53,
+          "end": 7.02
+        },
+        {
+          "id": "w15",
+          "text": "the",
+          "start": 7.02,
+          "end": 7.27
+        },
+        {
+          "id": "w16",
+          "text": "cockpit.",
+          "start": 7.31,
+          "end": 8.28
+        },
+        {
+          "id": "w17",
+          "text": "Hermey",
+          "start": 8.41,
+          "end": 8.75
+        },
+        {
+          "id": "w18",
+          "text": "stays",
+          "start": 8.75,
+          "end": 9.11
+        },
+        {
+          "id": "w19",
+          "text": "the",
+          "start": 9.11,
+          "end": 9.33
+        },
+        {
+          "id": "w20",
+          "text": "runtime.",
+          "start": 9.33,
+          "end": 10.08
+        }
+      ]
+    },
+    {
+      "id": "03",
+      "path": "assets/voice/03.wav",
+      "duration_s": 8.299,
+      "words": [
+        {
+          "id": "w0",
+          "text": "T3",
+          "start": 0.02,
+          "end": 0.53
+        },
+        {
+          "id": "w1",
+          "text": "to",
+          "start": 0.53,
+          "end": 0.79
+        },
+        {
+          "id": "w2",
+          "text": "Hermes,",
+          "start": 0.79,
+          "end": 1.84
+        },
+        {
+          "id": "w3",
+          "text": "Hermes",
+          "start": 1.89,
+          "end": 2.66
+        },
+        {
+          "id": "w4",
+          "text": "to",
+          "start": 2.81,
+          "end": 2.96
+        },
+        {
+          "id": "w5",
+          "text": "T3,",
+          "start": 2.96,
+          "end": 3.66
+        },
+        {
+          "id": "w6",
+          "text": "or",
+          "start": 3.66,
+          "end": 3.78
+        },
+        {
+          "id": "w7",
+          "text": "mention",
+          "start": 3.78,
+          "end": 4.23
+        },
+        {
+          "id": "w8",
+          "text": "at",
+          "start": 4.23,
+          "end": 4.39
+        },
+        {
+          "id": "w9",
+          "text": "Hermes",
+          "start": 4.48,
+          "end": 4.94
+        },
+        {
+          "id": "w10",
+          "text": "in",
+          "start": 4.94,
+          "end": 5
+        },
+        {
+          "id": "w11",
+          "text": "any",
+          "start": 5,
+          "end": 5.21
+        },
+        {
+          "id": "w12",
+          "text": "thread",
+          "start": 5.36,
+          "end": 5.64
+        },
+        {
+          "id": "w13",
+          "text": "and",
+          "start": 5.85,
+          "end": 6
+        },
+        {
+          "id": "w14",
+          "text": "one",
+          "start": 6,
+          "end": 6.24
+        },
+        {
+          "id": "w15",
+          "text": "linked",
+          "start": 6.24,
+          "end": 6.48
+        },
+        {
+          "id": "w16",
+          "text": "conversation",
+          "start": 6.56,
+          "end": 7.4
+        },
+        {
+          "id": "w17",
+          "text": "keeps",
+          "start": 7.42,
+          "end": 7.82
+        },
+        {
+          "id": "w18",
+          "text": "going.",
+          "start": 7.82,
+          "end": 8.24
+        }
+      ]
+    },
+    {
+      "id": "04",
+      "path": "assets/voice/04.wav",
+      "duration_s": 9.259,
+      "words": [
+        {
+          "id": "w0",
+          "text": "39",
+          "start": 0.1,
+          "end": 0.64
+        },
+        {
+          "id": "w1",
+          "text": "tests",
+          "start": 0.64,
+          "end": 1.17
+        },
+        {
+          "id": "w2",
+          "text": "passing,",
+          "start": 1.17,
+          "end": 1.94
+        },
+        {
+          "id": "w3",
+          "text": "3",
+          "start": 2.04,
+          "end": 2.32
+        },
+        {
+          "id": "w4",
+          "text": "live",
+          "start": 2.32,
+          "end": 2.83
+        },
+        {
+          "id": "w5",
+          "text": "flows,",
+          "start": 2.83,
+          "end": 3.52
+        },
+        {
+          "id": "w6",
+          "text": "0",
+          "start": 3.56,
+          "end": 4
+        },
+        {
+          "id": "w7",
+          "text": "upstream",
+          "start": 4,
+          "end": 4.86
+        },
+        {
+          "id": "w8",
+          "text": "forks,",
+          "start": 4.87,
+          "end": 5.44
+        },
+        {
+          "id": "w9",
+          "text": "2",
+          "start": 5.5,
+          "end": 5.78
+        },
+        {
+          "id": "w10",
+          "text": "independent",
+          "start": 5.86,
+          "end": 6.42
+        },
+        {
+          "id": "w11",
+          "text": "reviews,",
+          "start": 6.47,
+          "end": 7.38
+        },
+        {
+          "id": "w12",
+          "text": "verified",
+          "start": 7.38,
+          "end": 7.96
+        },
+        {
+          "id": "w13",
+          "text": "on",
+          "start": 7.96,
+          "end": 8.12
+        },
+        {
+          "id": "w14",
+          "text": "macOS.",
+          "start": 8.12,
+          "end": 9.25
+        }
+      ]
+    },
+    {
+      "id": "05",
+      "path": "assets/voice/05.wav",
+      "duration_s": 7.936,
+      "words": [
+        {
+          "id": "w0",
+          "text": "A",
+          "start": 0.08,
+          "end": 0.1
+        },
+        {
+          "id": "w1",
+          "text": "founder's",
+          "start": 0.1,
+          "end": 0.85
+        },
+        {
+          "id": "w2",
+          "text": "idea",
+          "start": 0.85,
+          "end": 1.19
+        },
+        {
+          "id": "w3",
+          "text": "executed",
+          "start": 1.19,
+          "end": 1.88
+        },
+        {
+          "id": "w4",
+          "text": "by",
+          "start": 1.88,
+          "end": 2.03
+        },
+        {
+          "id": "w5",
+          "text": "agents",
+          "start": 2.1,
+          "end": 2.55
+        },
+        {
+          "id": "w6",
+          "text": "reviewed",
+          "start": 2.62,
+          "end": 3.29
+        },
+        {
+          "id": "w7",
+          "text": "in",
+          "start": 3.35,
+          "end": 3.49
+        },
+        {
+          "id": "w8",
+          "text": "the",
+          "start": 3.57,
+          "end": 3.64
+        },
+        {
+          "id": "w9",
+          "text": "open.",
+          "start": 3.64,
+          "end": 4.3
+        },
+        {
+          "id": "w10",
+          "text": "MIT-licensed,",
+          "start": 4.3,
+          "end": 5.62
+        },
+        {
+          "id": "w11",
+          "text": "try",
+          "start": 5.63,
+          "end": 5.94
+        },
+        {
+          "id": "w12",
+          "text": "it.",
+          "start": 5.94,
+          "end": 6.48
+        },
+        {
+          "id": "w13",
+          "text": "Break",
+          "start": 6.58,
+          "end": 6.79
+        },
+        {
+          "id": "w14",
+          "text": "it.",
+          "start": 6.79,
+          "end": 7.1
+        },
+        {
+          "id": "w15",
+          "text": "Contribute.",
+          "start": 7.2,
+          "end": 8.64
+        }
+      ]
+    }
+  ],
+  "sfx": [],
+  "total_duration_s": 41.601
+}

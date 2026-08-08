@@ -1,0 +1,440 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      container-type: size;
+    }
+
+    .clip {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+    }
+
+    .f05-ground {
+      background: #000000;
+    }
+
+    .f05-kicker {
+      position: absolute;
+      top: 6.5cqh;
+      left: 5.5cqw;
+      color: #1E69FF;
+      font-family: monospace;
+      font-size: 0.9cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      text-transform: uppercase;
+      white-space: nowrap;
+      will-change: transform, opacity;
+    }
+
+    .f05-kicker::before {
+      content: "";
+      display: inline-block;
+      width: 3.6cqw;
+      height: 2px;
+      margin: 0 1.1cqw 0.18cqh 0;
+      background: #0055FF;
+      vertical-align: middle;
+    }
+
+    .f05-receipt {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: calc(100% - 70px); /* demote tween translates +70px — box stays inside the clip at rest */
+      will-change: transform, opacity;
+    }
+
+    .f05-line {
+      position: absolute;
+      left: 16cqw;
+      display: flex;
+      align-items: baseline;
+      color: #FFFFFF;
+      font-family: monospace;
+      font-size: 2cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      text-transform: uppercase;
+      white-space: pre;
+      will-change: transform, opacity;
+    }
+
+    #f05-line-1 { top: 37cqh; }
+    #f05-line-2 { top: 41cqh; }
+    #f05-line-3 { top: 49cqh; }
+
+    .f05-line-text {
+      white-space: pre;
+    }
+
+    .f05-caret {
+      display: inline-block;
+      width: 0.62cqw;
+      height: 1.9cqw;
+      margin-left: 0.35cqw;
+      background: #0055FF;
+      vertical-align: -0.32cqw;
+    }
+
+    .f05-check {
+      display: inline-block;
+      margin-left: 1cqw;
+      color: #20C55A;
+      font-weight: 700;
+      will-change: transform, opacity;
+    }
+
+    .f05-connector {
+      position: absolute;
+      left: 17.2cqw;
+      width: 2px;
+      height: 4cqh;
+      background: #0055FF;
+      transform-origin: top center;
+      will-change: transform;
+    }
+
+    #f05-conn-1 { top: 36.8cqh; }
+    #f05-conn-2 { top: 44.8cqh; }
+
+    .f05-stamp {
+      position: absolute;
+      top: 40cqh;
+      left: 58cqw;
+      padding: 1.2cqh 1.8cqw;
+      border: 3px solid #20C55A;
+      color: #20C55A;
+      font-family: monospace;
+      font-size: 1.5cqw;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      text-transform: uppercase;
+      white-space: nowrap;
+      will-change: transform, opacity;
+    }
+
+    .f05-tab {
+      position: absolute;
+      top: 1.1cqh;
+      left: 23.95cqw;
+      color: #1E69FF;
+      font-family: monospace;
+      font-size: 0.85cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      text-transform: uppercase;
+      white-space: nowrap;
+      will-change: transform, opacity;
+    }
+
+    .f05-plate {
+      position: absolute;
+      top: 3.2cqh;
+      left: 23.95cqw;
+      height: 27cqh;
+      width: auto;
+      will-change: transform, opacity, filter;
+    }
+
+    .f05-morph-card {
+      position: absolute;
+      top: 66.75cqh;
+      left: 50%;
+      width: 24cqw;
+      height: 3.506cqh;
+      margin-left: -12cqw;
+      background: #0055FF;
+      overflow: hidden;
+      display: grid;
+      place-items: center;
+      will-change: transform;
+    }
+
+    .f05-morph-old {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      color: #FFFFFF;
+      font-family: monospace;
+      font-size: 1.1cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .f05-strip-frame {
+      position: absolute;
+      top: 62cqh;
+      left: 5.5cqw;
+      width: 89cqw;
+      height: 13cqh;
+      border: 1px solid #0055FF;
+      will-change: opacity;
+    }
+
+    .f05-prompt {
+      position: absolute;
+      top: 64.3cqh;
+      left: 8cqw;
+      color: #0055FF;
+      font-family: monospace;
+      font-size: 2.3cqw;
+      font-weight: 500;
+      line-height: 1;
+      will-change: opacity;
+    }
+
+    .f05-url-wrap {
+      position: absolute;
+      top: 64.3cqh;
+      left: 10.6cqw;
+      display: flex;
+      align-items: baseline;
+      min-width: 56cqw;
+      color: #FFFFFF;
+      font-family: monospace;
+      font-size: 2.3cqw;
+      font-weight: 500;
+      line-height: 1;
+      white-space: pre;
+    }
+
+    .f05-url-text {
+      white-space: pre;
+    }
+
+    .f05-url-caret {
+      display: inline-block;
+      width: 0.7cqw;
+      height: 2.2cqw;
+      margin-left: 0.3cqw;
+      background: #0055FF;
+      vertical-align: -0.38cqw;
+    }
+
+    .f05-chips {
+      position: absolute;
+      top: 69.9cqh;
+      left: 8cqw;
+      display: flex;
+      gap: 2.2cqw;
+    }
+
+    .f05-chip {
+      display: flex;
+      align-items: baseline;
+      padding: 0.9cqh 1.3cqw;
+      border: 1px solid #262728;
+      color: #FFFFFF;
+      font-family: monospace;
+      font-size: 1.15cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      text-transform: uppercase;
+      white-space: nowrap;
+      will-change: transform, opacity;
+    }
+
+    .f05-chip::before {
+      content: "/";
+      margin-right: 0.7cqw;
+      color: #0055FF;
+    }
+  </style>
+
+  <div id="root" data-composition-id="05-public-receipt" data-width="1920" data-height="1080" data-duration="7.936">
+    <div id="f05-ground-clip" class="clip f05-ground" data-start="0" data-duration="7.936" data-track-index="0"></div>
+
+    <div id="f05-receipt-clip" class="clip" data-start="0" data-duration="7.936" data-track-index="1">
+      <div id="f05-kicker" class="f05-kicker">OPEN RECEIPT / 05</div>
+      <div id="f05-receipt" class="f05-receipt">
+        <div id="f05-line-1" class="f05-line">
+          <span id="f05-text-1" class="f05-line-text"></span><span id="f05-caret-1" class="f05-caret"></span>
+        </div>
+        <div id="f05-conn-1" class="f05-connector"></div>
+        <div id="f05-line-2" class="f05-line">
+          <span id="f05-text-2" class="f05-line-text"></span><span id="f05-caret-2" class="f05-caret"></span>
+        </div>
+        <div id="f05-conn-2" class="f05-connector"></div>
+        <div id="f05-line-3" class="f05-line">
+          <span id="f05-text-3" class="f05-line-text"></span><span id="f05-caret-3" class="f05-caret"></span><span id="f05-check" class="f05-check">✓</span>
+        </div>
+        <div id="f05-stamp" class="f05-stamp">MIT LICENSED</div>
+      </div>
+    </div>
+
+    <div id="f05-plate-clip" class="clip" data-start="0" data-duration="7.936" data-track-index="2">
+      <div id="f05-tab" class="f05-tab">PROVENANCE / PUBLIC PAGE</div>
+      <img id="f05-plate" class="f05-plate" src="assets/site/plate-cta.png" alt="t3-hermes-bridge closing invitation" />
+    </div>
+
+    <div id="f05-morph-clip" class="clip" data-start="0" data-duration="7.936" data-track-index="3">
+      <div id="f05-morph-card" class="f05-morph-card">
+        <div id="f05-morph-old" class="f05-morph-old">github ↗</div>
+      </div>
+    </div>
+
+    <div id="f05-terminal-clip" class="clip" data-start="0" data-duration="7.936" data-track-index="4">
+      <div id="f05-strip-frame" class="f05-strip-frame"></div>
+      <div id="f05-prompt" class="f05-prompt">$</div>
+      <div class="f05-url-wrap">
+        <span id="f05-url-text" class="f05-url-text"></span><span id="f05-url-caret" class="f05-url-caret"></span>
+      </div>
+      <div class="f05-chips">
+        <div id="f05-chip-1" class="f05-chip">TRY IT</div>
+        <div id="f05-chip-2" class="f05-chip">BREAK IT</div>
+        <div id="f05-chip-3" class="f05-chip">CONTRIBUTE</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const DUR = 7.936;
+      const BLUE = "#0055FF";
+      const GREEN = "#20C55A";
+
+      // Packet scene windows scaled by 7.936 / 8.4 = 0.944762 so the last scene lands on DUR.
+      const S2_START = 1.3227;
+      const S3_START = 2.7398;
+      const S4_START = 3.968;
+      const S5_START = 5.2907;
+
+      const tl = gsap.timeline({ paused: true });
+
+      const kickerEl = document.getElementById("f05-kicker");
+      const receiptEl = document.getElementById("f05-receipt");
+      const line1El = document.getElementById("f05-line-1");
+      const line2El = document.getElementById("f05-line-2");
+      const line3El = document.getElementById("f05-line-3");
+      const text1El = document.getElementById("f05-text-1");
+      const text2El = document.getElementById("f05-text-2");
+      const text3El = document.getElementById("f05-text-3");
+      const caret1El = document.getElementById("f05-caret-1");
+      const caret2El = document.getElementById("f05-caret-2");
+      const caret3El = document.getElementById("f05-caret-3");
+      const checkEl = document.getElementById("f05-check");
+      const stampEl = document.getElementById("f05-stamp");
+      const tabEl = document.getElementById("f05-tab");
+      const plateEl = document.getElementById("f05-plate");
+      const cardEl = document.getElementById("f05-morph-card");
+      const cardOldEl = document.getElementById("f05-morph-old");
+      const stripFrameEl = document.getElementById("f05-strip-frame");
+      const promptEl = document.getElementById("f05-prompt");
+      const urlTextEl = document.getElementById("f05-url-text");
+      const urlCaretEl = document.getElementById("f05-url-caret");
+
+      // ---- Typed lines (smooth slice; caret windows + colors baked from this table) ----
+      const LINES = [
+        { el: text1El, caret: caret1El, text: "FOUNDER IDEA", start: 0.2, per: 0.075 },
+        { el: text2El, caret: caret2El, text: "AGENTS / EXECUTED", start: 1.55, per: 0.06 },
+        { el: text3El, caret: caret3El, text: "REVIEWED IN THE OPEN", start: 2.85, per: 0.042 },
+      ];
+      LINES.forEach((line) => {
+        line.done = line.start + line.text.length * line.per;
+      });
+      const URL_LINE = { text: "github.com/m-check1B/t3-hermes-bridge", start: 6.15, per: 0.03 };
+      URL_LINE.done = URL_LINE.start + URL_LINE.text.length * URL_LINE.per;
+
+      // Caret active windows: [from, to) — pure functions of timeline time.
+      const CARET_WINDOWS = [
+        { el: caret1El, from: LINES[0].start, to: LINES[1].start, doneAt: LINES[0].done, success: false },
+        { el: caret2El, from: LINES[1].start, to: LINES[2].start, doneAt: LINES[1].done, success: false },
+        { el: caret3El, from: LINES[2].start, to: S4_START, doneAt: LINES[2].done, success: true },
+        { el: urlCaretEl, from: URL_LINE.start, to: DUR, doneAt: URL_LINE.done, success: true },
+      ];
+
+      const typeDriver = { t: 0 };
+      tl.to(typeDriver, {
+        t: DUR,
+        duration: DUR,
+        ease: "none",
+        onUpdate: () => {
+          const t = typeDriver.t;
+          LINES.forEach((line) => {
+            const chars = Math.max(0, Math.min(line.text.length, Math.floor((t - line.start) / line.per)));
+            const next = line.text.substring(0, chars);
+            if (line.el.textContent !== next) line.el.textContent = next;
+          });
+          const urlChars = Math.max(0, Math.min(URL_LINE.text.length, Math.floor((t - URL_LINE.start) / URL_LINE.per)));
+          const nextUrl = URL_LINE.text.substring(0, urlChars);
+          if (urlTextEl.textContent !== nextUrl) urlTextEl.textContent = nextUrl;
+          CARET_WINDOWS.forEach((win) => {
+            win.el.style.background = win.success && t >= win.doneAt ? GREEN : BLUE;
+          });
+        },
+      }, 0);
+
+      // Deterministic square-wave blink — 12 whole cycles over DUR; solid while typing.
+      const BLINK_CYCLES = 12;
+      const blink = { p: 0 };
+      tl.to(blink, {
+        p: Math.PI * 2 * BLINK_CYCLES,
+        duration: DUR,
+        ease: "none",
+        onUpdate: () => {
+          const t = typeDriver.t;
+          const phase = Math.sin(blink.p) > 0;
+          CARET_WINDOWS.forEach((win) => {
+            const active = t >= win.from && t < win.to;
+            const typing = t < win.doneAt;
+            win.el.style.opacity = active && (typing || phase) ? "1" : "0";
+          });
+        },
+      }, 0);
+
+      // ---- Scene 1 (0–1.3227): kicker + first receipt line types ----
+      tl.fromTo(kickerEl, { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.32, ease: "power3.out" }, 0.05);
+      tl.fromTo(line1El, { opacity: 0 }, { opacity: 1, duration: 0.12, ease: "none" }, 0.15);
+
+      // ---- Scene 2 (1.3227–2.7398): line 1 demotes upward, connector draws, line 2 types ----
+      tl.fromTo(line2El, { opacity: 0 }, { opacity: 0.85, duration: 0.12, ease: "none" }, 1.53);
+      tl.to(line1El, { y: -43, opacity: 0.55, duration: 0.4, ease: "power2.inOut" }, S2_START + 0.18);
+      tl.fromTo("#f05-conn-1", { scaleY: 0 }, { scaleY: 1, duration: 0.35, ease: "power2.out" }, S2_START + 0.22);
+
+      // ---- Scene 3 (2.7398–3.968): line 3 types, green check, MIT stamp lands ----
+      tl.fromTo(line3El, { opacity: 0 }, { opacity: 1, duration: 0.12, ease: "none" }, 2.83);
+      tl.to(line2El, { opacity: 0.55, duration: 0.4, ease: "power2.inOut" }, S3_START + 0.08);
+      tl.fromTo("#f05-conn-2", { scaleY: 0 }, { scaleY: 1, duration: 0.35, ease: "power2.out" }, S3_START + 0.1);
+      tl.fromTo(checkEl, { opacity: 0, scale: 0 }, { opacity: 1, scale: 1, duration: 0.28, ease: "power3.out" }, 3.72);
+      tl.fromTo(stampEl, { opacity: 0, scale: 1.7, rotation: -9 }, { opacity: 1, scale: 1, rotation: -3, duration: 0.3, ease: "power4.out" }, 3.86);
+
+      // ---- Scene 4 (3.968–5.2907): receipt demotes, real plate cuts in across the top ----
+      tl.to(receiptEl, { y: 70, opacity: 0.26, duration: 0.5, ease: "power2.inOut" }, S4_START);
+      tl.fromTo(plateEl, { opacity: 0, scale: 1.05, filter: "blur(10px)" }, { opacity: 1, scale: 1, filter: "blur(0px)", duration: 0.42, ease: "power3.out" }, S4_START);
+      tl.fromTo(tabEl, { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.3, ease: "power3.out" }, 4.12);
+
+      // ---- Scene 5 (5.2907–7.936): card-morph-anchor — pill stretches into the terminal strip ----
+      const END_SCALE = 89 / 24; // uniform scale substitutes for the width tween
+      tl.fromTo(cardEl, { opacity: 0, scale: 0.5 }, { opacity: 1, scale: 1, duration: 0.35, ease: "power3.out" }, 4.35);
+      tl.to(cardOldEl, { opacity: 0, duration: 0.32, ease: "power1.in" }, S5_START);
+      tl.to(cardEl, { scale: END_SCALE, backgroundColor: "#000000", duration: 0.8, ease: "power2.inOut" }, S5_START);
+      tl.fromTo(stripFrameEl, { opacity: 0 }, { opacity: 1, duration: 0.25, ease: "power1.out" }, 6.0);
+      tl.fromTo(promptEl, { opacity: 0 }, { opacity: 1, duration: 0.2, ease: "none" }, 6.08);
+
+      // TRY IT / BREAK IT / CONTRIBUTE on the three spoken cues — held to the last frame.
+      tl.fromTo("#f05-chip-1", { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.35, ease: "power3.out" }, 6.3);
+      tl.fromTo("#f05-chip-2", { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.35, ease: "power3.out" }, 6.85);
+      tl.fromTo("#f05-chip-3", { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.35, ease: "power3.out" }, 7.4);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["05-public-receipt"] = tl;
+    })();
+  </script>
+</template>

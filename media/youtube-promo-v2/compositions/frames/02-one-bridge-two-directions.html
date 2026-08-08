@@ -1,0 +1,341 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      container-type: size;
+    }
+
+    .clip {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+    }
+
+    .f02-ground {
+      background: #000000;
+    }
+
+    .f02-kicker {
+      position: absolute;
+      top: 7cqh;
+      left: 5.5cqw;
+      color: #FFFFFF;
+      font-family: monospace;
+      font-size: 0.9cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      text-transform: uppercase;
+      white-space: nowrap;
+      will-change: transform, opacity;
+    }
+
+    .f02-kicker::before {
+      content: "";
+      display: inline-block;
+      width: 3.6cqw;
+      height: 2px;
+      margin: 0 1.1cqw 0.18cqh 0;
+      background: #0055FF;
+      vertical-align: middle;
+    }
+
+    #f02-diagram {
+      position: absolute;
+      inset: 0;
+      transform-origin: 50% 0%;
+      will-change: transform;
+    }
+
+    .f02-burst-wrap {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .f02-station {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      text-align: center;
+      white-space: nowrap;
+      will-change: transform, opacity;
+    }
+
+    .f02-station-name {
+      color: #FFFFFF;
+      font-family: sans-serif;
+      font-size: 4.5cqw;
+      font-weight: 900;
+      letter-spacing: -0.03em;
+      line-height: 1;
+      text-transform: lowercase;
+    }
+
+    #f02-station-bridge .f02-station-name {
+      color: #0055FF;
+      font-size: 2.4cqw;
+      letter-spacing: -0.02em;
+    }
+
+    .f02-station-line {
+      height: 1px;
+      margin-top: 1.2cqh;
+      background: #262728;
+      transform-origin: 50% 50%;
+      will-change: transform;
+    }
+
+    #f02-station-bridge .f02-station-line {
+      background: #0055FF;
+    }
+
+    .f02-flow {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    .f02-flow path {
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    #f02-acp-path,
+    #f02-acp-head {
+      stroke: #0055FF;
+      stroke-width: 4;
+    }
+
+    #f02-api-path,
+    #f02-api-head {
+      stroke: #FFFFFF;
+      stroke-width: 3;
+    }
+
+    .f02-flow-label {
+      position: absolute;
+      left: 0;
+      right: 0;
+      color: #FFFFFF;
+      font-family: monospace;
+      font-size: 1cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      text-align: center;
+      text-transform: uppercase;
+      white-space: nowrap;
+      will-change: transform, opacity;
+    }
+
+    #f02-acp-label {
+      top: 24.2cqh;
+      color: #1E69FF;
+    }
+
+    #f02-api-label {
+      top: 52.8cqh;
+    }
+
+    .f02-caption {
+      position: absolute;
+      left: 0;
+      right: 0;
+      color: #FFFFFF;
+      font-family: monospace;
+      font-size: 1.1cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      text-align: center;
+      text-transform: uppercase;
+      white-space: nowrap;
+      will-change: transform, opacity;
+    }
+
+    #f02-cap-1 { top: 58cqh; }
+    #f02-cap-2 { top: 62.8cqh; color: #1E69FF; }
+
+    #f02-morph-card {
+      position: absolute;
+      left: 19cqw;
+      top: 42.5cqh;
+      width: 62cqw;
+      height: 40.19cqh;
+      background: #0055FF;
+      overflow: hidden;
+      display: grid;
+      place-items: center;
+      opacity: 0;
+      will-change: transform;
+    }
+
+    .f02-card-content {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+    }
+
+    #f02-content-old span {
+      color: #000000;
+      font-family: monospace;
+      font-size: 1.1cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    #f02-content-old {
+      display: none;
+    }
+
+    #f02-content-new {
+      opacity: 1;
+    }
+
+    #f02-content-new img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    #f02-prov-tab {
+      position: absolute;
+      left: 19cqw;
+      top: 40.5cqh;
+      color: #FFFFFF;
+      font-family: monospace;
+      font-size: 0.85cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      text-transform: uppercase;
+      white-space: nowrap;
+      will-change: transform, opacity;
+    }
+
+    #f02-prov-tab::before {
+      content: "";
+      display: inline-block;
+      width: 0.85cqw;
+      height: 0.85cqw;
+      margin-right: 0.6cqw;
+      background: #0055FF;
+      vertical-align: middle;
+    }
+  </style>
+
+  <div id="root" data-composition-id="02-one-bridge-two-directions" data-width="1920" data-height="1080" data-duration="10.505">
+    <div id="f02-ground" class="clip f02-ground" data-start="0" data-duration="10.505" data-track-index="0"></div>
+
+    <div id="f02-diagram-clip" class="clip" data-start="0" data-duration="10.505" data-track-index="1">
+      <div id="f02-kicker" class="f02-kicker">STANDALONE BRIDGE / ZERO FORKS</div>
+      <div id="f02-diagram">
+        <div class="f02-burst-wrap" aria-hidden="true">
+          <div id="f02-station-t3" class="f02-station" data-target-x="-530" data-target-y="-150">
+            <div class="f02-station-name">t3 code</div>
+            <div class="f02-station-line"></div>
+          </div>
+          <div id="f02-station-bridge" class="f02-station" data-target-x="0" data-target-y="-150">
+            <div class="f02-station-name">t3-hermes-bridge</div>
+            <div class="f02-station-line"></div>
+          </div>
+          <div id="f02-station-hermes" class="f02-station" data-target-x="530" data-target-y="-150">
+            <div class="f02-station-name">hermes</div>
+            <div class="f02-station-line"></div>
+          </div>
+        </div>
+        <svg class="f02-flow" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path id="f02-acp-path" d="M 430 310 L 1490 310" />
+          <path id="f02-acp-head" d="M 1466 292 L 1494 310 L 1466 328" />
+          <path id="f02-api-path" d="M 1490 540 L 430 540" />
+          <path id="f02-api-head" d="M 454 522 L 426 540 L 454 558" />
+        </svg>
+        <div id="f02-acp-label" class="f02-flow-label">ACP →</div>
+        <div id="f02-api-label" class="f02-flow-label">← LOCAL API</div>
+        <div id="f02-cap-1" class="f02-caption">T3 CODE STAYS THE COCKPIT</div>
+        <div id="f02-cap-2" class="f02-caption">HERMES STAYS THE RUNTIME</div>
+      </div>
+    </div>
+
+    <div id="f02-plate-clip" class="clip" data-start="0" data-duration="10.505" data-track-index="2">
+      <div id="f02-morph-card">
+        <div id="f02-content-old" class="f02-card-content"><span>PUBLIC PAGE / SAME THREE STATIONS</span></div>
+        <div id="f02-content-new" class="f02-card-content">
+          <img src="assets/site/plate-flow-diagram.png" alt="One cockpit. Two directions. — public page flow diagram" />
+        </div>
+      </div>
+      <div id="f02-prov-tab">LIVE CAPTURE / PUBLIC PAGE</div>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const tl = gsap.timeline({ paused: true });
+
+      // Scene 1 (0.0–2.539s): kicker + three stations assemble center-outward.
+      tl.fromTo("#f02-kicker", { opacity: 0, x: -28 }, { opacity: 1, x: 0, duration: 0.32, ease: "power3.out" }, 0.05);
+
+      document.querySelectorAll(".f02-station").forEach((el, i) => {
+        tl.fromTo(el, {
+          xPercent: -50,
+          yPercent: -50,
+          x: 0,
+          y: 0,
+          scale: 0.6,
+          opacity: 0,
+        }, {
+          x: Number(el.dataset.targetX),
+          y: Number(el.dataset.targetY),
+          scale: 1,
+          opacity: 1,
+          duration: 1.2,
+          ease: "power3.out",
+        }, 0.3 + i * 0.12);
+      });
+
+      document.querySelectorAll(".f02-station-line").forEach((el, i) => {
+        tl.fromTo(el, { scaleX: 0 }, { scaleX: 1, duration: 0.5, ease: "power2.out" }, 1.6 + i * 0.15);
+      });
+
+      // Scene 2 (2.539–5.458s): blue ACP connector self-draws T3 → BRIDGE → HERMES.
+      ["#f02-acp-path", "#f02-acp-head", "#f02-api-path", "#f02-api-head"].forEach((sel) => {
+        const p = document.querySelector(sel);
+        const len = p.getTotalLength();
+        p.style.strokeDasharray = `${len}`;
+        p.style.strokeDashoffset = `${len}`;
+      });
+
+      tl.to("#f02-acp-path", { strokeDashoffset: 0, duration: 2.2, ease: "power2.out" }, 2.6);
+      tl.to("#f02-acp-head", { strokeDashoffset: 0, duration: 0.35, ease: "power2.out" }, 4.75);
+      tl.fromTo("#f02-acp-label", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.4, ease: "power1.out" }, 4.95);
+
+      // Scene 3 (5.458–7.489s): white LOCAL API return path self-draws back; captions resolve.
+      tl.to("#f02-api-path", { strokeDashoffset: 0, duration: 1.5, ease: "power2.out" }, 5.55);
+      tl.to("#f02-api-head", { strokeDashoffset: 0, duration: 0.3, ease: "power2.out" }, 7.0);
+      tl.fromTo("#f02-api-label", { opacity: 0, y: -10 }, { opacity: 1, y: 0, duration: 0.4, ease: "power1.out" }, 7.05);
+      tl.fromTo("#f02-cap-1", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" }, 6.35);
+      tl.fromTo("#f02-cap-2", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" }, 7.1);
+
+      // Scene 4 (7.489–10.155s): diagram compresses into top 46%; plate card morphs in lower half.
+      tl.to("#f02-diagram", { scale: 0.6, duration: 0.9, ease: "power2.inOut" }, 7.55);
+      tl.fromTo("#f02-morph-card", { opacity: 0, scale: 0.3, y: 60 }, { opacity: 1, scale: 0.42, y: 0, duration: 0.45, ease: "power3.out" }, 7.6);
+      tl.to("#f02-morph-card", { scale: 1, backgroundColor: "#FFFFFF", duration: 1.1, ease: "power2.inOut" }, 8.45);
+      tl.fromTo("#f02-prov-tab", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.3, ease: "power1.out" }, 9.55);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["02-one-bridge-two-directions"] = tl;
+    })();
+  </script>
+</template>

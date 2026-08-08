@@ -7,7 +7,7 @@ node_modules/
 media/**/.venv/
 media/**/capture/
 media/**/renders/
-media/**/snapshots/
+media/**/snapshots*/
 media/**/.media/
 media/**/.hyperframes/frame-packets/
 media/**/CLAUDE.md

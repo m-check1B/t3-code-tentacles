@@ -1,0 +1,224 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      container-type: size;
+    }
+
+    .clip {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+    }
+
+    .f01-world {
+      position: absolute;
+      inset: 0;
+      transform-origin: 50% 50%;
+      will-change: transform;
+    }
+
+    .f01-ground {
+      background: #000000;
+    }
+
+    .f01-kicker-row {
+      position: absolute;
+      top: 9cqh;
+      left: 5.5cqw;
+      display: flex;
+      align-items: center;
+    }
+
+    .f01-stub {
+      display: block;
+      width: 36px;
+      height: 2px;
+      margin-right: 1.1cqw;
+      background: #0055FF;
+      transform-origin: left center;
+      will-change: transform;
+    }
+
+    .f01-kicker {
+      color: #FFFFFF;
+      font-family: monospace;
+      font-size: 0.9cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      text-transform: uppercase;
+      white-space: nowrap;
+      will-change: transform, opacity;
+    }
+
+    .f01-statement {
+      position: absolute;
+      top: 22cqh;
+      left: 5.5cqw;
+      width: 50cqw;
+    }
+
+    .f01-line {
+      display: block;
+      margin: 0;
+      color: #FFFFFF;
+      font-family: sans-serif;
+      font-size: 6.2cqw;
+      font-weight: 900;
+      letter-spacing: -0.04em;
+      line-height: 1.02;
+      text-transform: lowercase;
+      white-space: nowrap;
+    }
+
+    .f01-w {
+      display: inline-block;
+      will-change: transform, opacity;
+    }
+
+    .f01-blue {
+      color: #0055FF;
+    }
+
+    .f01-stamp {
+      position: absolute;
+      left: 5.5cqw;
+      display: inline-block;
+      padding: 0.9cqh 1.3cqw;
+      font-family: monospace;
+      font-size: 1.1cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      text-transform: uppercase;
+      white-space: nowrap;
+      transform-origin: left center;
+      will-change: transform, opacity;
+    }
+
+    #f01-stamp-noforks {
+      top: 54cqh;
+      color: #0055FF;
+      border: 1px solid #0055FF;
+    }
+
+    #f01-stamp-public {
+      top: 62.5cqh;
+      color: #20C55A;
+      border: 1px solid #20C55A;
+    }
+
+    .f01-plate {
+      position: absolute;
+      top: 22cqh;
+      left: 56cqw;
+      width: 44cqw;
+      margin: 0;
+      will-change: transform, opacity;
+    }
+
+    .f01-plate img {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid #FFFFFF;
+    }
+
+    .f01-plate-tab {
+      margin-top: 1.2cqh;
+      color: #FFFFFF;
+      font-family: monospace;
+      font-size: 0.72cqw;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      white-space: nowrap;
+      will-change: transform, opacity;
+    }
+  </style>
+
+  <div id="root" data-composition-id="01-proof-on-arrival" data-width="1920" data-height="1080" data-duration="6.302">
+    <div id="f01-world" class="f01-world">
+      <div id="f01-ground-clip" class="clip f01-ground" data-start="0" data-duration="6.302" data-track-index="0"></div>
+
+      <div id="f01-type-clip" class="clip" data-start="0" data-duration="6.302" data-track-index="1">
+        <div class="f01-kicker-row">
+          <span id="f01-stub" class="f01-stub"></span>
+          <span id="f01-kicker" class="f01-kicker">LAUNCH / V0.1.1</span>
+        </div>
+
+        <div class="f01-statement">
+          <p class="f01-line">
+            <span class="f01-w" id="f01-w1">hermes</span>
+            <span class="f01-w" id="f01-w2">agent,</span>
+          </p>
+          <p class="f01-line">
+            <span class="f01-w" id="f01-w3">inside</span>
+            <span class="f01-w f01-blue" id="f01-w4">t3</span>
+            <span class="f01-w f01-blue" id="f01-w5">code.</span>
+          </p>
+        </div>
+
+        <div id="f01-stamp-noforks" class="f01-stamp">NO FORKS</div>
+        <div id="f01-stamp-public" class="f01-stamp">PROOF IS PUBLIC</div>
+      </div>
+
+      <div id="f01-plate-clip" class="clip" data-start="3.196" data-duration="3.106" data-track-index="2">
+        <figure id="f01-plate" class="f01-plate">
+          <img src="assets/site/plate-hero.png" alt="hermes for t3 code — live site hero">
+          <figcaption id="f01-plate-tab" class="f01-plate-tab">m-check1b.com/hermes-for-t3-code</figcaption>
+        </figure>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const root = document.getElementById("root");
+      const tl = gsap.timeline({ paused: true });
+      const DURATION = 5.952;
+
+      // viewport-change: single world wrapper, one cam object, one writer.
+      const worldEl = document.getElementById("f01-world");
+      const cam = { scale: 1, x: 0, y: 0 };
+      function applyCamera() {
+        worldEl.style.transform = `translate(${cam.x}px, ${cam.y}px) scale(${cam.scale})`;
+      }
+      applyCamera();
+      tl.to(cam, {
+        scale: 1.03,
+        duration: DURATION,
+        ease: "none",
+        onUpdate: applyCamera,
+      }, 0);
+
+      // Scene 1 (0.0–1.764): kicker stub draws, then per-word staggered reveal.
+      tl.fromTo("#f01-stub", { scaleX: 0 }, { scaleX: 1, duration: 0.35, ease: "power3.out" }, 0.05);
+      tl.fromTo("#f01-kicker", { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.3, ease: "power3.out" }, 0.15);
+      tl.fromTo("#f01-w1", { opacity: 0, y: 64 }, { opacity: 1, y: 0, duration: 0.55, ease: "power4.out" }, 0.35);
+      tl.fromTo("#f01-w2", { opacity: 0, y: 64 }, { opacity: 1, y: 0, duration: 0.55, ease: "power4.out" }, 0.95);
+
+      // Scene 2 (1.764–3.196): line two completes on the spoken cue, "t3 code." in blue.
+      tl.fromTo("#f01-w3", { opacity: 0, y: 64 }, { opacity: 1, y: 0, duration: 0.5, ease: "power4.out" }, 1.85);
+      tl.fromTo("#f01-w4", { opacity: 0, y: 64 }, { opacity: 1, y: 0, duration: 0.5, ease: "power4.out" }, 2.3);
+      tl.fromTo("#f01-w5", { opacity: 0, y: 64 }, { opacity: 1, y: 0, duration: 0.5, ease: "power4.out" }, 2.72);
+
+      // Scene 3 (3.196–4.629): evidence plate slides in from the right and settles;
+      // provenance tab fades; NO FORKS stamp lands on its cue.
+      tl.fromTo("#f01-plate", { opacity: 0, x: 1000 }, { opacity: 1, x: 0, duration: 0.75, ease: "expo.out" }, 3.196);
+      tl.fromTo("#f01-plate-tab", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.35, ease: "power3.out" }, 3.85);
+      tl.fromTo("#f01-stamp-noforks", { opacity: 0, scale: 1.18 }, { opacity: 1, scale: 1, duration: 0.35, ease: "power4.out" }, 3.9);
+
+      // Scene 4 (4.629–5.952): PROOF IS PUBLIC locks under the first; all hold to the cut.
+      tl.fromTo("#f01-stamp-public", { opacity: 0, scale: 1.18 }, { opacity: 1, scale: 1, duration: 0.35, ease: "power4.out" }, 4.629);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["01-proof-on-arrival"] = tl;
+    })();
+  </script>
+</template>
