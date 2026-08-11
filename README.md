@@ -1,26 +1,28 @@
-# Hermes for T3 Code
+# Hermes + Pi Agent for T3 Code
 
 [![CI](https://github.com/m-check1B/t3-hermes-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/m-check1B/t3-hermes-bridge/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/m-check1B/t3-hermes-bridge)](https://github.com/m-check1B/t3-hermes-bridge/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js 22+](https://img.shields.io/badge/node-%3E%3D22-43853d.svg)](package.json)
 
-Put [Hermes Agent](https://github.com/NousResearch/hermes-agent) in
-[T3 Code](https://github.com/pingdotgg/t3code)—without forking either project.
+Put [Hermes Agent](https://github.com/NousResearch/hermes-agent) and
+[Pi Agent](https://github.com/Dicklesworthstone/pi_agent_rust) in
+[T3 Code](https://github.com/pingdotgg/t3code)—without forking any project.
 
-Hermes for T3 Code is a standalone, reversible bridge. T3 Code stays the polished
-multi-agent cockpit; Hermes stays the agent runtime and orchestrator behind the
-scenes.
+This is a standalone, reversible bridge. T3 Code stays the polished multi-agent
+cockpit; Hermes and Pi stay independent ACP harnesses with their own runtime,
+model, authentication, and tool configuration.
 
-> **Project status:** early integration, tested with T3 Code 0.0.31, Hermes Agent
-> 0.20.0, and Node.js 22 on macOS. Other versions and platforms are not yet
-> verified—compatibility reports are welcome.
+> **Project status:** early integration, tested with T3 Code 0.0.32, Hermes Agent
+> 0.20.0, Pi Agent 0.1.23, and Node.js 22 on macOS. Other versions and platforms
+> are not yet verified—compatibility reports are welcome.
 
 ## What works today
 
 | Flow | Result | Status |
 |---|---|---|
 | T3 Code → Hermes | Hermes appears as a normal T3 provider over ACP | Tested |
+| T3 Code → Pi | Pi appears as a parallel T3 provider; T3's picker switches Pi models over ACP | Tested |
 | Hermes → T3 Code | `t3-hermes originate` creates a visible Hermes-backed T3 thread | Tested |
 | Any T3 thread → Hermes | A new `@hermes` message routes to one linked Hermes thread | Tested |
 | Existing T3 providers | Provider install/remove preserves unrelated instances | Tested |
@@ -30,16 +32,16 @@ scenes.
 The mention bridge deliberately creates a clearly labeled linked Hermes thread.
 It does not impersonate the assistant inside another provider's existing thread.
 
-## Why T3 shows Hermes as Grok
+## Why T3 shows Hermes or Pi as Grok
 
-The bridge registers Hermes through T3 Code's `grok` driver because that driver
-is T3's configurable ACP-over-stdio adapter. T3 starts the configured binary
-with `agent stdio`; the bridge wrapper accepts that command and starts
-`hermes --profile <profile> acp`.
+The bridge registers both harnesses through T3 Code's `grok` driver because that
+driver is T3's configurable ACP-over-stdio adapter. T3 starts the configured
+binary with `agent stdio`; the matching wrapper starts either `hermes --profile
+<profile> acp` or Pi's native `pi --acp` transport.
 
-This selects a transport adapter, not a model provider. Hermes can still route
-the session to Codex, Claude, Gemini, or any other model available to the active
-Hermes profile.
+This selects a transport adapter, not a model provider. Hermes still uses its
+active profile. Pi advertises its available models to T3; choosing a bare model
+ID such as `gpt-5.6-terra` in T3 calls Pi's ACP `session/set_model` method.
 
 T3's `codex` driver is not a generic route to every Codex-backed model. It
 speaks the Codex-specific `app-server` protocol and expects Codex authentication,
@@ -47,7 +49,7 @@ model discovery, thread lifecycle, and message semantics. Hermes speaks ACP, so
 using the Codex driver would require an unnecessary Codex `app-server`
 compatibility layer.
 
-On an unmodified T3 Code release, Hermes may therefore display the Grok icon.
+On an unmodified T3 Code release, Hermes and Pi may therefore display the Grok icon.
 That is a cosmetic limitation only: the bridge and both communication
 directions still work. A small T3 UI patch can give the bridge's stable
 `grok:hermes` driver + instance identity its own logo, without relying on its
@@ -62,8 +64,9 @@ long-term solution.
 
 ### 1. Prerequisites
 
-- T3 Code 0.0.31 listening on `127.0.0.1:3773`.
+- T3 Code 0.0.32 listening on `127.0.0.1:3773`.
 - Hermes Agent 0.20.0+ with ACP support.
+- Pi Agent 0.1.23+ for the optional Pi harness.
 - Node.js 22+.
 
 Clone the bridge and install the command shim:
@@ -119,6 +122,26 @@ If your installation exposes a different model identifier, pass it with
 
 Open T3 Code, select the **Hermes** provider, and send a message. A real Hermes
 assistant reply is the first-direction proof.
+
+### 3a. Register Pi as a parallel harness
+
+Authenticate and configure Pi through Pi's normal local setup first. Credentials
+remain in Pi's custody and are never copied into T3 settings or this bridge.
+Then register the model that T3 should select initially:
+
+```bash
+t3-hermes install-pi-provider \
+  --instance pi \
+  --pi-provider openai-codex \
+  --model gpt-5.6-terra
+```
+
+Open T3 Code and select **Pi**. The Pi ACP session advertises all locally
+available Pi models; T3's model picker sends the selected bare model ID to Pi
+with `session/set_model`. The bridge's compatibility relay only normalizes Pi
+0.1.x's legacy ACP model/mode state and local-auth handshake. Prompts, streamed
+updates, tool calls, approvals, cancellation, and model switching otherwise pass
+between T3 and Pi unchanged.
 
 ### 4. Prove the reverse direction
 
@@ -222,6 +245,7 @@ when a skill resolves outside the active profile's trusted `skills/` directory.
 
 ```bash
 t3-hermes uninstall-service --profile default --instance hermes
+t3-hermes remove-pi-provider --instance pi
 t3-hermes remove-provider
 
 t3_bridge_command="$HOME/.local/bin/t3-hermes"
@@ -249,7 +273,8 @@ refuses to delete a provider it did not create.
 
 ## How it stays source-independent
 
-- T3 → Hermes uses the Agent Client Protocol already implemented by both tools.
+- T3 → Hermes and T3 → Pi use the Agent Client Protocol already implemented by
+  the harnesses, with a narrow Pi 0.1.x wire-shape compatibility relay.
 - Hermes → T3 uses T3's authenticated local orchestration API.
 - Mention routing reads T3 state and dispatches immutable correlated commands.
 - The functional bridge modifies neither upstream repository. An optional T3 UI
@@ -272,13 +297,13 @@ part of the project. It is documented in [the build story](docs/build-story.md).
 
 ## Roadmap
 
-Hermes for T3 Code today. A path toward a reusable bidirectional ACP bridge
-tomorrow.
+Hermes and Pi Agent for T3 Code today. A path toward a reusable bidirectional
+ACP bridge tomorrow.
 
 - Contract-test newer T3 Code and Hermes releases.
 - Add Linux service packaging.
 - Explore an upstream-safe inline reply extension.
-- Generalize the adapter contract for additional ACP agents and clients.
+- Add more ACP harnesses through the same ownership-safe parallel-provider seam.
 
 Contributions and real compatibility reports are welcome. Start with
 [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -286,5 +311,5 @@ Contributions and real compatibility reports are welcome. Start with
 ## Disclaimer
 
 This is an independent community project. It is not an official T3 Code, Ping
-Labs, Hermes Agent, Nous Research, or Agent Client Protocol project and is not
-affiliated with or endorsed by those organizations.
+Labs, Hermes Agent, Nous Research, Pi Agent, or Agent Client Protocol project and
+is not affiliated with or endorsed by those organizations.

@@ -8,6 +8,9 @@ import {
   DEFAULT_HERMES_URL,
   DEFAULT_INSTANCE_ID,
   DEFAULT_MODEL,
+  DEFAULT_PI_INSTANCE_ID,
+  DEFAULT_PI_MODEL,
+  DEFAULT_PI_PROVIDER,
   ensurePrivateDirectory,
   requireLoopbackUrl,
 } from "./config.mjs";
@@ -16,6 +19,8 @@ import { readBoundedResponseText, T3HttpError } from "./t3-client.mjs";
 const HERMES_MENTION = /(^|\s)@hermes\b/i;
 const BRIDGE_OWNER_VARIABLE = "T3_HERMES_BRIDGE_OWNER";
 const BRIDGE_OWNER_VALUE = "t3-hermes-bridge/v1";
+const BRIDGE_HARNESS_VARIABLE = "T3_HERMES_BRIDGE_HARNESS";
+const PI_HARNESS_VALUE = "pi";
 const STATE_VERSION = 2;
 const PROCESSED_FALLBACK_LIMIT = 1_000;
 const PENDING_LIMIT = 1_000;
@@ -32,6 +37,13 @@ const CONTEXT_ENTRY_CHAR_LIMIT = 1_500;
 const MAX_HERMES_HEALTH_BYTES = 64 * 1024;
 
 export const ALLOW_ALL_MENTION_POLICY = Object.freeze({ allowAll: true });
+
+export function providerHarness(instance) {
+  if (instance?.driver !== "grok" || !isBridgeOwnedProvider(instance)) return null;
+  const marker = (instance.environment || []).find((variable) => variable.name === BRIDGE_HARNESS_VARIABLE);
+  // v0.1 providers predate the harness marker and remain Hermes-owned.
+  return marker ? (marker.value === PI_HARNESS_VALUE ? PI_HARNESS_VALUE : null) : "hermes";
+}
 
 export function isBridgeOwnedProvider(instance) {
   if (instance?.driver !== "grok") return false;
@@ -65,9 +77,9 @@ export async function installProvider(client, {
       "Refusing provider map replacement because T3 returned redacted provider secrets; use the T3 settings UI or remove those secrets first",
     );
   }
-  if (current[instanceId] && !isBridgeOwnedProvider(current[instanceId])) {
+  if (current[instanceId] && providerHarness(current[instanceId]) !== "hermes") {
     throw new Error(
-      `Refusing to replace provider instance '${instanceId}' because it is not owned by t3-hermes-bridge`,
+      `Refusing to replace provider instance '${instanceId}' because it is not owned by t3-hermes-bridge (Hermes harness)`,
     );
   }
   const providerInstances = {
@@ -94,8 +106,60 @@ export async function removeProvider(client, { instanceId = DEFAULT_INSTANCE_ID 
   const current = settings.providerInstances || {};
   if (hasRedactedSecrets(current)) throw new Error("Refusing provider map replacement because T3 returned redacted provider secrets");
   if (!(instanceId in current)) return { removed: false };
-  if (!isBridgeOwnedProvider(current[instanceId])) {
-    throw new Error(`Refusing to remove provider instance '${instanceId}' because it is not owned by t3-hermes-bridge`);
+  if (providerHarness(current[instanceId]) !== "hermes") {
+    throw new Error(`Refusing to remove provider instance '${instanceId}' because it is not owned by t3-hermes-bridge (Hermes harness)`);
+  }
+  const providerInstances = { ...current };
+  delete providerInstances[instanceId];
+  await client.updateSettings({ providerInstances });
+  return { removed: true };
+}
+
+export async function installPiProvider(client, {
+  wrapperPath,
+  instanceId = DEFAULT_PI_INSTANCE_ID,
+  model = DEFAULT_PI_MODEL,
+  piBin = "pi",
+  piProvider = DEFAULT_PI_PROVIDER,
+} = {}) {
+  if (!wrapperPath || !path.isAbsolute(wrapperPath)) throw new Error("install-pi-provider requires an absolute ACP wrapper path");
+  if (!piBin || !path.isAbsolute(piBin)) throw new Error("install-pi-provider requires an absolute Pi executable path");
+  const settings = await client.getSettings();
+  const current = settings.providerInstances || {};
+  if (hasRedactedSecrets(current)) {
+    throw new Error("Refusing provider map replacement because T3 returned redacted provider secrets; use the T3 settings UI or remove those secrets first");
+  }
+  if (current[instanceId] && providerHarness(current[instanceId]) !== PI_HARNESS_VALUE) {
+    throw new Error(`Refusing to replace provider instance '${instanceId}' because it is not owned by the Pi harness`);
+  }
+  const providerInstances = {
+    ...current,
+    [instanceId]: {
+      driver: "grok",
+      displayName: "Pi",
+      accentColor: "#F97316",
+      enabled: true,
+      environment: [
+        { name: BRIDGE_OWNER_VARIABLE, value: BRIDGE_OWNER_VALUE, sensitive: false },
+        { name: BRIDGE_HARNESS_VARIABLE, value: PI_HARNESS_VALUE, sensitive: false },
+        { name: "PI_BIN", value: piBin, sensitive: false },
+        { name: "PI_PROVIDER", value: piProvider, sensitive: false },
+        { name: "PI_MODEL", value: model, sensitive: false },
+      ],
+      config: { binaryPath: wrapperPath, customModels: [model] },
+    },
+  };
+  await client.updateSettings({ providerInstances });
+  return await client.refreshProvider(instanceId);
+}
+
+export async function removePiProvider(client, { instanceId = DEFAULT_PI_INSTANCE_ID } = {}) {
+  const settings = await client.getSettings();
+  const current = settings.providerInstances || {};
+  if (hasRedactedSecrets(current)) throw new Error("Refusing provider map replacement because T3 returned redacted provider secrets");
+  if (!(instanceId in current)) return { removed: false };
+  if (providerHarness(current[instanceId]) !== PI_HARNESS_VALUE) {
+    throw new Error(`Refusing to remove provider instance '${instanceId}' because it is not owned by the Pi harness`);
   }
   const providerInstances = { ...current };
   delete providerInstances[instanceId];

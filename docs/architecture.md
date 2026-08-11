@@ -3,8 +3,8 @@
 ```text
 T3 Code UI
   │ native provider session (ACP over stdio)
-  ▼
-t3-hermes-acp wrapper ──exec──▶ hermes --profile <profile> acp
+  ├──▶ t3-hermes-acp ──exec──▶ hermes --profile <profile> acp
+  └──▶ t3-pi-acp ──relay─────▶ pi --acp --provider <provider> --model <initial>
 
 Hermes / automation
   │ t3-hermes originate, authenticated HTTP dispatch
@@ -18,14 +18,20 @@ t3-hermes watch ──▶ linked Hermes-backed T3 thread
 ```
 
 The functional bridge changes neither upstream. It reuses the ACP contract
-already implemented by T3 Code's Grok-compatible driver and Hermes, then uses
-T3 Code's local orchestration HTTP and WebSocket RPC surfaces for settings and
-reverse dispatch.
+implemented by T3 Code's Grok-compatible driver, Hermes, and Pi, then uses T3
+Code's local orchestration HTTP and WebSocket RPC surfaces for settings and
+Hermes reverse dispatch.
+
+Pi 0.1.x uses local authentication and an older ACP model/mode response shape.
+The Pi relay answers T3's transport-level `authenticate` request locally,
+normalizes those two state objects, and normalizes a successful model-switch
+response. All other ACP traffic is forwarded. T3 remains authoritative for the
+visible model choice and sends the bare model ID through `session/set_model`.
 
 ## Why the Grok adapter is used
 
-T3's provider driver identifies the protocol adapter, not the model Hermes will
-run. The bridge installs an instance with `driver: "grok"` because this T3
+T3's provider driver identifies the protocol adapter, not the model a harness
+will run. The bridge installs instances with `driver: "grok"` because this T3
 adapter supports a configurable binary and ACP over standard input/output. T3
 invokes the bridge wrapper as `t3-hermes-acp agent stdio`; the wrapper then
 executes `hermes --profile <profile> acp`.
@@ -87,8 +93,10 @@ remove this cosmetic coupling entirely.
 - HTTP responses and WebSocket frames are size-bounded and time-bounded.
 - Provider install/remove requires an immutable bridge ownership marker and
   refuses redacted or foreign provider maps.
-- The bridge grants no new process permissions. Hermes retains only the
-  permissions and tools already configured for its selected profile.
+- The bridge grants no new process permissions. Hermes and Pi retain the
+  permissions and tools already configured for their selected local runtime.
+- Pi credentials remain in Pi's local authentication store. T3 settings contain
+  only non-secret executable, provider, initial model, and ownership metadata.
 
 ## T3 command projection
 

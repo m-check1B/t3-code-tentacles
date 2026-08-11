@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+
+PI_BIN=${PI_BIN:-pi}
+
+case "${1:-}" in
+  --version|-v|version)
+    exec "$PI_BIN" --version
+    ;;
+  *)
+    # T3's Grok driver appends `agent stdio`; the compatibility proxy owns that
+    # driver argv and starts Pi's ACP transport directly.
+    SELF=$0
+    while [ -L "$SELF" ]; do
+      LINK=$(readlink "$SELF")
+      case "$LINK" in
+        /*) SELF=$LINK ;;
+        *) SELF=$(dirname -- "$SELF")/$LINK ;;
+      esac
+    done
+    SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$SELF")" && pwd)
+    exec node "$SCRIPT_DIR/../src/pi-acp.mjs"
+    ;;
+esac

@@ -8,14 +8,19 @@ import {
   ALLOW_ALL_MENTION_POLICY,
   doctor,
   installProvider,
+  installPiProvider,
   originate,
   removeProvider,
+  removePiProvider,
   routeMentionsOnce,
 } from "./bridge.mjs";
 import {
   DEFAULT_HERMES_PROFILE,
   DEFAULT_INSTANCE_ID,
   DEFAULT_MODEL,
+  DEFAULT_PI_INSTANCE_ID,
+  DEFAULT_PI_MODEL,
+  DEFAULT_PI_PROVIDER,
   resolveExecutable,
 } from "./config.mjs";
 import {
@@ -56,6 +61,14 @@ function required(options, key) {
   return value;
 }
 
+function resolvePiExecutable() {
+  const configured = process.env.PI_BIN;
+  if (!configured) return resolveExecutable("pi");
+  if (!path.isAbsolute(configured)) throw new Error("PI_BIN must be an absolute executable path when installing the Pi provider");
+  fs.accessSync(configured, fs.constants.X_OK);
+  return fs.realpathSync(configured);
+}
+
 function usage() {
   return `t3-hermes — source-independent T3 Code ↔ Hermes bridge
 
@@ -63,6 +76,8 @@ Usage:
   t3-hermes doctor
   t3-hermes install-provider [--instance hermes] [--profile default] [--model MODEL]
   t3-hermes remove-provider [--instance hermes]
+  t3-hermes install-pi-provider [--instance pi] [--model gpt-5.6-terra] [--pi-provider openai-codex]
+  t3-hermes remove-pi-provider [--instance pi]
   t3-hermes originate --workspace PATH --title TITLE --message TEXT [--idempotency-key KEY]
   t3-hermes watch --once --allow-all-projects [--profile PROFILE] [--instance INSTANCE]
   t3-hermes watch --allow-all-projects [--interval 2000] [--state-file PATH] [--max-messages 10]
@@ -166,6 +181,23 @@ async function main() {
   }
   if (command === "remove-provider") {
     console.log(JSON.stringify(await removeProvider(client, { instanceId }), null, 2));
+    return;
+  }
+  if (command === "install-pi-provider") {
+    const piInstanceId = options.instance || DEFAULT_PI_INSTANCE_ID;
+    const piModel = options.model || DEFAULT_PI_MODEL;
+    const result = await installPiProvider(client, {
+      wrapperPath: path.join(repoRoot, "bin", "t3-pi-acp"),
+      instanceId: piInstanceId,
+      model: piModel,
+      piBin: resolvePiExecutable(),
+      piProvider: options["pi-provider"] || process.env.PI_PROVIDER || DEFAULT_PI_PROVIDER,
+    });
+    console.log(JSON.stringify({ installed: true, instanceId: piInstanceId, provider: result.provider?.instanceId || piInstanceId }, null, 2));
+    return;
+  }
+  if (command === "remove-pi-provider") {
+    console.log(JSON.stringify(await removePiProvider(client, { instanceId: options.instance || DEFAULT_PI_INSTANCE_ID }), null, 2));
     return;
   }
   if (command === "originate") {
