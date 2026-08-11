@@ -1,6 +1,6 @@
 {
   "name": "t3-agent-bridge",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Provider-neutral T3 Code ACP bridge with Hermes and Pi Agent adapters",
   "type": "module",
   "author": "Matej Havlin (m-check1B)",

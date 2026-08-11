@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented here.
 
+## [0.2.1] - 2026-08-11
+
+### Security and reliability
+
+- Pin release Actions to reviewed full commit SHAs, disable checkout credential
+  persistence and package-manager caching, and validate the tag/package version
+  before repository code executes.
+- Serialize release runs per tag and distinguish a missing GitHub release from
+  authentication, network, or API failures before creating one.
+- Protect `v*` tags with a repository ruleset that restricts creation, updates,
+  and deletion to the repository owner.
+- Cover provider-scoped fallback when Pi reports a current model owned by a
+  different provider.
+
+### Documentation
+
+- Include the provider-scoped T3-to-Pi path in the four-flow launch description.
+
 ## [0.2.0] - 2026-08-11
 
 ### Added
@@ -84,3 +102,4 @@ All notable changes to this project are documented here.
 [0.1.0]: https://github.com/m-check1B/t3-agent-bridge/releases/tag/v0.1.0
 [0.1.1]: https://github.com/m-check1B/t3-agent-bridge/releases/tag/v0.1.1
 [0.2.0]: https://github.com/m-check1B/t3-agent-bridge/releases/tag/v0.2.0
+[0.2.1]: https://github.com/m-check1B/t3-agent-bridge/releases/tag/v0.2.1

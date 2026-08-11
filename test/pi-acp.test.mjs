@@ -62,7 +62,7 @@ test("Pi ACP transforms legacy session state and intercepts local authentication
         { id: "gpt-5.6-terra", name: "Terra", provider: "openai-codex" },
         { id: "foreign-model", name: "Foreign", provider: "other-provider" },
       ],
-    }, { currentModelId: "gpt-5.6-terra", providerId: "openai-codex" }).models,
+    }, { currentModelId: "foreign-model", providerId: "openai-codex" }).models,
     {
       currentModelId: "gpt-5.6-terra",
       availableModels: [{ modelId: "gpt-5.6-terra", name: "Terra" }],

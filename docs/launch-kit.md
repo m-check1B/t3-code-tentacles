@@ -98,8 +98,9 @@ and conversations about building state-of-the-art AI systems.
 T3 Agent Bridge is an open-source ACP bridge for T3 Code, currently shipping
 Hermes and Pi Agent adapters.
 
-It gives builders three flows:
+It gives builders four flows:
 • T3 Code talks to Hermes over ACP
+• T3 Code talks to Pi through a provider-scoped ACP relay
 • Hermes or automation originates visible T3 threads
 • any T3 thread can route @hermes into one linked conversation
 

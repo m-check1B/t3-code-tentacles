@@ -8,20 +8,26 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   package:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-          cache: npm
+          package-manager-cache: false
+      - name: Verify tag matches package version
+        run: test "$GITHUB_REF_NAME" = "v$(node -p 'require("./package.json").version')"
       - run: npm ci
       - run: npm run check
       - run: npm test
-      - name: Verify tag matches package version
-        run: test "$GITHUB_REF_NAME" = "v$(node -p 'require("./package.json").version')"
       - name: Pack release artifact
         id: pack
         shell: bash
@@ -35,9 +41,16 @@ jobs:
           PACKAGE_FILE: ${{ steps.pack.outputs.package_file }}
         shell: bash
         run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+          release_response=$(mktemp)
+          release_error=$(mktemp)
+          trap 'rm -f "$release_response" "$release_error"' EXIT
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" \
+            >"$release_response" 2>"$release_error"; then
             gh release upload "$GITHUB_REF_NAME" "$PACKAGE_FILE" "$PACKAGE_FILE.sha256" --clobber
-          else
+          elif grep -q 'HTTP 404' "$release_error"; then
             gh release create "$GITHUB_REF_NAME" "$PACKAGE_FILE" "$PACKAGE_FILE.sha256" \
               --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
+          else
+            cat "$release_error" >&2
+            exit 1
           fi
