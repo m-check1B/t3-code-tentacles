@@ -33,8 +33,10 @@ visible model choice and sends the bare model ID through `session/set_model`.
 T3's provider driver identifies the protocol adapter, not the model a harness
 will run. The bridge installs instances with `driver: "grok"` because this T3
 adapter supports a configurable binary and ACP over standard input/output. T3
-invokes the bridge wrapper as `t3-hermes-acp agent stdio`; the wrapper then
-executes `hermes --profile <profile> acp`.
+invokes a configured wrapper as `t3-hermes-acp agent stdio` or
+`t3-pi-acp agent stdio`. The Hermes wrapper executes
+`hermes --profile <profile> acp`; the Pi wrapper relays to `pi --acp` and lets
+T3 control Pi's visible model through `session/set_model`.
 
 The Codex adapter is a different protocol boundary. It launches `codex
 app-server` and implements Codex-specific authentication, model discovery,
@@ -44,8 +46,9 @@ app-server protocol on top of ACP.
 
 The Grok choice therefore provides the smallest source-independent protocol
 match. It does not select Grok models or xAI routing. Model selection remains
-inside Hermes. The visible Grok icon in stock T3 Code is a cosmetic consequence
-of reusing that driver. An optional UI-only T3 patch can brand the bridge's
+inside Hermes for the Hermes integration; T3 controls the Pi integration's
+visible model through ACP. The visible Grok icon in stock T3 Code is a cosmetic
+consequence of reusing that driver. An optional UI-only T3 patch can brand the bridge's
 stable `grok:hermes` driver + instance identity correctly without relying on the
 editable display name or changing bridge behavior. The patch was submitted
 upstream as [T3 Code #5732](https://github.com/pingdotgg/t3code/pull/5732), which
