@@ -1,16 +1,16 @@
 # Support
 
-Hermes for T3 Code is an early, community-maintained integration. There is no
+T3 Agent Bridge is an early, community-maintained integration. There is no
 commercial support contract or guaranteed response time.
 
 ## Before opening an issue
 
 1. Read the [five-minute setup](README.md#five-minute-setup) and run
-   `t3-hermes doctor`.
+   `t3-agent-bridge doctor`.
 2. Confirm the tested baseline or record your exact versions: Node.js, T3 Code,
    Hermes Agent, operating system, and architecture.
-3. Search [existing issues](https://github.com/m-check1B/t3-hermes-bridge/issues)
-   and the [Discussions](https://github.com/m-check1B/t3-hermes-bridge/discussions).
+3. Search [existing issues](https://github.com/m-check1B/t3-agent-bridge/issues)
+   and the [Discussions](https://github.com/m-check1B/t3-agent-bridge/discussions).
 4. Remove bearer tokens, authorization headers, usernames, local paths, prompts,
    private project names, and complete state files from all output.
 

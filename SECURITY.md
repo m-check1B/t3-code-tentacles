@@ -2,13 +2,13 @@
 
 ## Supported versions
 
-Security fixes are applied to the latest released version. Version 0.1.1 is the
+Security fixes are applied to the latest released version. Version 0.2.0 is the
 currently supported line.
 
 ## Reporting a vulnerability
 
 Email private reports to `axis@verduona.com` with the subject
-`SECURITY: t3-hermes-bridge`. Do not open a public issue containing a working
+`SECURITY: t3-agent-bridge`. Do not open a public issue containing a working
 exploit, bearer token, private path, provider configuration, or user prompt.
 
 Include the affected version, impact, minimal reproduction, and any proposed
@@ -45,5 +45,6 @@ Pi authentication remains exclusively in Pi's normal local configuration. The
 Pi provider stores only non-secret absolute executable, provider, initial model,
 and ownership metadata in T3. The ACP relay never logs protocol payloads, does
 not forward T3's transport authentication request to Pi, bounds JSON-line and
-pending-request memory, and passes T3-selected bare model IDs to Pi's native
+pending-request memory, exposes only models belonging to the explicitly selected
+Pi provider, and passes T3-selected bare model IDs to Pi's native
 `session/set_model` method.
