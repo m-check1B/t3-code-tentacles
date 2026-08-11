@@ -56,6 +56,18 @@ test("Pi ACP transforms legacy session state and intercepts local authentication
     transformLegacySessionState(legacy, { currentModelId: "gpt-5.6-sol" }).models.currentModelId,
     "gpt-5.6-sol",
   );
+  assert.deepEqual(
+    transformLegacySessionState({
+      models: [
+        { id: "gpt-5.6-terra", name: "Terra", provider: "openai-codex" },
+        { id: "foreign-model", name: "Foreign", provider: "other-provider" },
+      ],
+    }, { currentModelId: "gpt-5.6-terra", providerId: "openai-codex" }).models,
+    {
+      currentModelId: "gpt-5.6-terra",
+      availableModels: [{ modelId: "gpt-5.6-terra", name: "Terra" }],
+    },
+  );
   const authentication = { jsonrpc: "2.0", id: 7, method: "authenticate", params: { token: "never-forwarded" } };
   assert.equal(isAuthenticateRequest(authentication), true);
   assert.deepEqual(authenticateResponse(authentication), { jsonrpc: "2.0", id: 7, result: {} });
@@ -86,11 +98,11 @@ process.stdin.on("data", (chunk) => {
     const line = input.slice(0, index); input = input.slice(index + 1);
     const message = JSON.parse(line);
     if (message.method === "authenticate") process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: "FORWARDED" }) + "\\n");
-    if (message.method === "session/new") process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { models: [{ id: "gpt-5.6-terra", name: "Terra", provider: "openai-codex" }], modes: [{ slug: "default", name: "Default", description: "Normal" }] } }) + "\\n");
+    if (message.method === "session/new") process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { models: [{ id: "gpt-5.6-terra", name: "Terra", provider: "openai-codex" }, { id: "foreign-model", name: "Foreign", provider: "other-provider" }], modes: [{ slug: "default", name: "Default", description: "Normal" }] } }) + "\\n");
     if (message.method === "session/set_model") { process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { selected: message.params.modelId, extra: true } }) + "\\n"); process.exit(0); }
   }
 });`);
-  const proxy = spawn(process.execPath, [path.resolve("src/pi-acp.mjs")], { env: { ...process.env, PI_BIN: pi }, stdio: ["pipe", "pipe", "pipe"] });
+  const proxy = spawn(process.execPath, [path.resolve("src/pi-acp.mjs")], { env: { ...process.env, PI_BIN: pi, PI_PROVIDER: "openai-codex" }, stdio: ["pipe", "pipe", "pipe"] });
   const output = collect(proxy);
   proxy.stdin.end([
     JSON.stringify({ jsonrpc: "2.0", id: 1, method: "authenticate", params: { token: "secret" } }),
@@ -218,6 +230,23 @@ setInterval(() => {}, 1000);
   assert.equal(grandchildAlive, false);
 });
 
+test("Pi proxy exits when Pi closes cleanly while T3 stdin remains open", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "t3-pi-clean-exit-"));
+  const pi = fakePi(directory, "process.exit(0);");
+  const proxy = spawn(process.execPath, [path.resolve("src/pi-acp.mjs")], {
+    env: { ...process.env, PI_BIN: pi },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const exited = await Promise.race([
+    once(proxy, "exit").then(([code, signal]) => ({ code, signal })),
+    new Promise((resolve) => setTimeout(() => resolve(null), 1_000)),
+  ]);
+  if (!exited) proxy.kill("SIGKILL");
+  assert.ok(exited, "wrapper must close its ACP transport after Pi exits");
+  assert.equal(exited.code, 0);
+  assert.equal(exited.signal, null);
+});
+
 test("Pi wrapper delegates version, ignores T3 driver argv, and supplies configured Pi defaults", async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "t3-pi-wrapper-"));
   const pi = fakePi(directory, `
@@ -262,6 +291,8 @@ test("Pi providers coexist with Hermes and refuse foreign or cross-harness owner
 test("CLI help documents Pi provider commands", () => {
   const result = spawnSync(process.execPath, [path.resolve("src/cli.mjs"), "help"], { encoding: "utf8" });
   assert.equal(result.status, 0);
+  assert.match(result.stdout, /^t3-agent-bridge — provider-neutral T3 Code ACP bridge/m);
   assert.match(result.stdout, /install-pi-provider \[--instance pi\] \[--model gpt-5\.6-terra\] \[--pi-provider openai-codex\]/);
   assert.match(result.stdout, /remove-pi-provider \[--instance pi\]/);
+  assert.match(result.stdout, /legacy t3-hermes command remains an exact compatibility alias/);
 });

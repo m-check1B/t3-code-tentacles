@@ -32,14 +32,19 @@ function selectedId(result, currentKey, legacyKey, entries, idKey) {
 }
 
 /** Convert Pi 0.1.x's legacy session model/mode arrays to ACP state objects. */
-export function transformLegacySessionState(result, { currentModelId, currentModeId } = {}) {
+export function transformLegacySessionState(result, { currentModelId, currentModeId, providerId } = {}) {
   if (!result || typeof result !== "object" || Array.isArray(result)
     || (!Array.isArray(result.models) && !Array.isArray(result.modes))) return result;
   const transformed = { ...result };
   if (Array.isArray(result.models)) {
-    const models = result.models;
+    const models = providerId
+      ? result.models.filter((model) => model?.provider === providerId)
+      : result.models;
+    const selectedModelId = currentModelId || selectedId(result, "currentModelId", "modelId", models, "id");
     transformed.models = {
-      currentModelId: currentModelId || selectedId(result, "currentModelId", "modelId", models, "id"),
+      currentModelId: !providerId || models.some((model) => model?.id === selectedModelId)
+        ? selectedModelId
+        : models[0]?.id,
       availableModels: models.map((model) => ({ modelId: model?.id, name: model?.name ?? model?.id })),
     };
   }
@@ -269,7 +274,10 @@ export function startPiAcpProxy({
     const key = requestKey(message.id);
     const method = key ? requests.get(key) : undefined;
     if (method && key) requests.delete(key);
-    const transformed = transformPiResponse(message, method, { currentModelId: piModel });
+    const transformed = transformPiResponse(message, method, {
+      currentModelId: piModel,
+      providerId: piProvider,
+    });
     if (transformed === message) return forwardLine(stdout, line);
     return writeJsonLine(stdout, transformed);
   }, stop, maxLineBytes);
