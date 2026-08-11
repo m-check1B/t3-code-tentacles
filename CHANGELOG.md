@@ -4,6 +4,13 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+### Added
+
+- Add Pi Agent as a parallel T3 Code ACP harness with ownership-safe provider
+  install/removal and T3-controlled model selection.
+- Add a bounded compatibility relay for Pi 0.1.x local authentication and legacy
+  ACP model/mode state without changing prompt, tool, approval, or stream traffic.
+
 ### Security and reliability
 
 - Reject invalid mention-watcher work bounds before state or network activity.

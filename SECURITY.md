@@ -37,6 +37,13 @@ service directories and status/config files are private (`0700`/`0600`), and the
 watcher uses a bounded structured-status contract instead of public unbounded
 log files.
 
-Treat Hermes profiles as privileged local processes: the bridge does not reduce
-or expand the filesystem, shell, network, or tool permissions already granted to
-the selected profile.
+Treat Hermes profiles and Pi Agent as privileged local processes: the bridge
+does not reduce or expand the filesystem, shell, network, or tool permissions
+already granted to the selected runtime.
+
+Pi authentication remains exclusively in Pi's normal local configuration. The
+Pi provider stores only non-secret absolute executable, provider, initial model,
+and ownership metadata in T3. The ACP relay never logs protocol payloads, does
+not forward T3's transport authentication request to Pi, bounds JSON-line and
+pending-request memory, and passes T3-selected bare model IDs to Pi's native
+`session/set_model` method.

@@ -1,7 +1,7 @@
 {
   "name": "t3-hermes-bridge",
   "version": "0.1.1",
-  "description": "Put Hermes Agent in T3 Code with a source-independent bidirectional bridge",
+  "description": "Run Hermes and Pi Agent as source-independent T3 Code ACP harnesses",
   "type": "module",
   "author": "Matej Havlin (m-check1B)",
   "homepage": "https://github.com/m-check1B/t3-hermes-bridge#readme",
@@ -16,6 +16,7 @@
     "acp",
     "agent-client-protocol",
     "hermes-agent",
+    "pi-agent",
     "t3-code",
     "ai-agents",
     "orchestration"
@@ -32,13 +33,14 @@
     "SECURITY.md"
   ],
   "bin": {
-    "t3-hermes": "./bin/t3-hermes"
+    "t3-hermes": "./bin/t3-hermes",
+    "t3-pi-acp": "./bin/t3-pi-acp"
   },
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "check": "node --check src/cli.mjs && node --check src/t3-client.mjs && node --check src/bridge.mjs && node --check src/service.mjs",
+    "check": "node --check src/cli.mjs && node --check src/t3-client.mjs && node --check src/bridge.mjs && node --check src/pi-acp.mjs && node --check src/service.mjs",
     "test": "node --test"
   },
   "license": "MIT"
