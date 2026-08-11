@@ -7,14 +7,14 @@ T3 Code UI
   └──▶ t3-pi-acp ──relay─────▶ pi --acp --provider <provider> --model <initial>
 
 Hermes / automation
-  │ t3-hermes originate, authenticated HTTP dispatch
+  │ t3-agent-bridge originate, authenticated HTTP dispatch
   ▼
 T3 orchestration API ──▶ visible project/thread/turn
 
 Any non-Hermes T3 thread
   │ new user message containing @hermes, read-only polling
   ▼
-t3-hermes watch ──▶ linked Hermes-backed T3 thread
+t3-agent-bridge watch ──▶ linked Hermes-backed T3 thread
 ```
 
 The functional bridge changes neither upstream. It reuses the ACP contract
@@ -24,9 +24,10 @@ Hermes reverse dispatch.
 
 Pi 0.1.x uses local authentication and an older ACP model/mode response shape.
 The Pi relay answers T3's transport-level `authenticate` request locally,
-normalizes those two state objects, and normalizes a successful model-switch
-response. All other ACP traffic is forwarded. T3 remains authoritative for the
-visible model choice and sends the bare model ID through `session/set_model`.
+normalizes those two state objects, filters discovery to the explicitly selected
+Pi provider, and normalizes a successful model-switch response. All other ACP
+traffic is forwarded. T3 remains authoritative for the visible model choice and
+sends the bare model ID through `session/set_model`.
 
 ## Why the Grok adapter is used
 
@@ -48,7 +49,9 @@ The Grok choice therefore provides the smallest source-independent protocol
 match. It does not select Grok models or xAI routing. Model selection remains
 inside Hermes for the Hermes integration; T3 controls the Pi integration's
 visible model through ACP. The visible Grok icon in stock T3 Code is a cosmetic
-consequence of reusing that driver. An optional UI-only T3 patch can brand the bridge's
+consequence of reusing that driver. Stock T3 also injects its built-in
+`grok-build` model into these instances; it is an adapter artifact, not a Pi
+model. An optional UI-only T3 patch can brand the bridge's
 stable `grok:hermes` driver + instance identity correctly without relying on the
 editable display name or changing bridge behavior. The patch was submitted
 upstream as [T3 Code #5732](https://github.com/pingdotgg/t3code/pull/5732), which

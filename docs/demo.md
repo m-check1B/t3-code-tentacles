@@ -42,8 +42,8 @@ In this real demo:
 The project began as one founder idea and was implemented, attacked, corrected,
 tested, and shipped through an AI orchestration workflow.
 
-Source: https://github.com/m-check1B/t3-hermes-bridge
-Release: https://github.com/m-check1B/t3-hermes-bridge/releases/tag/v0.1.0
+Source: https://github.com/m-check1B/t3-agent-bridge
+Release: https://github.com/m-check1B/t3-agent-bridge/releases/tag/v0.1.0
 
 Tested setup: T3 Code 0.0.31, Hermes Agent 0.20.0, Node.js 22, macOS.
 Independent community project; not affiliated with T3 Code, Ping Labs, Hermes

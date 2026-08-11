@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+SELF=$0
+while [ -L "$SELF" ]; do
+  LINK=$(readlink "$SELF")
+  case "$LINK" in
+    /*) SELF=$LINK ;;
+    *) SELF=$(dirname -- "$SELF")/$LINK ;;
+  esac
+done
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$SELF")" && pwd)
+exec node "$SCRIPT_DIR/../src/cli.mjs" "$@"

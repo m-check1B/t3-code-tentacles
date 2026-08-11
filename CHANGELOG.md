@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## Unreleased
+## [0.2.0] - 2026-08-11
 
 ### Added
 
@@ -10,11 +10,21 @@ All notable changes to this project are documented here.
   install/removal and T3-controlled model selection.
 - Add a bounded compatibility relay for Pi 0.1.x local authentication and legacy
   ACP model/mode state without changing prompt, tool, approval, or stream traffic.
+- Rename the project and npm package to provider-neutral `t3-agent-bridge`, add
+  the matching primary command, and retain `t3-hermes` plus legacy state and
+  ownership namespaces as compatibility surfaces.
+- Add a tag-driven GitHub release workflow that verifies the version, runs the
+  full suite, and publishes the package tarball with a SHA-256 checksum.
 
 ### Security and reliability
 
 - Reject invalid mention-watcher work bounds before state or network activity.
 - Bound and validate the loopback Hermes health response used by `doctor`.
+- Filter Pi ACP model discovery to the explicitly configured Pi provider so T3
+  cannot expose unrelated locally configured backends through the Pi instance.
+- Document the one-time T3 provider-cache migration required only for Pi
+  instances populated by the pre-v0.2 relay; T3 retains missing discovered
+  models during an in-place refresh.
 
 ### Community
 
@@ -71,5 +81,6 @@ All notable changes to this project are documented here.
 - Compatibility documentation, architecture, demo recipe, and contribution and
   security policies.
 
-[0.1.0]: https://github.com/m-check1B/t3-hermes-bridge/releases/tag/v0.1.0
-[0.1.1]: https://github.com/m-check1B/t3-hermes-bridge/releases/tag/v0.1.1
+[0.1.0]: https://github.com/m-check1B/t3-agent-bridge/releases/tag/v0.1.0
+[0.1.1]: https://github.com/m-check1B/t3-agent-bridge/releases/tag/v0.1.1
+[0.2.0]: https://github.com/m-check1B/t3-agent-bridge/releases/tag/v0.2.0

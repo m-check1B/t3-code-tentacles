@@ -70,21 +70,23 @@ function resolvePiExecutable() {
 }
 
 function usage() {
-  return `t3-hermes — source-independent T3 Code ↔ Hermes bridge
+  return `t3-agent-bridge — provider-neutral T3 Code ACP bridge
 
 Usage:
-  t3-hermes doctor
-  t3-hermes install-provider [--instance hermes] [--profile default] [--model MODEL]
-  t3-hermes remove-provider [--instance hermes]
-  t3-hermes install-pi-provider [--instance pi] [--model gpt-5.6-terra] [--pi-provider openai-codex]
-  t3-hermes remove-pi-provider [--instance pi]
-  t3-hermes originate --workspace PATH --title TITLE --message TEXT [--idempotency-key KEY]
-  t3-hermes watch --once --allow-all-projects [--profile PROFILE] [--instance INSTANCE]
-  t3-hermes watch --allow-all-projects [--interval 2000] [--state-file PATH] [--max-messages 10]
-  t3-hermes install-service --profile PROFILE --instance INSTANCE [service options]
-  t3-hermes service-status --profile PROFILE --instance INSTANCE
-  t3-hermes restart-service --profile PROFILE --instance INSTANCE
-  t3-hermes uninstall-service --profile PROFILE --instance INSTANCE
+  t3-agent-bridge doctor
+  t3-agent-bridge install-provider [--instance hermes] [--profile default] [--model MODEL]
+  t3-agent-bridge remove-provider [--instance hermes]
+  t3-agent-bridge install-pi-provider [--instance pi] [--model gpt-5.6-terra] [--pi-provider openai-codex]
+  t3-agent-bridge remove-pi-provider [--instance pi]
+  t3-agent-bridge originate --workspace PATH --title TITLE --message TEXT [--idempotency-key KEY]
+  t3-agent-bridge watch --once --allow-all-projects [--profile PROFILE] [--instance INSTANCE]
+  t3-agent-bridge watch --allow-all-projects [--interval 2000] [--state-file PATH] [--max-messages 10]
+  t3-agent-bridge install-service --profile PROFILE --instance INSTANCE [service options]
+  t3-agent-bridge service-status --profile PROFILE --instance INSTANCE
+  t3-agent-bridge restart-service --profile PROFILE --instance INSTANCE
+  t3-agent-bridge uninstall-service --profile PROFILE --instance INSTANCE
+
+The legacy t3-hermes command remains an exact compatibility alias.
 
 Environment:
   Service options:
@@ -264,6 +266,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(`t3-hermes: ${error.message}`);
+  console.error(`t3-agent-bridge: ${error.message}`);
   process.exitCode = 1;
 });

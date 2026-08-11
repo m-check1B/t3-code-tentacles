@@ -1,19 +1,22 @@
-# Hermes + Pi Agent for T3 Code
+# T3 Agent Bridge
 
-[![CI](https://github.com/m-check1B/t3-hermes-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/m-check1B/t3-hermes-bridge/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/m-check1B/t3-hermes-bridge)](https://github.com/m-check1B/t3-hermes-bridge/releases)
+[![CI](https://github.com/m-check1B/t3-agent-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/m-check1B/t3-agent-bridge/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/m-check1B/t3-agent-bridge)](https://github.com/m-check1B/t3-agent-bridge/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js 22+](https://img.shields.io/badge/node-%3E%3D22-43853d.svg)](package.json)
 
-Put [Hermes Agent](https://github.com/NousResearch/hermes-agent) and
-[Pi Agent](https://github.com/Dicklesworthstone/pi_agent_rust) in
-[T3 Code](https://github.com/pingdotgg/t3code)—without forking any project.
+Connect ACP agent harnesses to [T3 Code](https://github.com/pingdotgg/t3code)
+without forking either side. The included adapters support
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) and
+[Pi Agent](https://github.com/Dicklesworthstone/pi_agent_rust); the repository
+name and command surface stay stable as more providers are added.
 
 This is a standalone, reversible bridge. T3 Code stays the polished multi-agent
 cockpit; Hermes and Pi stay independent ACP harnesses with their own runtime,
 model, authentication, and tool configuration.
 
-> **Project status:** early integration, tested with T3 Code 0.0.32, Hermes Agent
+> **Project status:** early integration, tested with T3 Code
+> 0.0.34-nightly.20260811.1064, Hermes Agent
 > 0.20.0, Pi Agent 0.1.23, and Node.js 22 on macOS. Other versions and platforms
 > are not yet verified—compatibility reports are welcome.
 
@@ -23,7 +26,7 @@ model, authentication, and tool configuration.
 |---|---|---|
 | T3 Code → Hermes | Hermes appears as a normal T3 provider over ACP | Tested |
 | T3 Code → Pi | Pi appears as a parallel T3 provider; T3's picker switches Pi models over ACP | Tested |
-| Hermes → T3 Code | `t3-hermes originate` creates a visible Hermes-backed T3 thread | Tested |
+| Hermes → T3 Code | `t3-agent-bridge originate` creates a visible Hermes-backed T3 thread | Tested |
 | Any T3 thread → Hermes | A new `@hermes` message routes to one linked Hermes thread | Tested |
 | Existing T3 providers | Provider install/remove preserves unrelated instances | Tested |
 | Background routing | Reversible per-user macOS LaunchAgent | Tested |
@@ -40,8 +43,9 @@ binary with `agent stdio`; the matching wrapper starts either `hermes --profile
 <profile> acp` or Pi's native `pi --acp` transport.
 
 This selects a transport adapter, not a model provider. Hermes still uses its
-active profile. Pi advertises its available models to T3; choosing a bare model
-ID such as `gpt-5.6-terra` in T3 calls Pi's ACP `session/set_model` method.
+active profile. Pi advertises only the models belonging to the configured
+`PI_PROVIDER`; choosing a bare model ID such as `gpt-5.6-terra` in T3 calls
+Pi's ACP `session/set_model` method.
 
 T3's `codex` driver is not a generic route to every Codex-backed model. It
 speaks the Codex-specific `app-server` protocol and expects Codex authentication,
@@ -51,7 +55,9 @@ compatibility layer.
 
 On an unmodified T3 Code release, Hermes and Pi may therefore display the Grok icon.
 That is a cosmetic limitation only: the bridge and both communication
-directions still work. A small T3 UI patch can give the bridge's stable
+directions still work. Stock T3 also adds its built-in `grok-build` entry to
+every instance using this adapter; that entry is not a Pi model and should not
+be selected. A small T3 UI patch can give the bridge's stable
 `grok:hermes` driver + instance identity its own logo, without relying on its
 editable display name. The patch is optional and remains outside this bridge.
 It was submitted upstream as [T3 Code #5732](https://github.com/pingdotgg/t3code/pull/5732),
@@ -64,7 +70,7 @@ long-term solution.
 
 ### 1. Prerequisites
 
-- T3 Code 0.0.32 listening on `127.0.0.1:3773`.
+- T3 Code 0.0.34-nightly.20260811.1064 listening on `127.0.0.1:3773`.
 - Hermes Agent 0.20.0+ with ACP support.
 - Pi Agent 0.1.23+ for the optional Pi harness.
 - Node.js 22+.
@@ -72,19 +78,24 @@ long-term solution.
 Clone the bridge and install the command shim:
 
 ```bash
-git clone https://github.com/m-check1B/t3-hermes-bridge.git
-cd t3-hermes-bridge
+git clone https://github.com/m-check1B/t3-agent-bridge.git
+cd t3-agent-bridge
 mkdir -p ~/.local/bin
-t3_bridge_command="$HOME/.local/bin/t3-hermes"
+t3_bridge_command="$HOME/.local/bin/t3-agent-bridge"
 if [ -e "$t3_bridge_command" ] || [ -L "$t3_bridge_command" ]; then
   printf 'Refusing to replace existing path: %s\n' "$t3_bridge_command" >&2
 else
-  ln -s "$PWD/bin/t3-hermes" "$t3_bridge_command"
+  ln -s "$PWD/bin/t3-agent-bridge" "$t3_bridge_command"
 fi
 unset t3_bridge_command
 ```
 
 Ensure `~/.local/bin` is on your `PATH`.
+
+The former `t3-hermes` command remains packaged as an exact compatibility
+alias. Existing ownership markers, LaunchAgent labels, and
+`~/.local/state/t3-hermes-bridge` paths also remain valid so upgrades do not
+silently orphan provider or watcher state.
 
 ### 2. Issue a local T3 token
 
@@ -93,7 +104,7 @@ Create a scoped bearer file without printing the token:
 ```bash
 install -d -m 700 ~/.local/state/t3-hermes-bridge
 umask 077
-npx -y t3@0.0.31 auth session issue \
+npx -y t3@0.0.34-nightly.20260811.1064 auth session issue \
   --base-dir ~/.t3 \
   --ttl 30d \
   --label t3-hermes-bridge \
@@ -111,10 +122,10 @@ Choose your Hermes profile and the T3 model identifier you want displayed. The
 defaults are `default` and the model used by the tested setup:
 
 ```bash
-t3-hermes install-provider \
+t3-agent-bridge install-provider \
   --profile default \
   --model openai-codex:gpt-5.6-sol
-t3-hermes doctor
+t3-agent-bridge doctor
 ```
 
 If your installation exposes a different model identifier, pass it with
@@ -130,23 +141,29 @@ remain in Pi's custody and are never copied into T3 settings or this bridge.
 Then register the model that T3 should select initially:
 
 ```bash
-t3-hermes install-pi-provider \
+t3-agent-bridge install-pi-provider \
   --instance pi \
   --pi-provider openai-codex \
   --model gpt-5.6-terra
 ```
 
-Open T3 Code and select **Pi**. The Pi ACP session advertises all locally
-available Pi models; T3's model picker sends the selected bare model ID to Pi
-with `session/set_model`. The bridge's compatibility relay only normalizes Pi
-0.1.x's legacy ACP model/mode state and local-auth handshake. Prompts, streamed
-updates, tool calls, approvals, cancellation, and model switching otherwise pass
-between T3 and Pi unchanged.
+Open T3 Code and select **Pi**. The Pi ACP session advertises only models owned
+by the configured Pi provider—three Codex models for `openai-codex` in the
+tested setup. T3's model picker sends the selected bare model ID to Pi with
+`session/set_model`. The compatibility relay normalizes Pi 0.1.x's legacy ACP
+model/mode state and local-auth handshake. Prompts, streamed updates, tool
+calls, approvals, cancellation, and model switching otherwise pass unchanged.
+
+If a pre-v0.2 Pi installation already populated T3 with cross-provider models,
+quit T3, move `~/.t3/caches/pi.json` to a private backup, reopen T3, and rerun
+`install-pi-provider`. Current T3 nightly builds retain previously discovered
+models across refreshes, so changing the relay alone cannot prune that stale
+cache in place. Fresh v0.2 installations do not populate it.
 
 ### 4. Prove the reverse direction
 
 ```bash
-t3-hermes originate \
+t3-agent-bridge originate \
   --workspace "$PWD" \
   --title "Hermes surfaced this" \
   --message "This T3 thread originated through the standalone Hermes bridge."
@@ -157,8 +174,8 @@ A new Hermes-backed thread should appear in T3 Code.
 ### 5. Enable `@hermes`
 
 ```bash
-t3-hermes watch --once --allow-all-projects   # arms the initial watermark
-t3-hermes watch --allow-all-projects          # polls for new mentions
+t3-agent-bridge watch --once --allow-all-projects   # arms the initial watermark
+t3-agent-bridge watch --allow-all-projects          # polls for new mentions
 ```
 
 In any non-Hermes T3 thread, send `@hermes investigate this`. The watcher creates
@@ -170,7 +187,7 @@ require both a filesystem-safe Hermes profile and a bridge instance; this avoids
 accidentally replacing a different watcher:
 
 ```bash
-t3-hermes install-service \
+t3-agent-bridge install-service \
   --profile default \
   --instance hermes \
   --model openai-codex:gpt-5.6-sol \
@@ -181,7 +198,7 @@ t3-hermes install-service \
   --state-file ~/.local/state/t3-hermes-bridge/profiles/default/instances/hermes/bridge-state.json \
   --max-messages 10 \
   --allow-all-projects
-t3-hermes service-status --profile default --instance hermes
+t3-agent-bridge service-status --profile default --instance hermes
 ```
 
 `install-service` snapshots the bridge runtime into private Application Support
@@ -201,8 +218,8 @@ freshness, token-file metadata (without reading the bearer), launchd PID/runs/
 last-exit data when available, and runtime identity through `service-status`.
 
 ```bash
-t3-hermes restart-service --profile default --instance hermes
-t3-hermes uninstall-service --profile default --instance hermes
+t3-agent-bridge restart-service --profile default --instance hermes
+t3-agent-bridge uninstall-service --profile default --instance hermes
 ```
 
 Uninstall removes only the owned namespaced LaunchAgent. It deliberately
@@ -244,12 +261,12 @@ when a skill resolves outside the active profile's trusted `skills/` directory.
 ## Uninstall
 
 ```bash
-t3-hermes uninstall-service --profile default --instance hermes
-t3-hermes remove-pi-provider --instance pi
-t3-hermes remove-provider
+t3-agent-bridge uninstall-service --profile default --instance hermes
+t3-agent-bridge remove-pi-provider --instance pi
+t3-agent-bridge remove-provider
 
-t3_bridge_command="$HOME/.local/bin/t3-hermes"
-if [ "$(readlink "$t3_bridge_command" 2>/dev/null)" = "$PWD/bin/t3-hermes" ]; then
+t3_bridge_command="$HOME/.local/bin/t3-agent-bridge"
+if [ "$(readlink "$t3_bridge_command" 2>/dev/null)" = "$PWD/bin/t3-agent-bridge" ]; then
   rm -- "$t3_bridge_command"
 else
   printf 'Refusing to remove unowned path: %s\n' "$t3_bridge_command" >&2
@@ -297,8 +314,8 @@ part of the project. It is documented in [the build story](docs/build-story.md).
 
 ## Roadmap
 
-Hermes and Pi Agent for T3 Code today. A path toward a reusable bidirectional
-ACP bridge tomorrow.
+One provider-neutral T3 bridge, with Hermes and Pi Agent adapters today and a
+stable extension seam for additional ACP harnesses.
 
 - Contract-test newer T3 Code and Hermes releases.
 - Add Linux service packaging.
