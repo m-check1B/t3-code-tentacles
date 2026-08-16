@@ -1,5 +1,8 @@
 # T3 Agent Bridge
 
+Repository documentation and integration authority boundaries start at
+[docs/README.md](docs/README.md).
+
 [![CI](https://github.com/m-check1B/t3-agent-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/m-check1B/t3-agent-bridge/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/m-check1B/t3-agent-bridge)](https://github.com/m-check1B/t3-agent-bridge/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
