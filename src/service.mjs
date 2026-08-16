@@ -794,7 +794,9 @@ function uninstallSystemdUnit(identity, deps) {
   if (currentStatus.loaded) deps.systemctl.stop(unitName);
   if (wasEnabled) deps.fs.unlinkSync(enableLink);
   if (existing) deps.fs.unlinkSync(paths.unit);
-  deps.systemctl.daemonReload();
+  // Only reload the user manager when something actually changed, so a no-op
+  // uninstall stays silent even if the user bus is unreachable.
+  if (existing || wasEnabled || currentStatus.loaded) deps.systemctl.daemonReload();
   // State, token, heartbeat and shared immutable snapshots intentionally remain for recovery/audit.
   return { loaded: false, label: paths.label, unit: paths.unit, removed: currentStatus.loaded || Boolean(existing), preserved: { token: currentStatus.token?.path || null, state: currentStatus.state?.path || null, runtime: currentStatus.runtime?.path || null } };
 }
