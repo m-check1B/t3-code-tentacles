@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { T3Client } from "./t3-client.mjs";
 import {
@@ -71,8 +71,13 @@ function required(options, key) {
   return value;
 }
 
-function parseIntentOption(options) {
-  const raw = options.intent !== undefined ? options.intent : options["intent-file"] !== undefined ? readIntentFile(options["intent-file"]) : null;
+export function parseIntentOption(options) {
+  const hasIntent = options.intent !== undefined;
+  const hasIntentFile = options["intent-file"] !== undefined;
+  if (hasIntent && hasIntentFile) {
+    throw new Error("act accepts --intent or --intent-file, not both; pass exactly one");
+  }
+  const raw = hasIntent ? options.intent : hasIntentFile ? readIntentFile(options["intent-file"]) : null;
   if (raw === null) throw new Error("act requires --intent '{...}' or --intent-file PATH");
   try { return JSON.parse(raw); }
   catch (error) { throw new Error(`Intent is not valid JSON: ${error.message}`); }
@@ -375,7 +380,11 @@ async function main() {
   throw new Error(`Unknown command: ${command}\n\n${usage()}`);
 }
 
-main().catch((error) => {
-  console.error(`t3-agent-bridge: ${error.message}`);
-  process.exitCode = 1;
-});
+// Only run the CLI when executed directly (bin/t3-agent-bridge execs this
+// module); importing it for tests must not start a command.
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main().catch((error) => {
+    console.error(`t3-agent-bridge: ${error.message}`);
+    process.exitCode = 1;
+  });
+}
