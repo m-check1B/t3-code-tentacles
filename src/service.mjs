@@ -155,8 +155,13 @@ export function servicePaths(identity, overrides = {}) {
 }
 
 // Kept for callers migrating from v1. New mutating commands require an identity.
-export function launchAgentPath(identity) {
-  return identity ? servicePaths(identity).plist : path.join(os.homedir(), "Library", "LaunchAgents", `${LAUNCH_AGENT_LABEL}.plist`);
+// The optional overrides argument is for tests; callers on non-darwin get a
+// loud error instead of an undefined plist path.
+export function launchAgentPath(identity, overrides = {}) {
+  if (!identity) return path.join(os.homedir(), "Library", "LaunchAgents", `${LAUNCH_AGENT_LABEL}.plist`);
+  const deps = defaultDeps(overrides);
+  if (deps.platform !== "darwin") throw new Error(`launchAgentPath is only supported on darwin (current platform: ${deps.platform})`);
+  return servicePaths(identity, deps).plist;
 }
 
 export function isBridgeOwnedLaunchAgent(content, { label, ownerValue = LAUNCH_AGENT_OWNER_VALUE } = {}) {

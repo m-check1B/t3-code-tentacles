@@ -142,6 +142,11 @@ test("systemd unit paths are isolated per identity and unsupported platforms fai
     assert.throws(() => operation(setup.config, { ...setup.deps, platform: "win32" }), /unsupported on platform: win32/);
   }
   assert.throws(() => servicePaths(setup.config, { ...setup.deps, platform: "win32" }), /unsupported on platform: win32/);
+  assert.throws(() => launchAgentPath(setup.config, { ...setup.deps, platform: "linux" }), /only supported on darwin/);
+  assert.equal(
+    launchAgentPath(setup.config, { ...setup.deps, platform: "darwin" }),
+    path.join(setup.homeDir, "Library", "LaunchAgents", `${serviceLabel(setup.config)}.plist`),
+  );
 });
 
 test("owned systemd unit checks refuse foreign files and symlinks", () => {
