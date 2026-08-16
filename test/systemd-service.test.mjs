@@ -266,3 +266,59 @@ test("platform dispatch keeps launchctl and systemctl runners isolated", () => {
   assert.equal(darwinStatus.loaded, false);
   assert.equal(darwinStatus.plist.path, path.join(setup.homeDir, "Library", "LaunchAgents", `${serviceLabel(setup.config)}.plist`));
 });
+
+test("install refuses to take over a loaded foreign unit without an owned unit file", () => {
+  const setup = fixture();
+  const unitName = `${serviceLabel(setup.config)}.service`;
+  setup.markLoaded(unitName); // loaded but inactive: systemctl status exits 3
+  assert.throws(() => installService(setup.config, setup.deps), /Refusing to replace loaded systemd unit without an owned unit file/);
+  const paths = servicePaths(setup.config, setup.deps);
+  assert.equal(fs.existsSync(paths.unit), false);
+  assert.equal(fs.existsSync(enableLinkPath(setup)), false);
+  assert.deepEqual(setup.calls, []);
+});
+
+test("uninstall refuses to remove a loaded foreign unit without an owned unit file", () => {
+  const setup = fixture();
+  const unitName = `${serviceLabel(setup.config)}.service`;
+  setup.markLoaded(unitName);
+  assert.throws(() => uninstallService(setup.config, setup.deps), /Refusing to remove loaded systemd unit without an owned unit file/);
+  const paths = servicePaths(setup.config, setup.deps);
+  assert.equal(fs.existsSync(paths.unit), false);
+  assert.deepEqual(setup.calls, []);
+});
+
+test("fresh install rolls back cleanly when activation fails before any unit existed", () => {
+  const setup = fixture();
+  setup.failNextStart();
+  assert.throws(() => installService(setup.config, setup.deps), /injected start failure/);
+  const paths = servicePaths(setup.config, setup.deps);
+  assert.equal(fs.existsSync(paths.unit), false);
+  assert.equal(fs.existsSync(enableLinkPath(setup)), false);
+  assert.equal(fs.readdirSync(path.dirname(paths.unit)).some((name) => name.endsWith(".tmp")), false);
+  const status = serviceStatus(setup.config, setup.deps);
+  assert.equal(status.loaded, false);
+  assert.equal(status.running, false);
+  assert.equal(fs.existsSync(setup.tokenFile), true);
+});
+
+test("restart revives an installed-but-stopped unit like launchd kickstart", () => {
+  const setup = fixture();
+  installService(setup.config, setup.deps);
+  const unitName = `${serviceLabel(setup.config)}.service`;
+  setup.stopUnit(unitName); // loaded but inactive
+  const stopped = serviceStatus(setup.config, setup.deps);
+  assert.equal(stopped.loaded, true);
+  assert.equal(stopped.running, false);
+  const restarted = restartService(setup.config, setup.deps);
+  assert.equal(restarted.loaded, true);
+  assert.equal(restarted.running, true);
+  assert.ok(setup.calls.some(([name]) => name === "restart"));
+});
+
+test("uninstalling a never-installed identity performs no systemctl calls", () => {
+  const setup = fixture();
+  const result = uninstallService(setup.config, setup.deps);
+  assert.equal(result.removed, false);
+  assert.deepEqual(setup.calls, []);
+});
