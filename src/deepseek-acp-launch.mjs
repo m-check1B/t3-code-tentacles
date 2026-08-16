@@ -117,6 +117,71 @@ function isResponseMessage(message) {
     && (Object.hasOwn(message, "result") || Object.hasOwn(message, "error"));
 }
 
+// dsh-acp@0.1.9 emits `session/update` notifications with
+// sessionUpdate: "tool_call_update" that LACK the required toolCallId field:
+// its relay reads the id from `message?.callId || resultData?.callId ||
+// resultData?.id` (lib/bin.js tool/result handler), but DeepSeek Harness tool
+// results carry it at `message.source.callId`, so every tool result produces
+// an update without an id. T3's effect-acp client schema requires toolCallId
+// in tool_call_update (packages/effect-acp schema.gen.ts) and treats one
+// undecodable session/update as a fatal transport error: the whole ACP
+// connection is terminated and the in-flight session/prompt fails with
+// "ACP transport operation call-rpc failed for method session/prompt" —
+// even though the harness keeps running. Live capture (2026-08-16, T3 thread
+// 5cbcbba9): the first tool result was relayed at 14:39:27.985 and the prompt
+// RPC failed at 14:39:27.987.
+//
+// The harness embeds the call id inside the tool-result payload dsh-acp
+// forwards as rawOutput/content text: {"type":"tool-result","toolCallId":
+// "call_..."}. Recovery order: extract it from that payload, then fall back
+// to the most recently announced tool_call id for the session. A tool_call
+// (in_progress) update always carries the id, so the fallback is exact for
+// the sequential-tool case and only approximates out-of-order parallel
+// results, which is strictly better than letting T3 kill the session.
+export const TOOL_CALL_UPDATE_SESSION_CAP = 16;
+
+function recoverToolCallIdFromPayload(payload) {
+  if (typeof payload === "string") {
+    const match = /"toolCallId"\s*:\s*"([^"]+)"/.exec(payload);
+    return match ? match[1] : undefined;
+  }
+  if (Array.isArray(payload)) {
+    for (const block of payload) {
+      if (block && typeof block.text === "string") {
+        const match = /"toolCallId"\s*:\s*"([^"]+)"/.exec(block.text);
+        if (match) return match[1];
+      }
+    }
+  }
+  return undefined;
+}
+
+function transformToolCallUpdate(message, toolCallState) {
+  const update = message.params?.update;
+  if (!update || typeof update !== "object" || Array.isArray(update)) return null;
+  if (update.sessionUpdate === "tool_call") {
+    if (typeof update.toolCallId === "string" && update.toolCallId.length > 0) {
+      const key = String(message.params.sessionId);
+      if (!toolCallState.has(key) && toolCallState.size >= TOOL_CALL_UPDATE_SESSION_CAP) {
+        toolCallState.delete(toolCallState.keys().next().value);
+      }
+      toolCallState.set(key, update.toolCallId);
+    }
+    return null;
+  }
+  if (update.sessionUpdate !== "tool_call_update") return null;
+  if (typeof update.toolCallId === "string" && update.toolCallId.length > 0) return null;
+  const recovered =
+    recoverToolCallIdFromPayload(update.rawOutput)
+    ?? recoverToolCallIdFromPayload(update.content)
+    ?? toolCallState.get(String(message.params.sessionId));
+  if (typeof recovered !== "string" || recovered.length === 0) return null;
+  return JSON.stringify({
+    ...message,
+    params: { ...message.params, update: { ...update, toolCallId: recovered } },
+  });
+}
+
 function rememberTranslatedId(translatedIds, id) {
   const key = requestKey(id);
   if (!key) return;
@@ -171,14 +236,19 @@ export function transformClientToAgentLine(line, translatedIds = new Map()) {
 
 /**
  * Agent→client: coerce dsh-acp's boolean ACP sessionCapabilities into the
- * object|null shape T3's schema expects, and shape translated set_model
- * responses back to `{}`. Returns the line to forward; anything unrecognized
- * passes through verbatim.
+ * object|null shape T3's schema expects, shape translated set_model
+ * responses back to `{}`, and repair tool_call_update notifications that
+ * dsh-acp emits without the required toolCallId (see
+ * transformToolCallUpdate). Returns the line to forward; anything
+ * unrecognized passes through verbatim.
  */
-export function transformAgentToClientLine(line, translatedIds = new Map()) {
+export function transformAgentToClientLine(line, translatedIds = new Map(), toolCallState = new Map()) {
   const text = Buffer.isBuffer(line) ? line.toString("utf8") : String(line);
   const message = parseJsonObject(text);
-  if (!message || !isResponseMessage(message)) return text;
+  if (!message || !isResponseMessage(message)) {
+    const repaired = message?.method === "session/update" ? transformToolCallUpdate(message, toolCallState) : null;
+    return repaired ?? text;
+  }
   const key = requestKey(message.id);
   if (key && translatedIds.has(key)) {
     translatedIds.delete(key);
@@ -231,6 +301,7 @@ export function startDeepSeekAcpProxy({
     detached: process.platform !== "win32",
   });
   const translatedIds = new Map();
+  const toolCallState = new Map();
   let stopping = false;
   let forceKillTimer;
   let stdinRelay;
@@ -287,7 +358,7 @@ export function startDeepSeekAcpProxy({
   });
 
   stdoutRelay = consumeJsonLines(child.stdout, (line) => {
-    const transformed = transformAgentToClientLine(line, translatedIds);
+    const transformed = transformAgentToClientLine(line, translatedIds, toolCallState);
     return forwardLine(stdout, transformed);
   }, stop, maxLineBytes);
 

@@ -4,6 +4,7 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 import {
   MAX_TRANSLATED_SET_MODEL_IDS,
+  TOOL_CALL_UPDATE_SESSION_CAP,
   startDeepSeekAcpProxy,
   transformAgentToClientLine,
   transformClientToAgentLine,
@@ -139,6 +140,92 @@ test("transformAgentToClientLine passes translated error responses through verba
   assert.equal(ids.size, 0);
 });
 
+test("transformAgentToClientLine repairs tool_call_update notifications missing toolCallId", () => {
+  const ids = new Map();
+  const toolCallState = new Map();
+  // dsh-acp@0.1.9 emits tool_call_update without toolCallId (it reads the id
+  // from message.callId, but the harness stores it at message.source.callId).
+  // The harness tool-result payload dsh-acp forwards as rawOutput embeds the
+  // id, so the proxy repairs the update from it.
+  const malformed = JSON.stringify({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: {
+      sessionId: "s1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        status: "completed",
+        rawOutput: '{"type":"tool-result","toolCallId":"call_00_abc","content":[{"type":"text","text":"ok"}]}',
+        content: [{ type: "text", text: '{"type":"tool-result","toolCallId":"call_00_abc","content":[{"type":"text","text":"ok"}]}' }],
+      },
+    },
+  });
+  const repaired = JSON.parse(transformAgentToClientLine(malformed, ids, toolCallState));
+  assert.equal(repaired.params.update.toolCallId, "call_00_abc");
+  assert.equal(repaired.params.update.sessionUpdate, "tool_call_update");
+  assert.equal(repaired.method, "session/update");
+  assert.equal(repaired.jsonrpc, "2.0");
+
+  // Without an id in the payload, the most recent tool_call id for that
+  // session is used (a tool_call in_progress update always carries the id).
+  const toolCall = JSON.stringify({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: { sessionId: "s1", update: { sessionUpdate: "tool_call", toolCallId: "call_00_latest", title: "bash", rawInput: { command: "ls" }, status: "in_progress" } },
+  });
+  assert.equal(transformAgentToClientLine(toolCall, ids, toolCallState), toolCall);
+  const noPayload = JSON.stringify({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: { sessionId: "s1", update: { sessionUpdate: "tool_call_update", status: "failed", rawOutput: "" } },
+  });
+  const repairedFallback = JSON.parse(transformAgentToClientLine(noPayload, ids, toolCallState));
+  assert.equal(repairedFallback.params.update.toolCallId, "call_00_latest");
+
+  // Complete updates and unrelated update kinds pass through verbatim.
+  const complete = JSON.stringify({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: { sessionId: "s1", update: { sessionUpdate: "tool_call_update", toolCallId: "call_00_ok", status: "completed" } },
+  });
+  assert.equal(transformAgentToClientLine(complete, ids, toolCallState), complete);
+  const thought = JSON.stringify({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: { sessionId: "s1", update: { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "hi" } } },
+  });
+  assert.equal(transformAgentToClientLine(thought, ids, toolCallState), thought);
+
+  // A different session never reuses another session's fallback id.
+  const otherSession = JSON.stringify({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: { sessionId: "s2", update: { sessionUpdate: "tool_call_update", status: "completed", rawOutput: "" } },
+  });
+  assert.equal(transformAgentToClientLine(otherSession, ids, toolCallState), otherSession);
+});
+
+test("transformAgentToClientLine bounds the tool_call id map by evicting the oldest session", () => {
+  const ids = new Map();
+  const toolCallState = new Map();
+  for (let index = 0; index < TOOL_CALL_UPDATE_SESSION_CAP; index += 1) {
+    transformAgentToClientLine(JSON.stringify({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: { sessionId: `s${index}`, update: { sessionUpdate: "tool_call", toolCallId: `call_${index}`, title: "t", status: "in_progress" } },
+    }), ids, toolCallState);
+  }
+  assert.equal(toolCallState.size, TOOL_CALL_UPDATE_SESSION_CAP);
+  transformAgentToClientLine(JSON.stringify({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: { sessionId: "overflow", update: { sessionUpdate: "tool_call", toolCallId: "call_overflow", title: "t", status: "in_progress" } },
+  }), ids, toolCallState);
+  assert.equal(toolCallState.size, TOOL_CALL_UPDATE_SESSION_CAP);
+  assert.equal(toolCallState.has("s0"), false);
+  assert.equal(toolCallState.get("overflow"), "call_overflow");
+});
+
 test("the proxy coerces initialize capabilities and shapes set_model responses end to end", async () => {
   const fakeAgent = `
 import readline from "node:readline";
@@ -201,6 +288,71 @@ setInterval(() => {}, 1000);
     stdin.write(JSON.stringify({ jsonrpc: "2.0", id: "new-2", method: "session/new", params: { cwd: "/repo" } }) + "\n");
     const sessionNewAbsent = await nextLine(4);
     assert.deepEqual(sessionNewAbsent, { jsonrpc: "2.0", id: "new-2", result: { sessionId: "s1" } });
+  } finally {
+    child.kill("SIGTERM");
+    await once(child, "exit");
+  }
+});
+
+test("the proxy repairs dsh-acp's tool_call_update missing toolCallId end to end", async () => {
+  // Fake agent mirrors dsh-acp@0.1.9's tool/result relay: the tool_call
+  // (in_progress) update carries the id, but the tool_call_update after the
+  // result omits it because the harness stores the id at message.source.callId.
+  const fakeAgent = `
+import readline from "node:readline";
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  let msg;
+  try { msg = JSON.parse(line); } catch { return; }
+  if (msg.method === "initialize") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, agentCapabilities: {} } }) + "\\n");
+  } else if (msg.method === "session/new") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "s1" } }) + "\\n");
+  } else if (msg.method === "session/prompt") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "tool_call", toolCallId: "call_00_tool", title: "bash", rawInput: { command: "ls" }, status: "in_progress" } } }) + "\\n");
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "tool_call_update", status: "completed", rawOutput: '{"type":"tool-result","toolCallId":"call_00_tool","content":[{"type":"text","text":"ok"}]}' } } }) + "\\n");
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } }) + "\\n");
+  }
+});
+setInterval(() => {}, 1000);
+`;
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const child = startDeepSeekAcpProxy({
+    plan: { binary: process.execPath, args: ["--input-type=module", "-e", fakeAgent], env: { ...process.env } },
+    stdin,
+    stdout,
+    exitImpl: () => {},
+  });
+  try {
+    const lines = [];
+    let pending = "";
+    stdout.on("data", (chunk) => {
+      pending += chunk.toString("utf8");
+      const split = pending.split("\n");
+      pending = split.pop();
+      lines.push(...split.filter(Boolean));
+    });
+    const nextLine = async (count) => {
+      while (lines.length < count) await new Promise((resolve) => setTimeout(resolve, 10));
+      return JSON.parse(lines[count - 1]);
+    };
+    stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+    await nextLine(1);
+    stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "session/new", params: { cwd: "/repo" } }) + "\n");
+    await nextLine(2);
+    stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "session/prompt", params: { sessionId: "s1", prompt: [{ type: "text", text: "run ls" }] } }) + "\n");
+    const toolCall = await nextLine(3);
+    assert.equal(toolCall.params.update.sessionUpdate, "tool_call");
+    assert.equal(toolCall.params.update.toolCallId, "call_00_tool");
+    const toolCallUpdate = await nextLine(4);
+    assert.equal(toolCallUpdate.params.update.sessionUpdate, "tool_call_update");
+    // The malformed upstream update is repaired before it reaches the client:
+    // T3's effect-acp schema requires toolCallId and would otherwise tear down
+    // the transport, failing the in-flight session/prompt RPC.
+    assert.equal(toolCallUpdate.params.update.toolCallId, "call_00_tool");
+    const response = await nextLine(5);
+    assert.deepEqual(response, { jsonrpc: "2.0", id: 3, result: { stopReason: "end_turn" } });
   } finally {
     child.kill("SIGTERM");
     await once(child, "exit");
