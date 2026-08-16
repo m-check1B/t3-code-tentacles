@@ -165,6 +165,8 @@ test("transformAgentToClientLine repairs tool_call_update notifications missing 
   assert.equal(repaired.params.update.sessionUpdate, "tool_call_update");
   assert.equal(repaired.method, "session/update");
   assert.equal(repaired.jsonrpc, "2.0");
+  // Bare ContentBlocks are wrapped into T3's ToolCallContent shape as well.
+  assert.deepEqual(repaired.params.update.content, [{ type: "content", content: { type: "text", text: '{"type":"tool-result","toolCallId":"call_00_abc","content":[{"type":"text","text":"ok"}]}' } }]);
 
   // Without an id in the payload, the most recent tool_call id for that
   // session is used (a tool_call in_progress update always carries the id).
@@ -224,6 +226,131 @@ test("transformAgentToClientLine bounds the tool_call id map by evicting the old
   assert.equal(toolCallState.size, TOOL_CALL_UPDATE_SESSION_CAP);
   assert.equal(toolCallState.has("s0"), false);
   assert.equal(toolCallState.get("overflow"), "call_overflow");
+});
+
+// Real frames captured from a live tool-using turn through a tee shim
+// (2026-08-16, /tmp/acp2-out.log lines 44-45; the same frames appear in the
+// T3 provider event log for thread afc93148 as the 310B and 776B frames
+// immediately before session/prompt failed with AcpTransportError). The
+// tool_call_update frame already carries the repaired toolCallId but still
+// ships BARE ContentBlocks in content — which match no ToolCallContent union
+// variant in T3's schema and therefore kill the transport.
+const REAL_TOOL_CALL_FRAME = String.raw`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"85deb666-cd8a-4755-a8f6-1718978f81b2","update":{"sessionUpdate":"tool_call","toolCallId":"call_00_EwkCscDGwgjejbhnVA1p3416","title":"write","rawInput":{"file_path":"/tmp/t3-bridge-smoke/toolturn2.txt","content":"OK2"},"status":"in_progress"}}}`;
+const REAL_TOOL_CALL_UPDATE_FRAME = String.raw`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"85deb666-cd8a-4755-a8f6-1718978f81b2","update":{"sessionUpdate":"tool_call_update","status":"completed","rawOutput":"{\"type\":\"tool-result\",\"toolCallId\":\"call_00_EwkCscDGwgjejbhnVA1p3416\",\"content\":[{\"type\":\"text\",\"text\":\"<path>/tmp/t3-bridge-smoke/toolturn2.txt</path>\\n<type>file</type>\\n<content>\\nCreated file\\n</content>\"}],\"isError\":false}","content":[{"type":"text","text":"{\"type\":\"tool-result\",\"toolCallId\":\"call_00_EwkCscDGwgjejbhnVA1p3416\",\"content\":[{\"type\":\"text\",\"text\":\"<path>/tmp/t3-bridge-smoke/toolturn2.txt</path>\\n<type>file</type>\\n<content>\\nCreated file\\n</content>\"}],\"isError\":false}"}],"toolCallId":"call_00_EwkCscDGwgjejbhnVA1p3416"}}}`;
+
+// Mirrors the required fields of T3's ToolCallContent union
+// (schema.gen.ts): only wrapped {type:"content", content: ContentBlock},
+// {type:"diff", path, newText}, and {type:"terminal", terminalId} members
+// decode; a bare ContentBlock ({type:"text",...}) matches no variant.
+const TOOL_CALL_CONTENT_VARIANTS = new Set(["content", "diff", "terminal"]);
+const CONTENT_BLOCK_TYPES = new Set(["text", "image", "audio", "resource_link", "resource"]);
+
+function assertToolCallContentShape(content) {
+  assert.ok(Array.isArray(content), "content must be an array");
+  for (const item of content) {
+    assert.ok(item && typeof item === "object" && !Array.isArray(item), "content item must be an object");
+    assert.equal(typeof item.type, "string");
+    assert.ok(TOOL_CALL_CONTENT_VARIANTS.has(item.type), `unexpected bare content variant type=${item.type}`);
+    if (item.type === "content") {
+      assert.ok(item.content && typeof item.content === "object" && !Array.isArray(item.content));
+      assert.ok(CONTENT_BLOCK_TYPES.has(item.content.type), `wrapped block type=${item.content.type}`);
+      if (item.content.type === "text") assert.equal(typeof item.content.text, "string");
+      if (item.content.type === "image" || item.content.type === "audio") {
+        assert.equal(typeof item.content.data, "string");
+        assert.equal(typeof item.content.mimeType, "string");
+      }
+      if (item.content.type === "resource_link") {
+        assert.equal(typeof item.content.name, "string");
+        assert.equal(typeof item.content.uri, "string");
+      }
+    }
+  }
+}
+
+test("real tee-captured tool frames satisfy T3's ToolCallContent shape after the proxy", () => {
+  const ids = new Map();
+  const toolCallState = new Map();
+
+  // The tool_call (in_progress) frame is already schema-valid (no content)
+  // and must pass through byte-for-byte while registering the call id.
+  assert.equal(transformAgentToClientLine(REAL_TOOL_CALL_FRAME, ids, toolCallState), REAL_TOOL_CALL_FRAME);
+
+  // The tool_call_update frame ships bare ContentBlocks; the proxy must wrap
+  // them into {type:"content", content: ...} and keep the repaired id.
+  const repaired = JSON.parse(transformAgentToClientLine(REAL_TOOL_CALL_UPDATE_FRAME, ids, toolCallState));
+  const update = repaired.params.update;
+  assert.equal(update.sessionUpdate, "tool_call_update");
+  assert.equal(update.toolCallId, "call_00_EwkCscDGwgjejbhnVA1p3416");
+  assert.equal(update.status, "completed");
+  assert.equal(repaired.params.sessionId, "85deb666-cd8a-4755-a8f6-1718978f81b2");
+  assertToolCallContentShape(update.content);
+  assert.equal(update.content[0].type, "content");
+  assert.equal(update.content[0].content.type, "text");
+  assert.equal(update.content[0].content.text, '{"type":"tool-result","toolCallId":"call_00_EwkCscDGwgjejbhnVA1p3416","content":[{"type":"text","text":"<path>/tmp/t3-bridge-smoke/toolturn2.txt</path>\\n<type>file</type>\\n<content>\\nCreated file\\n</content>"}],"isError":false}');
+  // rawOutput (Schema.Unknown) is forwarded untouched.
+  assert.equal(update.rawOutput, '{"type":"tool-result","toolCallId":"call_00_EwkCscDGwgjejbhnVA1p3416","content":[{"type":"text","text":"<path>/tmp/t3-bridge-smoke/toolturn2.txt</path>\\n<type>file</type>\\n<content>\\nCreated file\\n</content>"}],"isError":false}');
+});
+
+test("transformAgentToClientLine wraps only bare ContentBlocks and leaves wrapped variants untouched", () => {
+  const ids = new Map();
+  const toolCallState = new Map();
+  const mixed = JSON.stringify({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: {
+      sessionId: "s1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call_00_mix",
+        status: "completed",
+        content: [
+          { type: "text", text: "bare text" },
+          { type: "content", content: { type: "text", text: "already wrapped" } },
+          { type: "diff", path: "/repo/a.txt", newText: "n", oldText: "o" },
+          { type: "terminal", terminalId: "term-1" },
+          { type: "image", data: "aGk=", mimeType: "image/png" },
+          { type: "resource_link", name: "r", uri: "file:///r" },
+          { type: "resource", resource: { uri: "file:///r" } },
+          "not-an-object",
+          42,
+        ],
+      },
+    },
+  });
+  const out = JSON.parse(transformAgentToClientLine(mixed, ids, toolCallState));
+  const content = out.params.update.content;
+  assertToolCallContentShape(content.filter((item) => typeof item === "object" && !Array.isArray(item)));
+  assert.deepEqual(content[0], { type: "content", content: { type: "text", text: "bare text" } });
+  assert.deepEqual(content[1], { type: "content", content: { type: "text", text: "already wrapped" } });
+  assert.deepEqual(content[2], { type: "diff", path: "/repo/a.txt", newText: "n", oldText: "o" });
+  assert.deepEqual(content[3], { type: "terminal", terminalId: "term-1" });
+  assert.deepEqual(content[4], { type: "content", content: { type: "image", data: "aGk=", mimeType: "image/png" } });
+  assert.deepEqual(content[5], { type: "content", content: { type: "resource_link", name: "r", uri: "file:///r" } });
+  assert.deepEqual(content[6], { type: "content", content: { type: "resource", resource: { uri: "file:///r" } } });
+  assert.equal(content[7], "not-an-object");
+  assert.equal(content[8], 42);
+
+  // A tool_call (in_progress) with content is normalized the same way, and
+  // the empty/absent content cases pass through verbatim.
+  const toolCallWithContent = JSON.stringify({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: { sessionId: "s1", update: { sessionUpdate: "tool_call", toolCallId: "call_00_tc", title: "t", status: "in_progress", content: [{ type: "text", text: "hi" }] } },
+  });
+  const toolCallOut = JSON.parse(transformAgentToClientLine(toolCallWithContent, ids, toolCallState));
+  assert.deepEqual(toolCallOut.params.update.content, [{ type: "content", content: { type: "text", text: "hi" } }]);
+  const noContent = JSON.stringify({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: { sessionId: "s1", update: { sessionUpdate: "tool_call", toolCallId: "call_00_nc", title: "t", status: "in_progress" } },
+  });
+  assert.equal(transformAgentToClientLine(noContent, ids, toolCallState), noContent);
+  const nullContent = JSON.stringify({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: { sessionId: "s1", update: { sessionUpdate: "tool_call_update", toolCallId: "call_00_nl", status: "completed", content: null } },
+  });
+  assert.equal(transformAgentToClientLine(nullContent, ids, toolCallState), nullContent);
 });
 
 test("the proxy coerces initialize capabilities and shapes set_model responses end to end", async () => {
@@ -310,7 +437,7 @@ rl.on("line", (line) => {
     process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "s1" } }) + "\\n");
   } else if (msg.method === "session/prompt") {
     process.stdout.write(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "tool_call", toolCallId: "call_00_tool", title: "bash", rawInput: { command: "ls" }, status: "in_progress" } } }) + "\\n");
-    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "tool_call_update", status: "completed", rawOutput: '{"type":"tool-result","toolCallId":"call_00_tool","content":[{"type":"text","text":"ok"}]}' } } }) + "\\n");
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "tool_call_update", status: "completed", rawOutput: '{"type":"tool-result","toolCallId":"call_00_tool","content":[{"type":"text","text":"ok"}]}', content: [{ type: "text", text: '{"type":"tool-result","toolCallId":"call_00_tool","content":[{"type":"text","text":"ok"}]}' }] } } }) + "\\n");
     process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } }) + "\\n");
   }
 });
@@ -351,6 +478,9 @@ setInterval(() => {}, 1000);
     // T3's effect-acp schema requires toolCallId and would otherwise tear down
     // the transport, failing the in-flight session/prompt RPC.
     assert.equal(toolCallUpdate.params.update.toolCallId, "call_00_tool");
+    // Bare ContentBlocks in content are wrapped into the {type:"content",...}
+    // shape T3's ToolCallContent union requires.
+    assert.deepEqual(toolCallUpdate.params.update.content, [{ type: "content", content: { type: "text", text: '{"type":"tool-result","toolCallId":"call_00_tool","content":[{"type":"text","text":"ok"}]}' } }]);
     const response = await nextLine(5);
     assert.deepEqual(response, { jsonrpc: "2.0", id: 3, result: { stopReason: "end_turn" } });
   } finally {

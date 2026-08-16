@@ -117,19 +117,28 @@ function isResponseMessage(message) {
     && (Object.hasOwn(message, "result") || Object.hasOwn(message, "error"));
 }
 
-// dsh-acp@0.1.9 emits `session/update` notifications with
-// sessionUpdate: "tool_call_update" that LACK the required toolCallId field:
-// its relay reads the id from `message?.callId || resultData?.callId ||
-// resultData?.id` (lib/bin.js tool/result handler), but DeepSeek Harness tool
-// results carry it at `message.source.callId`, so every tool result produces
-// an update without an id. T3's effect-acp client schema requires toolCallId
-// in tool_call_update (packages/effect-acp schema.gen.ts) and treats one
-// undecodable session/update as a fatal transport error: the whole ACP
+// dsh-acp@0.1.9 tool-call relay defects repaired here (both verified on the
+// live wire, T3 threads 5cbcbba9 and afc93148, and tee capture
+// /tmp/acp2-out.log):
+//
+// 1. tool_call_update LACKS the required toolCallId field: the relay reads
+//    the id from `message?.callId || resultData?.callId || resultData?.id`
+//    (lib/bin.js tool/result handler), but DeepSeek Harness tool results
+//    carry it at `message.source.callId`, so every tool result produces an
+//    update without an id.
+// 2. tool_call/tool_call_update content arrays hold BARE ContentBlocks
+//    ({type:"text",...}) while T3's ToolCallContent schema only accepts
+//    wrapped variants ({type:"content", content:...}, diff, terminal).
+//
+// T3's effect-acp client schema-validates every session/update notification
+// and treats one undecodable frame as a fatal transport error (protocol.ts
+// handleRequestEncoded -> handleTermination -> ClientProtocolError): the ACP
 // connection is terminated and the in-flight session/prompt fails with
 // "ACP transport operation call-rpc failed for method session/prompt" —
 // even though the harness keeps running. Live capture (2026-08-16, T3 thread
 // 5cbcbba9): the first tool result was relayed at 14:39:27.985 and the prompt
-// RPC failed at 14:39:27.987.
+// RPC failed at 14:39:27.987; thread afc93148: the tool_call_update frame
+// (776B) arrived at 15:06:37.699 and session/prompt failed at 15:06:37.700.
 //
 // The harness embeds the call id inside the tool-result payload dsh-acp
 // forwards as rawOutput/content text: {"type":"tool-result","toolCallId":
@@ -139,6 +148,34 @@ function isResponseMessage(message) {
 // the sequential-tool case and only approximates out-of-order parallel
 // results, which is strictly better than letting T3 kill the session.
 export const TOOL_CALL_UPDATE_SESSION_CAP = 16;
+
+// T3's ToolCallContent schema (t3code packages/effect-acp/src/_generated/
+// schema.gen.ts, ToolCallContent union) only accepts WRAPPED variants:
+// {type:"content", content: ContentBlock}, {type:"diff",...},
+// {type:"terminal",...}. dsh-acp@0.1.9 emits bare ContentBlocks instead —
+// content:[{type:"text",text:"..."}] — which match no union variant, so a
+// tool_call/tool_call_update notification carrying them fails schema decode.
+// T3's effect-acp client treats one undecodable session/update as a fatal
+// transport error (protocol.ts handleRequestEncoded -> handleTermination ->
+// ClientProtocolError), failing the in-flight session/prompt. Live capture
+// (2026-08-16, T3 thread afc93148): the tool_call_update frame (776B) arrived
+// at 15:06:37.699Z and session/prompt failed at 15:06:37.700Z; the identical
+// frames are in the tee capture /tmp/acp2-out.log lines 44-45. Only bare
+// ContentBlock shapes are wrapped; already-wrapped content/diff/terminal
+// items pass through untouched.
+const BARE_CONTENT_BLOCK_TYPES = new Set(["text", "image", "audio", "resource_link", "resource"]);
+
+function normalizeToolCallContent(content) {
+  if (!Array.isArray(content) || content.length === 0) return null;
+  let changed = false;
+  const normalized = content.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+    if (typeof item.type !== "string" || !BARE_CONTENT_BLOCK_TYPES.has(item.type)) return item;
+    changed = true;
+    return { type: "content", content: item };
+  });
+  return changed ? normalized : null;
+}
 
 function recoverToolCallIdFromPayload(payload) {
   if (typeof payload === "string") {
@@ -159,6 +196,9 @@ function recoverToolCallIdFromPayload(payload) {
 function transformToolCallUpdate(message, toolCallState) {
   const update = message.params?.update;
   if (!update || typeof update !== "object" || Array.isArray(update)) return null;
+  if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") return null;
+  const next = { ...update };
+  let changed = false;
   if (update.sessionUpdate === "tool_call") {
     if (typeof update.toolCallId === "string" && update.toolCallId.length > 0) {
       const key = String(message.params.sessionId);
@@ -167,18 +207,25 @@ function transformToolCallUpdate(message, toolCallState) {
       }
       toolCallState.set(key, update.toolCallId);
     }
-    return null;
+  } else if (typeof update.toolCallId !== "string" || update.toolCallId.length === 0) {
+    const recovered =
+      recoverToolCallIdFromPayload(update.rawOutput)
+      ?? recoverToolCallIdFromPayload(update.content)
+      ?? toolCallState.get(String(message.params.sessionId));
+    if (typeof recovered === "string" && recovered.length > 0) {
+      next.toolCallId = recovered;
+      changed = true;
+    }
   }
-  if (update.sessionUpdate !== "tool_call_update") return null;
-  if (typeof update.toolCallId === "string" && update.toolCallId.length > 0) return null;
-  const recovered =
-    recoverToolCallIdFromPayload(update.rawOutput)
-    ?? recoverToolCallIdFromPayload(update.content)
-    ?? toolCallState.get(String(message.params.sessionId));
-  if (typeof recovered !== "string" || recovered.length === 0) return null;
+  const normalized = normalizeToolCallContent(update.content);
+  if (normalized) {
+    next.content = normalized;
+    changed = true;
+  }
+  if (!changed) return null;
   return JSON.stringify({
     ...message,
-    params: { ...message.params, update: { ...update, toolCallId: recovered } },
+    params: { ...message.params, update: next },
   });
 }
 
