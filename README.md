@@ -160,6 +160,45 @@ quit T3, move `~/.t3/caches/pi.json` to a private backup, reopen T3, and rerun
 models across refreshes, so changing the relay alone cannot prune that stale
 cache in place. Fresh v0.2 installations do not populate it.
 
+### 3b. Register DeepSeek or Kimi as additional harnesses
+
+**DeepSeek (dsh-acp).** Install the ACP server and make sure the OpenCode auth
+store holds a DeepSeek key (`~/.local/share/opencode/auth.json`, JSON path
+`.deepseek.key`). The bridge launcher reads the key at spawn time and passes it
+to the server only through the environment, never the command line:
+
+```bash
+npm i -g dsh-acp
+t3-agent-bridge install-deepseek-provider \
+  --instance deepseek \
+  --model deepseek-v4-flash
+```
+
+The default model is `deepseek-v4-flash`; override it with `--model` or
+`T3_DEEPSEEK_MODEL`. The wrapper launches `dsh-acp` from `PATH` (or an absolute
+`--dsh-acp-bin`/`DSH_ACP_BIN` override) with a bridge-owned Cordis config and
+`workspace-write` permissions. Sessions persist under
+`~/.dsh/acp-sessions/<workspace-hash>`: dsh-acp's SQLite session store is
+single-process, so the bridge keys the store on a digest of the working
+directory T3 spawned the thread with—sessions stay resumable per workspace
+while parallel T3 threads in different workspaces each get their own store.
+An explicit `DSH_SESSIONS_ROOT` replaces this default entirely and must then
+be unique per concurrent lane.
+
+**Kimi CLI.** Kimi speaks ACP natively through `kimi acp`, so no proxy is
+needed—only an authenticated `kimi` CLI on `PATH` (or an absolute
+`--kimi-bin`/`KIMI_BIN` override):
+
+```bash
+t3-agent-bridge install-kimi-provider \
+  --instance kimi \
+  --model kimi-code/k3
+```
+
+Remove either registration with `remove-deepseek-provider` or
+`remove-kimi-provider`. Both carry the same ownership markers and refusal rules
+as the Hermes and Pi providers.
+
 ### 4. Prove the reverse direction
 
 ```bash
@@ -262,6 +301,8 @@ when a skill resolves outside the active profile's trusted `skills/` directory.
 
 ```bash
 t3-agent-bridge uninstall-service --profile default --instance hermes
+t3-agent-bridge remove-deepseek-provider --instance deepseek
+t3-agent-bridge remove-kimi-provider --instance kimi
 t3-agent-bridge remove-pi-provider --instance pi
 t3-agent-bridge remove-provider
 

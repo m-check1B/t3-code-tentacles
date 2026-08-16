@@ -7,17 +7,25 @@ import { T3Client } from "./t3-client.mjs";
 import {
   ALLOW_ALL_MENTION_POLICY,
   doctor,
+  installDeepSeekProvider,
+  installKimiProvider,
   installProvider,
   installPiProvider,
   originate,
+  removeDeepSeekProvider,
+  removeKimiProvider,
   removeProvider,
   removePiProvider,
   restoreNativeGrok,
   routeMentionsOnce,
 } from "./bridge.mjs";
 import {
+  DEFAULT_DEEPSEEK_INSTANCE_ID,
+  DEFAULT_DEEPSEEK_MODEL,
   DEFAULT_HERMES_PROFILE,
   DEFAULT_INSTANCE_ID,
+  DEFAULT_KIMI_INSTANCE_ID,
+  DEFAULT_KIMI_MODEL,
   DEFAULT_MODEL,
   DEFAULT_PI_INSTANCE_ID,
   DEFAULT_PI_MODEL,
@@ -97,6 +105,22 @@ function resolvePiExecutable() {
   return fs.realpathSync(configured);
 }
 
+function resolveDshAcpExecutable(option) {
+  const configured = option || process.env.DSH_ACP_BIN;
+  if (!configured) return undefined;
+  if (!path.isAbsolute(configured)) throw new Error("DSH_ACP_BIN must be an absolute executable path when installing the DeepSeek provider");
+  fs.accessSync(configured, fs.constants.X_OK);
+  return fs.realpathSync(configured);
+}
+
+function resolveKimiExecutable(option) {
+  const configured = option || process.env.KIMI_BIN;
+  if (!configured) return resolveExecutable("kimi");
+  if (!path.isAbsolute(configured)) throw new Error("KIMI_BIN must be an absolute executable path when installing the Kimi provider");
+  fs.accessSync(configured, fs.constants.X_OK);
+  return fs.realpathSync(configured);
+}
+
 function usage() {
   return `t3-agent-bridge — provider-neutral T3 Code ACP bridge
 
@@ -106,6 +130,10 @@ Usage:
   t3-agent-bridge remove-provider [--instance hermes]
   t3-agent-bridge install-pi-provider [--instance pi] [--model gpt-5.6-terra] [--pi-provider openai-codex]
   t3-agent-bridge remove-pi-provider [--instance pi]
+  t3-agent-bridge install-deepseek-provider [--instance deepseek] [--model deepseek-v4-flash] [--dsh-acp-bin PATH]
+  t3-agent-bridge remove-deepseek-provider [--instance deepseek]
+  t3-agent-bridge install-kimi-provider [--instance kimi] [--model kimi-code/k3] [--kimi-bin PATH]
+  t3-agent-bridge remove-kimi-provider [--instance kimi]
   t3-agent-bridge restore-native-grok
   t3-agent-bridge observe
   t3-agent-bridge act --intent '{...}' [--intent-file PATH] [--no-wait]
@@ -232,6 +260,38 @@ async function main() {
   }
   if (command === "remove-pi-provider") {
     console.log(JSON.stringify(await removePiProvider(client, { instanceId: options.instance || DEFAULT_PI_INSTANCE_ID }), null, 2));
+    return;
+  }
+  if (command === "install-deepseek-provider") {
+    const deepseekInstanceId = options.instance || DEFAULT_DEEPSEEK_INSTANCE_ID;
+    const deepseekModel = options.model || DEFAULT_DEEPSEEK_MODEL;
+    const result = await installDeepSeekProvider(client, {
+      wrapperPath: path.join(repoRoot, "bin", "t3-deepseek-acp"),
+      instanceId: deepseekInstanceId,
+      model: deepseekModel,
+      dshAcpBin: resolveDshAcpExecutable(options["dsh-acp-bin"]),
+    });
+    console.log(JSON.stringify({ installed: true, instanceId: deepseekInstanceId, provider: result.provider?.instanceId || deepseekInstanceId }, null, 2));
+    return;
+  }
+  if (command === "remove-deepseek-provider") {
+    console.log(JSON.stringify(await removeDeepSeekProvider(client, { instanceId: options.instance || DEFAULT_DEEPSEEK_INSTANCE_ID }), null, 2));
+    return;
+  }
+  if (command === "install-kimi-provider") {
+    const kimiInstanceId = options.instance || DEFAULT_KIMI_INSTANCE_ID;
+    const kimiModel = options.model || DEFAULT_KIMI_MODEL;
+    const result = await installKimiProvider(client, {
+      wrapperPath: path.join(repoRoot, "bin", "t3-kimi-acp"),
+      instanceId: kimiInstanceId,
+      model: kimiModel,
+      kimiBin: resolveKimiExecutable(options["kimi-bin"]),
+    });
+    console.log(JSON.stringify({ installed: true, instanceId: kimiInstanceId, provider: result.provider?.instanceId || kimiInstanceId }, null, 2));
+    return;
+  }
+  if (command === "remove-kimi-provider") {
+    console.log(JSON.stringify(await removeKimiProvider(client, { instanceId: options.instance || DEFAULT_KIMI_INSTANCE_ID }), null, 2));
     return;
   }
   if (command === "restore-native-grok") {

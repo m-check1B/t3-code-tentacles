@@ -4,9 +4,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   DEFAULT_BRIDGE_STATE_FILE,
+  DEFAULT_DEEPSEEK_INSTANCE_ID,
+  DEFAULT_DEEPSEEK_MODEL,
   DEFAULT_HERMES_PROFILE,
   DEFAULT_HERMES_URL,
   DEFAULT_INSTANCE_ID,
+  DEFAULT_KIMI_INSTANCE_ID,
+  DEFAULT_KIMI_MODEL,
   DEFAULT_MODEL,
   DEFAULT_PI_INSTANCE_ID,
   DEFAULT_PI_MODEL,
@@ -21,6 +25,9 @@ const BRIDGE_OWNER_VARIABLE = "T3_HERMES_BRIDGE_OWNER";
 const BRIDGE_OWNER_VALUE = "t3-hermes-bridge/v1";
 const BRIDGE_HARNESS_VARIABLE = "T3_HERMES_BRIDGE_HARNESS";
 const PI_HARNESS_VALUE = "pi";
+export const DEEPSEEK_HARNESS_VALUE = "deepseek";
+export const KIMI_HARNESS_VALUE = "kimi";
+const KNOWN_HARNESS_VALUES = new Set([PI_HARNESS_VALUE, DEEPSEEK_HARNESS_VALUE, KIMI_HARNESS_VALUE]);
 const STATE_VERSION = 2;
 const PROCESSED_FALLBACK_LIMIT = 1_000;
 const PENDING_LIMIT = 1_000;
@@ -42,7 +49,8 @@ export function providerHarness(instance) {
   if (instance?.driver !== "grok" || !isBridgeOwnedProvider(instance)) return null;
   const marker = (instance.environment || []).find((variable) => variable.name === BRIDGE_HARNESS_VARIABLE);
   // v0.1 providers predate the harness marker and remain Hermes-owned.
-  return marker ? (marker.value === PI_HARNESS_VALUE ? PI_HARNESS_VALUE : null) : "hermes";
+  if (!marker) return "hermes";
+  return KNOWN_HARNESS_VALUES.has(marker.value) ? marker.value : null;
 }
 
 export function isBridgeOwnedProvider(instance) {
@@ -195,6 +203,107 @@ export async function removePiProvider(client, { instanceId = DEFAULT_PI_INSTANC
   if (!(instanceId in current)) return { removed: false };
   if (providerHarness(current[instanceId]) !== PI_HARNESS_VALUE) {
     throw new Error(`Refusing to remove provider instance '${instanceId}' because it is not owned by the Pi harness`);
+  }
+  const providerInstances = { ...current };
+  delete providerInstances[instanceId];
+  await client.updateSettings({ providerInstances });
+  return { removed: true };
+}
+
+export async function installDeepSeekProvider(client, {
+  wrapperPath,
+  instanceId = DEFAULT_DEEPSEEK_INSTANCE_ID,
+  model = DEFAULT_DEEPSEEK_MODEL,
+  dshAcpBin,
+} = {}) {
+  if (!wrapperPath || !path.isAbsolute(wrapperPath)) throw new Error("install-deepseek-provider requires an absolute ACP wrapper path");
+  if (dshAcpBin !== undefined && (!dshAcpBin || !path.isAbsolute(dshAcpBin))) throw new Error("install-deepseek-provider requires an absolute dsh-acp executable path");
+  const settings = await client.getSettings();
+  const current = settings.providerInstances || {};
+  if (hasRedactedSecrets(current)) {
+    throw new Error("Refusing provider map replacement because T3 returned redacted provider secrets; use the T3 settings UI or remove those secrets first");
+  }
+  if (current[instanceId] && providerHarness(current[instanceId]) !== DEEPSEEK_HARNESS_VALUE) {
+    throw new Error(`Refusing to replace provider instance '${instanceId}' because it is not owned by the DeepSeek harness`);
+  }
+  const environment = [
+    { name: BRIDGE_OWNER_VARIABLE, value: BRIDGE_OWNER_VALUE, sensitive: false },
+    { name: BRIDGE_HARNESS_VARIABLE, value: DEEPSEEK_HARNESS_VALUE, sensitive: false },
+  ];
+  if (dshAcpBin) environment.push({ name: "DSH_ACP_BIN", value: dshAcpBin, sensitive: false });
+  environment.push({ name: "DEEPSEEK_MODEL", value: model, sensitive: false });
+  const providerInstances = {
+    ...current,
+    [instanceId]: {
+      driver: "grok",
+      displayName: "DeepSeek",
+      accentColor: "#0EA5E9",
+      enabled: true,
+      environment,
+      config: { binaryPath: wrapperPath, customModels: [model] },
+    },
+  };
+  await client.updateSettings({ providerInstances });
+  return await client.refreshProvider(instanceId);
+}
+
+export async function removeDeepSeekProvider(client, { instanceId = DEFAULT_DEEPSEEK_INSTANCE_ID } = {}) {
+  const settings = await client.getSettings();
+  const current = settings.providerInstances || {};
+  if (hasRedactedSecrets(current)) throw new Error("Refusing provider map replacement because T3 returned redacted provider secrets");
+  if (!(instanceId in current)) return { removed: false };
+  if (providerHarness(current[instanceId]) !== DEEPSEEK_HARNESS_VALUE) {
+    throw new Error(`Refusing to remove provider instance '${instanceId}' because it is not owned by the DeepSeek harness`);
+  }
+  const providerInstances = { ...current };
+  delete providerInstances[instanceId];
+  await client.updateSettings({ providerInstances });
+  return { removed: true };
+}
+
+export async function installKimiProvider(client, {
+  wrapperPath,
+  instanceId = DEFAULT_KIMI_INSTANCE_ID,
+  model = DEFAULT_KIMI_MODEL,
+  kimiBin,
+} = {}) {
+  if (!wrapperPath || !path.isAbsolute(wrapperPath)) throw new Error("install-kimi-provider requires an absolute ACP wrapper path");
+  if (!kimiBin || !path.isAbsolute(kimiBin)) throw new Error("install-kimi-provider requires an absolute Kimi executable path");
+  const settings = await client.getSettings();
+  const current = settings.providerInstances || {};
+  if (hasRedactedSecrets(current)) {
+    throw new Error("Refusing provider map replacement because T3 returned redacted provider secrets; use the T3 settings UI or remove those secrets first");
+  }
+  if (current[instanceId] && providerHarness(current[instanceId]) !== KIMI_HARNESS_VALUE) {
+    throw new Error(`Refusing to replace provider instance '${instanceId}' because it is not owned by the Kimi harness`);
+  }
+  const providerInstances = {
+    ...current,
+    [instanceId]: {
+      driver: "grok",
+      displayName: "Kimi",
+      accentColor: "#10B981",
+      enabled: true,
+      environment: [
+        { name: BRIDGE_OWNER_VARIABLE, value: BRIDGE_OWNER_VALUE, sensitive: false },
+        { name: BRIDGE_HARNESS_VARIABLE, value: KIMI_HARNESS_VALUE, sensitive: false },
+        { name: "KIMI_BIN", value: kimiBin, sensitive: false },
+        { name: "KIMI_MODEL", value: model, sensitive: false },
+      ],
+      config: { binaryPath: wrapperPath, customModels: [model] },
+    },
+  };
+  await client.updateSettings({ providerInstances });
+  return await client.refreshProvider(instanceId);
+}
+
+export async function removeKimiProvider(client, { instanceId = DEFAULT_KIMI_INSTANCE_ID } = {}) {
+  const settings = await client.getSettings();
+  const current = settings.providerInstances || {};
+  if (hasRedactedSecrets(current)) throw new Error("Refusing provider map replacement because T3 returned redacted provider secrets");
+  if (!(instanceId in current)) return { removed: false };
+  if (providerHarness(current[instanceId]) !== KIMI_HARNESS_VALUE) {
+    throw new Error(`Refusing to remove provider instance '${instanceId}' because it is not owned by the Kimi harness`);
   }
   const providerInstances = { ...current };
   delete providerInstances[instanceId];
