@@ -265,9 +265,10 @@ it. The immutable runtime snapshot and service/status files live under
 non-secret content policy as the macOS LaunchAgent.
 
 launchd semantics map onto systemd as follows: `KeepAlive` →
-`Restart=always`, `ThrottleInterval` (10 s) → `RestartSec=10`, and
-`StartLimitIntervalSec=0` disables systemd's default start-burst limit so the
-restart policy remains the only retry governor. `service-status` reads
+`Restart=always`, `ThrottleInterval` (10 s) → `RestartSec=10`, and the
+`[Unit]` directives `StartLimitIntervalSec=0` plus `StartLimitBurst=0`
+disable systemd's default start-burst limit so the restart policy remains
+the only retry governor. `service-status` reads
 `systemctl --user status` and `systemctl --user show`, reporting the same
 shape as macOS with the restart count (`NRestarts`) mapped to launchd's runs
 counter and `ExecMainStatus` to the last exit code.
