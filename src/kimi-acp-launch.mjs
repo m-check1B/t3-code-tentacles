@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -17,6 +18,10 @@ export function resolveKimiBinary(env = process.env) {
   const configured = env.KIMI_BIN;
   if (configured) {
     if (!path.isAbsolute(configured)) throw new Error("KIMI_BIN must be an absolute path to the kimi executable");
+    // Same executability gate as resolveDshAcpBinary: an explicit override
+    // that is not executable must fail loud instead of surfacing a confusing
+    // spawn error later.
+    fs.accessSync(configured, fs.constants.X_OK);
     return configured;
   }
   try {

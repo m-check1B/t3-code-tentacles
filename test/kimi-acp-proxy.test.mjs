@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { PassThrough } from "node:stream";
@@ -37,6 +40,19 @@ test("resolveKimiBinary rejects relative KIMI_BIN and fails loud when kimi is mi
   assert.throws(() => resolveKimiBinary({ KIMI_BIN: "kimi" }), /absolute path/);
   assert.throws(() => resolveKimiBinary({ PATH: "" }), /kimi executable not found on PATH/);
   assert.equal(resolveKimiBinary({ KIMI_BIN: process.execPath }), process.execPath);
+});
+
+test("resolveKimiBinary rejects an explicit KIMI_BIN that is not executable, like the deepseek resolver", () => {
+  // Same gate as resolveDshAcpBinary: an explicit override must pass X_OK or
+  // fail loud instead of surfacing a confusing spawn error later.
+  const file = path.join(os.tmpdir(), `kimi-bin-${process.pid}-${Date.now()}`);
+  fs.writeFileSync(file, "#!/bin/sh\n");
+  fs.chmodSync(file, 0o600);
+  try {
+    assert.throws(() => resolveKimiBinary({ KIMI_BIN: file }), (error) => error.code === "EACCES");
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
 });
 
 test("the proxy answers authenticate itself and forwards everything else untouched", async () => {
