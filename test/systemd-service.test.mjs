@@ -6,6 +6,8 @@ import test from "node:test";
 import {
   assertBridgeOwnedSystemdUnitFile,
   installService,
+  launchAgentPath,
+  parseSystemctlLoadState,
   parseSystemctlShow,
   parseSystemctlStatus,
   renderSystemdUnit,
@@ -26,24 +28,33 @@ function fixture() {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-hermes-systemd-hardening-"));
   const tokenFile = path.join(homeDir, "token");
   fs.writeFileSync(tokenFile, "x".repeat(32), { mode: 0o600 });
-  const loaded = new Set();
+  const loaded = new Set();   // units known to systemd (LoadState=loaded), running or not
+  const running = new Set();  // units currently active (ActiveState=active)
   const calls = [];
   let failStart = 0;
   const systemctl = {
+    load(target) {
+      return { status: loaded.has(target) ? 0 : 1, stdout: loaded.has(target) ? "loaded\n" : "" };
+    },
     status(target) {
-      const active = loaded.has(target);
+      const active = running.has(target);
       return { status: active ? 0 : 3, stdout: active ? `\u25cf ${target}\n   Active: active (running) since Thu 2026-01-01 00:00:00 UTC; 1h ago\n Main PID: 4242 (node)\n` : "" };
     },
     show(target) {
-      return { status: loaded.has(target) ? 0 : 1, stdout: loaded.has(target) ? "3\n0\n" : "" };
+      return { status: running.has(target) ? 0 : 1, stdout: running.has(target) ? "3\n0\n" : "" };
     },
     start(target) {
       calls.push(["start", target]);
       if (failStart > 0) { failStart -= 1; throw new Error("injected start failure"); }
       loaded.add(target);
+      running.add(target);
     },
-    stop(target) { calls.push(["stop", target]); loaded.delete(target); },
-    restart(target) { calls.push(["restart", target]); if (!loaded.has(target)) throw new Error("not loaded"); },
+    stop(target) { calls.push(["stop", target]); running.delete(target); },
+    restart(target) {
+      calls.push(["restart", target]);
+      if (!loaded.has(target)) throw new Error("not loaded");
+      running.add(target);
+    },
     daemonReload() { calls.push(["daemon-reload"]); },
   };
   const deps = { homeDir, platform: "linux", legacyStateFile: path.join(homeDir, "legacy-state.json"), systemctl };
@@ -60,7 +71,12 @@ function fixture() {
     maxMessages: 7,
     allowAllProjects: true,
   };
-  return { homeDir, tokenFile, deps, config, calls, failNextStart: () => { failStart += 1; } };
+  return {
+    homeDir, tokenFile, deps, config, calls,
+    markLoaded: (target) => { loaded.add(target); },
+    stopUnit: (target) => { running.delete(target); },
+    failNextStart: () => { failStart += 1; },
+  };
 }
 
 function enableLinkPath(setup) {
@@ -140,11 +156,14 @@ test("owned systemd unit checks refuse foreign files and symlinks", () => {
   assert.throws(() => assertBridgeOwnedSystemdUnitFile(link, { ...setup.deps, label: paths.label }), /must not be a symlink/);
 });
 
-test("systemctl parsers report active/inactive/failed states and counters", () => {
-  assert.deepEqual(parseSystemctlStatus("\u25cf x.service\n   Active: active (running) since Thu 2026-01-01 00:00:00 UTC; 1h ago\n Main PID: 88 (node)\n"), { loaded: true, running: true, pid: 88, state: "active", substate: "running" });
-  assert.deepEqual(parseSystemctlStatus("   Active: inactive (dead)\n"), { loaded: false, running: false, pid: null, state: "inactive", substate: "dead" });
-  assert.deepEqual(parseSystemctlStatus("   Active: failed (Result: exit-code)\n"), { loaded: false, running: false, pid: null, state: "failed", substate: "Result: exit-code" });
-  assert.deepEqual(parseSystemctlStatus(""), { loaded: false, running: false, pid: null, state: null, substate: null });
+test("systemctl parsers report active/inactive/failed states, load state and counters", () => {
+  assert.deepEqual(parseSystemctlStatus("\u25cf x.service\n   Active: active (running) since Thu 2026-01-01 00:00:00 UTC; 1h ago\n Main PID: 88 (node)\n"), { running: true, pid: 88, state: "active", substate: "running" });
+  assert.deepEqual(parseSystemctlStatus("   Active: inactive (dead)\n"), { running: false, pid: null, state: "inactive", substate: "dead" });
+  assert.deepEqual(parseSystemctlStatus("   Active: failed (Result: exit-code)\n"), { running: false, pid: null, state: "failed", substate: "Result: exit-code" });
+  assert.deepEqual(parseSystemctlStatus(""), { running: false, pid: null, state: null, substate: null });
+  assert.deepEqual(parseSystemctlLoadState("loaded\n", 0), true);
+  assert.deepEqual(parseSystemctlLoadState("not-found\n", 0), false);
+  assert.deepEqual(parseSystemctlLoadState("", 1), false);
   assert.deepEqual(parseSystemctlShow("3\n0\n"), { runCount: 3, lastExitCode: 0 });
   assert.deepEqual(parseSystemctlShow(""), { runCount: null, lastExitCode: null });
   assert.deepEqual(parseSystemctlShow("junk\n"), { runCount: null, lastExitCode: null });
@@ -229,6 +248,7 @@ test("platform dispatch keeps launchctl and systemctl runners isolated", () => {
     legacyStateFile: setup.deps.legacyStateFile,
     launchctl: { print: () => ({ status: 113, stdout: "" }), bootout() {}, bootstrap() {}, kickstart() {} },
     systemctl: {
+      load() { throw new Error("systemctl must not run on darwin"); },
       status() { throw new Error("systemctl must not run on darwin"); },
       show() { throw new Error("systemctl must not run on darwin"); },
       start() { throw new Error("systemctl must not run on darwin"); },

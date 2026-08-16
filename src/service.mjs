@@ -54,6 +54,7 @@ function defaultDeps(overrides = {}) {
     systemctl: {
       status: (target) => spawnSync("systemctl", ["--user", "status", target, "--no-pager"], { encoding: "utf8" }),
       show: (target) => spawnSync("systemctl", ["--user", "show", target, "--property=NRestarts,ExecMainStatus", "--value"], { encoding: "utf8" }),
+      load: (target) => spawnSync("systemctl", ["--user", "show", target, "--property=LoadState", "--value"], { encoding: "utf8" }),
       start: (target) => execFileSync("systemctl", ["--user", "start", target], { stdio: "ignore" }),
       stop: (target) => execFileSync("systemctl", ["--user", "stop", target], { stdio: "ignore" }),
       restart: (target) => execFileSync("systemctl", ["--user", "restart", target], { stdio: "ignore" }),
@@ -448,7 +449,15 @@ export function parseSystemctlStatus(output) {
   const pidMatch = text.match(/^\s*Main PID:\s*(\d+)/m);
   const pid = pidMatch ? Number(pidMatch[1]) : null;
   const running = state === "active" && Number.isInteger(pid) && pid > 0;
-  return { loaded: state === "active", running, pid, state, substate };
+  return { running, pid, state, substate };
+}
+
+// Parses `systemctl --user show <unit> --property=LoadState --value`. Unlike
+// `systemctl status`, whose exit code reflects the *active* state (a
+// loaded-but-inactive unit exits 3), LoadState tells whether systemd knows the
+// unit at all, matching launchd's "loaded" meaning on macOS.
+export function parseSystemctlLoadState(output, status) {
+  return status === 0 && String(output || "").trim() === "loaded";
 }
 
 // Parses `systemctl --user show <unit> --property=NRestarts,ExecMainStatus --value`,
@@ -519,11 +528,13 @@ function launchAgentStatus(identity, deps) {
 function systemdUnitStatus(identity, deps) {
   const paths = servicePaths(identity, deps);
   const unitName = `${paths.label}.service`;
-  const loadedResult = deps.systemctl.status(unitName);
-  const active = loadedResult.status === 0
-    ? parseSystemctlStatus(loadedResult.stdout)
-    : { loaded: false, running: false, pid: null, state: null, substate: null };
-  const counters = loadedResult.status === 0 ? parseSystemctlShow(deps.systemctl.show(unitName).stdout) : { runCount: null, lastExitCode: null };
+  const loadResult = deps.systemctl.load(unitName);
+  const loaded = parseSystemctlLoadState(loadResult.stdout, loadResult.status);
+  const activeResult = deps.systemctl.status(unitName);
+  const active = activeResult.status === 0
+    ? parseSystemctlStatus(activeResult.stdout)
+    : { running: false, pid: null, state: null, substate: null };
+  const counters = activeResult.status === 0 ? parseSystemctlShow(deps.systemctl.show(unitName).stdout) : { runCount: null, lastExitCode: null };
   const config = readServiceConfig(paths, deps);
   const effective = config.value;
   return {
@@ -531,7 +542,7 @@ function systemdUnitStatus(identity, deps) {
     profile: paths.profile,
     instance: paths.instance,
     unit: { path: paths.unit, ...safeMetadata(paths.unit, deps) },
-    loaded: active.loaded,
+    loaded,
     running: active.running,
     pid: active.pid,
     state: active.state,
