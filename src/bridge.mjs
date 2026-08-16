@@ -60,6 +60,41 @@ export function hasRedactedSecrets(providerInstances) {
   );
 }
 
+// The native Grok connector is T3 Code's built-in `grok` provider instance.
+// The bridge registers Hermes/Pi on the same driver (T3's configurable
+// ACP-over-stdio adapter), so it must never disable, rename, or drop the
+// built-in instance. This instance is the one slot the bridge treats as
+// "someone else's provider" and preserves verbatim on every settings write.
+export const NATIVE_GROK_INSTANCE_ID = "grok";
+
+export function isNativeGrokInstance(instanceId, instance) {
+  return instanceId === NATIVE_GROK_INSTANCE_ID && instance?.driver === "grok" && !isBridgeOwnedProvider(instance);
+}
+
+// Re-enable the native Grok connector if a previous settings write left it
+// disabled. Returns the previous enabled state so callers can report whether
+// this was a no-op or an actual repair.
+export async function restoreNativeGrok(client) {
+  const settings = await client.getSettings();
+  const current = settings.providerInstances || {};
+  const native = current[NATIVE_GROK_INSTANCE_ID];
+  if (!native) return { restored: false, reason: "native-grok-instance-absent" };
+  const envelopeEnabled = native.enabled ?? true;
+  const configEnabled = native.config && typeof native.config === "object" && !Array.isArray(native.config) && native.config.enabled !== undefined ? native.config.enabled : true;
+  if (envelopeEnabled && configEnabled) return { restored: false, reason: "already-enabled" };
+  const providerInstances = {
+    ...current,
+    [NATIVE_GROK_INSTANCE_ID]: {
+      ...native,
+      enabled: true,
+      config: { ...(native.config && typeof native.config === "object" ? native.config : {}), enabled: true },
+    },
+  };
+  await client.updateSettings({ providerInstances });
+  await client.refreshProvider(NATIVE_GROK_INSTANCE_ID);
+  return { restored: true, instanceId: NATIVE_GROK_INSTANCE_ID };
+}
+
 export async function installProvider(client, {
   wrapperPath,
   instanceId = DEFAULT_INSTANCE_ID,
@@ -640,5 +675,16 @@ export async function doctor(client, {
   if (!health || typeof health !== "object" || Array.isArray(health)) {
     throw new Error("Hermes health check returned an invalid payload");
   }
-  return { t3: { reachable: true, projects: shell.projects.length, threads: shell.threads.length }, hermes: { reachable: true, status: health.status || "ok", version: health.version || null }, provider: { configured: Boolean(settings.providerInstances?.[instanceId]), instanceId, ready: provider?.status === "ready", installed: provider?.installed === true, status: provider?.status || null, modelCount: provider?.models?.length || 0 } };
+  const nativeInstance = settings.providerInstances?.[NATIVE_GROK_INSTANCE_ID];
+  const nativeConfig = nativeInstance && typeof nativeInstance.config === "object" && !Array.isArray(nativeInstance.config) ? nativeInstance.config : undefined;
+  const nativeEnvelopeEnabled = nativeInstance ? nativeInstance.enabled ?? true : undefined;
+  const nativeConfigEnabled = nativeConfig?.enabled;
+  const nativeGrok = {
+    instanceId: NATIVE_GROK_INSTANCE_ID,
+    present: Boolean(nativeInstance),
+    enabled: nativeEnvelopeEnabled ?? true,
+    configEnabled: nativeConfigEnabled ?? true,
+    disabled: nativeInstance !== undefined && (nativeEnvelopeEnabled === false || nativeConfigEnabled === false),
+  };
+  return { t3: { reachable: true, projects: shell.projects.length, threads: shell.threads.length }, hermes: { reachable: true, status: health.status || "ok", version: health.version || null }, provider: { configured: Boolean(settings.providerInstances?.[instanceId]), instanceId, ready: provider?.status === "ready", installed: provider?.installed === true, status: provider?.status || null, modelCount: provider?.models?.length || 0 }, nativeGrok };
 }

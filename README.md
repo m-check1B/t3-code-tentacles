@@ -322,6 +322,16 @@ stable extension seam for additional ACP harnesses.
 - Explore an upstream-safe inline reply extension.
 - Add more ACP harnesses through the same ownership-safe parallel-provider seam.
 
+## Orchestration control plane
+
+Beyond the provider adapter, the bridge exposes a full read/write orchestration
+surface so Hermes — or any system — can act as the top orchestrator of a T3 Code
+environment. `observe` returns the live state (projects, threads, pending
+approvals/user-input, active turns, archived threads); `act` and `orchestrate`
+dispatch the full project/thread/turn/approval command vocabulary with
+idempotent command IDs and projection verification. See
+[docs/orchestration.md](docs/orchestration.md).
+
 Contributions and real compatibility reports are welcome. Start with
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
