@@ -409,6 +409,10 @@ export function renderSystemdUnit(input) {
 
 [Unit]
 Description=T3 Agent Bridge watcher for profile ${config.profile} instance ${config.instance}
+# launchd has no start-burst limit; disable systemd's default burst stop
+# (5 starts / 10s). StartLimit* is only honored in [Unit] since systemd v230.
+StartLimitIntervalSec=0
+StartLimitBurst=0
 
 [Service]
 Type=simple
@@ -418,9 +422,6 @@ Environment=${environment}
 # ThrottleInterval=10 (seconds between relaunches) -> RestartSec=10
 Restart=always
 RestartSec=10
-# launchd has no start-burst limit; disable systemd's default burst stop so the
-# restart policy above is the only retry governor.
-StartLimitIntervalSec=0
 
 [Install]
 WantedBy=default.target

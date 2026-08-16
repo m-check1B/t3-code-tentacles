@@ -81,7 +81,10 @@ test("systemd unit rendering persists exact non-secret configuration", () => {
   assert.match(unit, /Type=simple/);
   assert.match(unit, /Restart=always/);
   assert.match(unit, /RestartSec=10/);
-  assert.match(unit, /StartLimitIntervalSec=0/);
+  // StartLimit* is only honored in [Unit] (systemd >= 230); pin the placement.
+  assert.ok(unit.indexOf("[Unit]") < unit.indexOf("StartLimitIntervalSec=0"));
+  assert.ok(unit.indexOf("StartLimitIntervalSec=0") < unit.indexOf("[Service]"));
+  assert.match(unit, /StartLimitBurst=0/);
   assert.match(unit, /WantedBy=default\.target/);
   assert.match(unit, /Environment="T3_URL=http:\/\/127\.0\.0\.1:3773"/);
   assert.match(unit, /# T3HermesBridgeOwner: t3-hermes-bridge\/v1/);
