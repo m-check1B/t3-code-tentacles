@@ -9,8 +9,11 @@ import {
   hasRedactedSecrets,
   installProvider,
   isBridgeOwnedProvider,
+  isNativeGrokInstance,
+  NATIVE_GROK_INSTANCE_ID,
   readBridgeState,
   removeProvider,
+  restoreNativeGrok,
   routeMentionsOnce,
   startThread,
   stripMention,
@@ -200,6 +203,55 @@ test("provider install merges existing instances and uses the ACP wrapper", asyn
   assert.deepEqual(patch.providerInstances.hermes.config.customModels, ["model-x"]);
   assert.equal(patch.providerInstances.hermes.environment[0].name, "T3_HERMES_BRIDGE_OWNER");
   assert.equal(isBridgeOwnedProvider(patch.providerInstances.hermes), true);
+});
+
+test("provider install preserves a disabled native Grok connector verbatim", async () => {
+  const nativeGrok = { driver: "grok", enabled: false, config: { enabled: false, binaryPath: "grok", customModels: [] } };
+  let patch;
+  const client = {
+    getSettings: async () => ({ providerInstances: { grok: nativeGrok } }),
+    updateSettings: async (value) => { patch = value; },
+    refreshProvider: async (instanceId) => ({ provider: { instanceId } }),
+  };
+  await installProvider(client, { wrapperPath: "/tmp/t3-hermes-acp" });
+  assert.deepEqual(patch.providerInstances.grok, nativeGrok);
+  assert.equal(patch.providerInstances.hermes.driver, "grok");
+  assert.equal(isNativeGrokInstance(NATIVE_GROK_INSTANCE_ID, nativeGrok), true);
+  assert.equal(isNativeGrokInstance("hermes", patch.providerInstances.hermes), false);
+});
+
+test("restoreNativeGrok re-enables a disabled native Grok connector", async () => {
+  let patch;
+  const client = {
+    getSettings: async () => ({
+      providerInstances: {
+        grok: { driver: "grok", enabled: false, config: { enabled: false, binaryPath: "grok", customModels: [] } },
+        hermes: { driver: "grok", enabled: true, environment: [{ name: "T3_HERMES_BRIDGE_OWNER", value: "t3-hermes-bridge/v1" }] },
+      },
+    }),
+    updateSettings: async (value) => { patch = value; },
+    refreshProvider: async () => ({}),
+  };
+  const result = await restoreNativeGrok(client);
+  assert.deepEqual(result, { restored: true, instanceId: "grok" });
+  assert.equal(patch.providerInstances.grok.enabled, true);
+  assert.equal(patch.providerInstances.grok.config.enabled, true);
+  assert.equal(patch.providerInstances.hermes.driver, "grok");
+});
+
+test("restoreNativeGrok is a no-op when already enabled or absent", async () => {
+  const enabled = {
+    getSettings: async () => ({ providerInstances: { grok: { driver: "grok", enabled: true, config: { enabled: true } } } }),
+    updateSettings: async () => { throw new Error("must not write"); },
+    refreshProvider: async () => ({}),
+  };
+  assert.deepEqual(await restoreNativeGrok(enabled), { restored: false, reason: "already-enabled" });
+  const absent = {
+    getSettings: async () => ({ providerInstances: {} }),
+    updateSettings: async () => { throw new Error("must not write"); },
+    refreshProvider: async () => ({}),
+  };
+  assert.deepEqual(await restoreNativeGrok(absent), { restored: false, reason: "native-grok-instance-absent" });
 });
 
 test("provider install refuses to overwrite a redacted secret map", async () => {

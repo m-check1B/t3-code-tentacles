@@ -1,0 +1,23 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+  --version|-v|version)
+    exec "${DSH_ACP_BIN:-dsh-acp}" --version
+    ;;
+  *)
+    # T3's Grok driver appends `agent stdio`; the launcher owns that driver
+    # argv and starts the dsh-acp ACP server with the bridge-owned config,
+    # so the adapter intentionally ignores T3's driver-specific argv.
+    SELF=$0
+    while [ -L "$SELF" ]; do
+      LINK=$(readlink "$SELF")
+      case "$LINK" in
+        /*) SELF=$LINK ;;
+        *) SELF=$(dirname -- "$SELF")/$LINK ;;
+      esac
+    done
+    SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$SELF")" && pwd)
+    exec node "$SCRIPT_DIR/../src/deepseek-acp-launch.mjs"
+    ;;
+esac
