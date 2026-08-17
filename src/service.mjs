@@ -23,6 +23,9 @@ const MAX_RUNTIME_SOURCE_BYTES = 2 * 1024 * 1024;
 const MAX_TOKEN_BYTES = 16_384;
 const SERVICE_SOURCE_FILES = ["cli.mjs", "bridge.mjs", "config.mjs", "service.mjs", "t3-client.mjs"];
 const IDENTITY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const SYSTEMD_USER_DIR = path.join(".config", "systemd", "user");
+const SYSTEMD_DEFAULT_TARGET_WANTS = path.join(SYSTEMD_USER_DIR, "default.target.wants");
+const LINUX_SUPPORT_DIR = path.join(".local", "share", "t3-hermes-bridge");
 
 function escapeXml(value) {
   return String(value)
@@ -48,6 +51,15 @@ function defaultDeps(overrides = {}) {
       kickstart: (target) => execFileSync("launchctl", ["kickstart", "-k", target], { stdio: "ignore" }),
     },
     plutilLint: (plist) => execFileSync("plutil", ["-lint", plist], { stdio: "ignore" }),
+    systemctl: {
+      status: (target) => spawnSync("systemctl", ["--user", "status", target, "--no-pager"], { encoding: "utf8" }),
+      show: (target) => spawnSync("systemctl", ["--user", "show", target, "--property=NRestarts,ExecMainStatus", "--value"], { encoding: "utf8" }),
+      load: (target) => spawnSync("systemctl", ["--user", "show", target, "--property=LoadState", "--value"], { encoding: "utf8" }),
+      start: (target) => execFileSync("systemctl", ["--user", "start", target], { stdio: "ignore" }),
+      stop: (target) => execFileSync("systemctl", ["--user", "stop", target], { stdio: "ignore" }),
+      restart: (target) => execFileSync("systemctl", ["--user", "restart", target], { stdio: "ignore" }),
+      daemonReload: () => execFileSync("systemctl", ["--user", "daemon-reload"], { stdio: "ignore" }),
+    },
     ...overrides,
   };
 }
@@ -108,6 +120,24 @@ export function servicePaths(identity, overrides = {}) {
   const deps = defaultDeps(overrides);
   const { profile, instance } = serviceIdentity(identity);
   const label = serviceLabel({ profile, instance });
+  if (deps.platform === "linux") {
+    const supportRoot = path.join(deps.homeDir, LINUX_SUPPORT_DIR);
+    const serviceDir = path.join(supportRoot, "services", profile, instance);
+    return {
+      profile,
+      instance,
+      label,
+      supportRoot,
+      serviceDir,
+      runtimeRoot: path.join(supportRoot, "runtime"),
+      unit: path.join(deps.homeDir, SYSTEMD_USER_DIR, `${label}.service`),
+      config: path.join(serviceDir, "service-config.json"),
+      status: path.join(serviceDir, "watch-status.json"),
+    };
+  }
+  if (deps.platform !== "darwin") {
+    throw new Error(`service packaging is unsupported on platform: ${deps.platform} (supported: darwin, linux)`);
+  }
   const supportRoot = path.join(deps.homeDir, "Library", "Application Support", "t3-hermes-bridge");
   const serviceDir = path.join(supportRoot, "services", profile, instance);
   return {
@@ -125,8 +155,13 @@ export function servicePaths(identity, overrides = {}) {
 }
 
 // Kept for callers migrating from v1. New mutating commands require an identity.
-export function launchAgentPath(identity) {
-  return identity ? servicePaths(identity).plist : path.join(os.homedir(), "Library", "LaunchAgents", `${LAUNCH_AGENT_LABEL}.plist`);
+// The optional overrides argument is for tests; callers on non-darwin get a
+// loud error instead of an undefined plist path.
+export function launchAgentPath(identity, overrides = {}) {
+  if (!identity) return path.join(os.homedir(), "Library", "LaunchAgents", `${LAUNCH_AGENT_LABEL}.plist`);
+  const deps = defaultDeps(overrides);
+  if (deps.platform !== "darwin") throw new Error(`launchAgentPath is only supported on darwin (current platform: ${deps.platform})`);
+  return servicePaths(identity, deps).plist;
 }
 
 export function isBridgeOwnedLaunchAgent(content, { label, ownerValue = LAUNCH_AGENT_OWNER_VALUE } = {}) {
@@ -145,6 +180,25 @@ export function assertBridgeOwnedLaunchAgentFile(plist, options = {}) {
   const content = deps.fs.readFileSync(plist, "utf8");
   if (!isBridgeOwnedLaunchAgent(content, options)) {
     throw new Error(`Refusing to replace or remove LaunchAgent not owned by t3-hermes-bridge: ${plist}`);
+  }
+  return content;
+}
+
+export function isBridgeOwnedSystemdUnit(content, { label, ownerValue = LAUNCH_AGENT_OWNER_VALUE } = {}) {
+  if (typeof content !== "string") return false;
+  const labelMatches = label
+    ? content.includes(`# ${label}`)
+    : new RegExp(`# ${LAUNCH_AGENT_LABEL.replaceAll(".", "\\.")}(?:\\.[A-Za-z0-9._-]+){0,2}`).test(content);
+  return labelMatches
+    && content.includes(`# ${LAUNCH_AGENT_OWNER_KEY}: ${ownerValue}`);
+}
+
+export function assertBridgeOwnedSystemdUnitFile(unit, options = {}) {
+  const deps = defaultDeps(options);
+  assertPrivateRegularFile(unit, deps);
+  const content = deps.fs.readFileSync(unit, "utf8");
+  if (!isBridgeOwnedSystemdUnit(content, options)) {
+    throw new Error(`Refusing to replace or remove systemd unit not owned by t3-hermes-bridge: ${unit}`);
   }
   return content;
 }
@@ -312,6 +366,74 @@ export function renderLaunchAgent(input) {
 `;
 }
 
+// systemd quotes every ExecStart/Environment value itself; no shell is involved.
+// We still escape the characters systemd expands (specifiers "%", variables "$")
+// and its quoting/escape syntax so values survive verbatim: "%%" and "$$" are
+// systemd's documented literal escapes, "\\" and '\"' are C-style escapes valid
+// inside double-quoted words, and control characters are rejected outright.
+function systemdToken(value, label) {
+  const text = String(value);
+  if (/[\u0000-\u001f\u007f]/.test(text)) throw new Error(`${label} contains control characters`);
+  const escaped = text
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"')
+    .replaceAll("%", "%%")
+    .replaceAll("$", () => "$$");
+  return `"${escaped}"`;
+}
+
+export function renderSystemdUnit(input) {
+  const config = normalizeServiceConfig({
+    ...input,
+    profile: input.profile || DEFAULT_HERMES_PROFILE,
+    instance: input.instance || DEFAULT_INSTANCE_ID,
+  }, input.deps);
+  const label = serviceLabel(config);
+  const runtimeCli = assertAbsolute(input.runtimeCli || input.cliPath, "Runtime CLI path");
+  const statusFile = assertAbsolute(input.statusFile || servicePaths(config, input.deps).status, "Status file path");
+  const unitName = `${label}.service`;
+  const program = [
+    config.nodePath, runtimeCli, "watch",
+    "--profile", config.profile,
+    "--instance", config.instance,
+    "--model", config.model,
+    "--interval", String(config.interval),
+    "--state-file", config.stateFile,
+    "--max-messages", String(config.maxMessages),
+    "--status-file", statusFile,
+    ...(config.allowAllProjects ? ["--allow-all-projects"] : []),
+  ].map((value) => systemdToken(value, "unit argument")).join(" ");
+  const environment = [
+    `T3_URL=${config.t3Url}`,
+    `HERMES_URL=${config.hermesUrl}`,
+    `T3_HERMES_TOKEN_FILE=${config.tokenFile}`,
+    `HERMES_PROFILE=${config.profile}`,
+  ].map((value) => systemdToken(value, "unit environment")).join(" ");
+  return `# ${unitName}
+# ${LAUNCH_AGENT_OWNER_KEY}: ${LAUNCH_AGENT_OWNER_VALUE}
+# Generated by t3-agent-bridge install-service; do not edit by hand.
+
+[Unit]
+Description=T3 Agent Bridge watcher for profile ${config.profile} instance ${config.instance}
+# launchd has no start-burst limit; disable systemd's default burst stop
+# (5 starts / 10s). StartLimit* is only honored in [Unit] since systemd v230.
+StartLimitIntervalSec=0
+StartLimitBurst=0
+
+[Service]
+Type=simple
+ExecStart=${program}
+Environment=${environment}
+# KeepAlive=true (restart regardless of exit status) -> Restart=always
+# ThrottleInterval=10 (seconds between relaunches) -> RestartSec=10
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+`;
+}
+
 function domain(deps) { return `gui/${deps.uid}`; }
 
 export function parseLaunchctlPrint(output) {
@@ -322,6 +444,36 @@ export function parseLaunchctlPrint(output) {
   };
   const pid = read(/^\s*pid\s*=\s*(\d+)/m);
   return { running: Number.isInteger(pid) && pid > 0, pid, runCount: read(/^\s*runs\s*=\s*(\d+)/m), lastExitCode: read(/^\s*last exit code\s*=\s*(-?\d+)/m) };
+}
+
+export function parseSystemctlStatus(output) {
+  const text = String(output || "");
+  const active = text.match(/^\s*Active:\s*(\S+)(?:\s*\(([^)]+)\))?/m);
+  const state = active ? active[1] : null;
+  const substate = active ? active[2] || null : null;
+  const pidMatch = text.match(/^\s*Main PID:\s*(\d+)/m);
+  const pid = pidMatch ? Number(pidMatch[1]) : null;
+  const running = state === "active" && Number.isInteger(pid) && pid > 0;
+  return { running, pid, state, substate };
+}
+
+// Parses `systemctl --user show <unit> --property=LoadState --value`. Unlike
+// `systemctl status`, whose exit code reflects the *active* state (a
+// loaded-but-inactive unit exits 3), LoadState tells whether systemd knows the
+// unit at all, matching launchd's "loaded" meaning on macOS.
+export function parseSystemctlLoadState(output, status) {
+  return status === 0 && String(output || "").trim() === "loaded";
+}
+
+// Parses `systemctl --user show <unit> --property=NRestarts,ExecMainStatus --value`,
+// which prints one value per line in property order. runCount maps systemd's
+// NRestarts (restarts since the unit was started) onto launchd's "runs" counter;
+// lastExitCode maps ExecMainStatus onto launchd's "last exit code".
+export function parseSystemctlShow(output) {
+  const lines = String(output || "").split("\n").map((line) => line.trim()).filter((line) => line !== "");
+  const runCount = /^\d+$/.test(lines[0] || "") ? Number(lines[0]) : null;
+  const lastExitCode = /^-?\d+$/.test(lines[1] || "") ? Number(lines[1]) : null;
+  return { runCount, lastExitCode };
 }
 
 function safeMetadata(pathname, deps, { token = false } = {}) {
@@ -350,6 +502,12 @@ function legacyMigration(paths, deps) {
 
 export function serviceStatus(identity, overrides = {}) {
   const deps = defaultDeps(overrides);
+  if (deps.platform === "darwin") return launchAgentStatus(identity, deps);
+  if (deps.platform === "linux") return systemdUnitStatus(identity, deps);
+  throw new Error(`service-status is unsupported on platform: ${deps.platform} (supported: darwin, linux)`);
+}
+
+function launchAgentStatus(identity, deps) {
   const paths = servicePaths(identity, deps);
   const loadedResult = deps.launchctl.print(`${domain(deps)}/${paths.label}`);
   const launchd = loadedResult.status === 0 ? parseLaunchctlPrint(loadedResult.stdout) : { running: false, pid: null, runCount: null, lastExitCode: null };
@@ -372,6 +530,40 @@ export function serviceStatus(identity, overrides = {}) {
   };
 }
 
+function systemdUnitStatus(identity, deps) {
+  const paths = servicePaths(identity, deps);
+  const unitName = `${paths.label}.service`;
+  const loadResult = deps.systemctl.load(unitName);
+  const loaded = parseSystemctlLoadState(loadResult.stdout, loadResult.status);
+  const activeResult = deps.systemctl.status(unitName);
+  const active = activeResult.status === 0
+    ? parseSystemctlStatus(activeResult.stdout)
+    : { running: false, pid: null, state: null, substate: null };
+  const counters = activeResult.status === 0 ? parseSystemctlShow(deps.systemctl.show(unitName).stdout) : { runCount: null, lastExitCode: null };
+  const config = readServiceConfig(paths, deps);
+  const effective = config.value;
+  return {
+    label: paths.label,
+    profile: paths.profile,
+    instance: paths.instance,
+    unit: { path: paths.unit, ...safeMetadata(paths.unit, deps) },
+    loaded,
+    running: active.running,
+    pid: active.pid,
+    state: active.state,
+    substate: active.substate,
+    runCount: counters.runCount,
+    lastExitCode: counters.lastExitCode,
+    runtime: effective?.runtime || null,
+    config: { path: paths.config, metadata: config.metadata, identity: effective ? { profile: effective.profile, instance: effective.instance, model: effective.model, interval: effective.interval, t3Url: effective.t3Url, hermesUrl: effective.hermesUrl, stateFile: effective.stateFile, maxMessages: effective.maxMessages, allowAllProjects: effective.allowAllProjects === true } : null },
+    token: effective ? { path: effective.tokenFile, ...safeMetadata(effective.tokenFile, deps, { token: true }) } : { exists: false, valid: false },
+    state: effective ? { path: effective.stateFile, ...safeMetadata(effective.stateFile, deps) } : { exists: false, valid: false },
+    heartbeat: { path: paths.status, ...safeMetadata(paths.status, deps) },
+    logs: { mode: "structured-status", publicLogFiles: false, statusFile: paths.status },
+    migration: { exists: false, action: "none" },
+  };
+}
+
 function stagePlist(plist, content, deps) {
   const temporary = `${plist}.${process.pid}.${crypto.randomUUID()}.tmp`;
   deps.fs.writeFileSync(temporary, content, { mode: 0o600, flag: "wx" });
@@ -381,9 +573,50 @@ function stagePlist(plist, content, deps) {
   return temporary;
 }
 
+function stageSystemdUnit(unit, content, deps) {
+  const temporary = `${unit}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  deps.fs.writeFileSync(temporary, content, { mode: 0o600, flag: "wx" });
+  deps.fs.chmodSync(temporary, 0o600);
+  assertPrivateRegularFile(temporary, deps);
+  return temporary;
+}
+
+// `systemctl --user enable` creates a symlink in default.target.wants; we manage
+// that link explicitly so install/uninstall keep the same ownership posture as
+// the unit file itself and never touch a foreign or non-symlink path.
+function systemdEnableLink(paths, deps) {
+  return path.join(deps.homeDir, SYSTEMD_DEFAULT_TARGET_WANTS, `${paths.label}.service`);
+}
+
+function assertSystemdEnableLinkOwned(linkPath, unitPath, deps) {
+  const stat = lstatOrNull(linkPath, deps);
+  if (!stat) return false;
+  if (!stat.isSymbolicLink()) throw new Error(`Refusing to replace non-symlink enable link: ${linkPath}`);
+  const target = deps.fs.readlinkSync(linkPath);
+  if (path.resolve(path.dirname(linkPath), target) !== path.resolve(unitPath)) {
+    throw new Error(`Refusing to replace enable link not owned by t3-hermes-bridge: ${linkPath}`);
+  }
+  return true;
+}
+
+function createSystemdEnableLink(linkPath, unitPath, deps) {
+  ensurePrivateDirectory(path.dirname(linkPath), deps);
+  assertPrivateDirectory(path.dirname(linkPath), deps);
+  deps.fs.symlinkSync(path.relative(path.dirname(linkPath), unitPath), linkPath);
+}
+
+function removeSystemdEnableLink(linkPath, unitPath, deps) {
+  if (assertSystemdEnableLinkOwned(linkPath, unitPath, deps)) deps.fs.unlinkSync(linkPath);
+}
+
 export function installService(input, overrides = {}) {
   const deps = defaultDeps(overrides);
-  if (deps.platform !== "darwin") throw new Error("install-service currently supports macOS only");
+  if (deps.platform === "darwin") return installLaunchAgent(input, deps);
+  if (deps.platform === "linux") return installSystemdUnit(input, deps);
+  throw new Error(`install-service is unsupported on platform: ${deps.platform} (supported: darwin, linux)`);
+}
+
+function installLaunchAgent(input, deps) {
   const config = normalizeServiceConfig(input, deps);
   if (!config.allowAllProjects) {
     throw new Error("install-service requires an explicit routing policy; pass --allow-all-projects to authorise all non-Hermes T3 projects");
@@ -443,9 +676,81 @@ export function installService(input, overrides = {}) {
   }
 }
 
+function installSystemdUnit(input, deps) {
+  const config = normalizeServiceConfig(input, deps);
+  if (!config.allowAllProjects) {
+    throw new Error("install-service requires an explicit routing policy; pass --allow-all-projects to authorise all non-Hermes T3 projects");
+  }
+  if (!safeMetadata(config.tokenFile, deps, { token: true }).valid) {
+    throw new Error(`Token file is not a private, current-user regular file with a valid size: ${config.tokenFile}`);
+  }
+  const paths = servicePaths(config, deps);
+  ensurePrivateDirectory(paths.supportRoot, deps);
+  assertPrivateDirectory(paths.supportRoot, deps);
+  ensurePrivateDirectory(path.join(paths.supportRoot, "services"), deps);
+  assertPrivateDirectory(path.join(paths.supportRoot, "services"), deps);
+  ensurePrivateDirectory(path.dirname(paths.serviceDir), deps);
+  assertPrivateDirectory(path.dirname(paths.serviceDir), deps);
+  ensurePrivateDirectory(paths.serviceDir, deps);
+  assertPrivateDirectory(paths.serviceDir, deps);
+  ensurePrivateDirectory(path.dirname(paths.unit), deps);
+  assertPrivateDirectory(path.dirname(paths.unit), deps);
+  const snapshot = createRuntimeSnapshot({ cliPath: input.cliPath }, deps);
+  const effective = { ...config, runtime: snapshot, installedAt: new Date().toISOString() };
+  const unitName = `${paths.label}.service`;
+  const enableLink = systemdEnableLink(paths, deps);
+  const existing = lstatOrNull(paths.unit, deps);
+  const oldContent = existing ? assertBridgeOwnedSystemdUnitFile(paths.unit, { ...deps, label: paths.label }) : null;
+  const wasEnabled = assertSystemdEnableLinkOwned(enableLink, paths.unit, deps);
+  const previousStatus = systemdUnitStatus(config, deps);
+  if (previousStatus.loaded && !existing) throw new Error(`Refusing to replace loaded systemd unit without an owned unit file: ${paths.label}`);
+  const content = renderSystemdUnit({ ...config, runtimeCli: snapshot.cliPath, statusFile: paths.status, deps });
+  let staged;
+  let replaced = false;
+  try {
+    staged = stageSystemdUnit(paths.unit, content, deps);
+    if (previousStatus.loaded) deps.systemctl.stop(unitName);
+    deps.fs.renameSync(staged, paths.unit);
+    staged = null;
+    replaced = true;
+    deps.fs.chmodSync(paths.unit, 0o600);
+    deps.systemctl.daemonReload();
+    if (!wasEnabled) createSystemdEnableLink(enableLink, paths.unit, deps);
+    deps.systemctl.start(unitName);
+    const verified = systemdUnitStatus(config, deps);
+    if (!verified.loaded) throw new Error(`systemd did not start ${unitName}`);
+    atomicWrite(paths.config, JSON.stringify(effective, null, 2) + "\n", 0o600, deps);
+    return systemdUnitStatus(config, deps);
+  } catch (error) {
+    let rollbackError = null;
+    try {
+      if (replaced) {
+        try { deps.systemctl.stop(unitName); } catch {}
+        if (oldContent !== null) {
+          atomicWrite(paths.unit, oldContent, 0o600, deps);
+        } else {
+          try { deps.fs.unlinkSync(paths.unit); } catch (unlinkError) { if (unlinkError.code !== "ENOENT") throw unlinkError; }
+        }
+        deps.systemctl.daemonReload();
+        if (!wasEnabled) removeSystemdEnableLink(enableLink, paths.unit, deps);
+        if (oldContent !== null && previousStatus.loaded) deps.systemctl.start(unitName);
+      }
+    } catch (rollbackFailure) { rollbackError = rollbackFailure; }
+    if (rollbackError) throw new Error(`Service install failed (${error.message}); rollback failed (${rollbackError.message})`);
+    throw error;
+  } finally {
+    if (staged) try { deps.fs.unlinkSync(staged); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
+}
+
 export function restartService(identity, overrides = {}) {
   const deps = defaultDeps(overrides);
-  if (deps.platform !== "darwin") throw new Error("restart-service currently supports macOS only");
+  if (deps.platform === "darwin") return restartLaunchAgent(identity, deps);
+  if (deps.platform === "linux") return restartSystemdUnit(identity, deps);
+  throw new Error(`restart-service is unsupported on platform: ${deps.platform} (supported: darwin, linux)`);
+}
+
+function restartLaunchAgent(identity, deps) {
   const paths = servicePaths(identity, deps);
   assertBridgeOwnedLaunchAgentFile(paths.plist, { ...deps, label: paths.label });
   const status = serviceStatus(identity, deps);
@@ -454,9 +759,23 @@ export function restartService(identity, overrides = {}) {
   return serviceStatus(identity, deps);
 }
 
+function restartSystemdUnit(identity, deps) {
+  const paths = servicePaths(identity, deps);
+  assertBridgeOwnedSystemdUnitFile(paths.unit, { ...deps, label: paths.label });
+  const status = systemdUnitStatus(identity, deps);
+  if (!status.loaded) throw new Error(`systemd unit is not loaded: ${paths.label}`);
+  deps.systemctl.restart(`${paths.label}.service`);
+  return systemdUnitStatus(identity, deps);
+}
+
 export function uninstallService(identity, overrides = {}) {
   const deps = defaultDeps(overrides);
-  if (deps.platform !== "darwin") throw new Error("uninstall-service currently supports macOS only");
+  if (deps.platform === "darwin") return uninstallLaunchAgent(identity, deps);
+  if (deps.platform === "linux") return uninstallSystemdUnit(identity, deps);
+  throw new Error(`uninstall-service is unsupported on platform: ${deps.platform} (supported: darwin, linux)`);
+}
+
+function uninstallLaunchAgent(identity, deps) {
   const paths = servicePaths(identity, deps);
   const existing = lstatOrNull(paths.plist, deps);
   if (existing) assertBridgeOwnedLaunchAgentFile(paths.plist, { ...deps, label: paths.label });
@@ -466,4 +785,23 @@ export function uninstallService(identity, overrides = {}) {
   if (existing) deps.fs.unlinkSync(paths.plist);
   // State, token, heartbeat and shared immutable snapshots intentionally remain for recovery/audit.
   return { loaded: false, label: paths.label, plist: paths.plist, removed: currentStatus.loaded || Boolean(existing), preserved: { token: currentStatus.token?.path || null, state: currentStatus.state?.path || null, runtime: currentStatus.runtime?.path || null } };
+}
+
+function uninstallSystemdUnit(identity, deps) {
+  const paths = servicePaths(identity, deps);
+  const unitName = `${paths.label}.service`;
+  const enableLink = systemdEnableLink(paths, deps);
+  const existing = lstatOrNull(paths.unit, deps);
+  if (existing) assertBridgeOwnedSystemdUnitFile(paths.unit, { ...deps, label: paths.label });
+  const currentStatus = systemdUnitStatus(identity, deps);
+  if (currentStatus.loaded && !existing) throw new Error(`Refusing to remove loaded systemd unit without an owned unit file: ${paths.label}`);
+  const wasEnabled = assertSystemdEnableLinkOwned(enableLink, paths.unit, deps);
+  if (currentStatus.loaded) deps.systemctl.stop(unitName);
+  if (wasEnabled) deps.fs.unlinkSync(enableLink);
+  if (existing) deps.fs.unlinkSync(paths.unit);
+  // Only reload the user manager when something actually changed, so a no-op
+  // uninstall stays silent even if the user bus is unreachable.
+  if (existing || wasEnabled || currentStatus.loaded) deps.systemctl.daemonReload();
+  // State, token, heartbeat and shared immutable snapshots intentionally remain for recovery/audit.
+  return { loaded: false, label: paths.label, unit: paths.unit, removed: currentStatus.loaded || Boolean(existing), preserved: { token: currentStatus.token?.path || null, state: currentStatus.state?.path || null, runtime: currentStatus.runtime?.path || null } };
 }

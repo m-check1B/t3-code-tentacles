@@ -32,7 +32,7 @@ model, authentication, and tool configuration.
 | Hermes → T3 Code | `t3-agent-bridge originate` creates a visible Hermes-backed T3 thread | Tested |
 | Any T3 thread → Hermes | A new `@hermes` message routes to one linked Hermes thread | Tested |
 | Existing T3 providers | Provider install/remove preserves unrelated instances | Tested |
-| Background routing | Reversible per-user macOS LaunchAgent | Tested |
+| Background routing | Reversible per-user macOS LaunchAgent or Linux systemd user unit | macOS tested; Linux unit-tested |
 | Inline Hermes reply in another provider's thread | Requires an upstream T3 extension point | Not available |
 
 The mention bridge deliberately creates a clearly labeled linked Hermes thread.
@@ -275,6 +275,59 @@ The bridge atomically upgrades replay-safe v0.1.0 state before dispatch. It
 refuses to migrate unresolved legacy pending deliveries so they can be audited
 with v0.1.0 rather than silently dropped.
 
+### 6. Linux: run the watcher as a systemd user service
+
+On Linux, the same service commands install a per-user systemd unit instead of
+a LaunchAgent:
+
+```bash
+t3-agent-bridge install-service \
+  --profile default \
+  --instance hermes \
+  --model openai-codex:gpt-5.6-sol \
+  --interval 2000 \
+  --t3-url http://127.0.0.1:3773 \
+  --hermes-url http://127.0.0.1:8642 \
+  --token-file ~/.local/state/t3-hermes-bridge/t3.token \
+  --state-file ~/.local/state/t3-hermes-bridge/profiles/default/instances/hermes/bridge-state.json \
+  --max-messages 10 \
+  --allow-all-projects
+t3-agent-bridge service-status --profile default --instance hermes
+```
+
+Install writes the owned, private unit to
+`~/.config/systemd/user/<label>.service`, links it from
+`~/.config/systemd/user/default.target.wants/` (the same effect as
+`systemctl --user enable`), runs `systemctl --user daemon-reload`, and starts
+it. The immutable runtime snapshot and service/status files live under
+`~/.local/share/t3-hermes-bridge`, with the same ownership markers and
+non-secret content policy as the macOS LaunchAgent.
+
+launchd semantics map onto systemd as follows: `KeepAlive` →
+`Restart=always`, `ThrottleInterval` (10 s) → `RestartSec=10`, and the
+`[Unit]` directives `StartLimitIntervalSec=0` plus `StartLimitBurst=0`
+disable systemd's default start-burst limit so the restart policy remains
+the only retry governor. `service-status` reads
+`systemctl --user status` and `systemctl --user show`, reporting the same
+shape as macOS with the restart count (`NRestarts`) mapped to launchd's runs
+counter and `ExecMainStatus` to the last exit code.
+
+```bash
+t3-agent-bridge restart-service --profile default --instance hermes
+t3-agent-bridge uninstall-service --profile default --instance hermes
+```
+
+Uninstall removes only the owned namespaced unit and enable link, and preserves
+the token, routing state, private status, and immutable runtime snapshot for
+recovery and audit, exactly like macOS. No bearer value, auth header, WebSocket
+ticket, or routed prompt is ever written to the unit.
+
+> **Status:** the systemd path is unit-tested against synthetic `systemctl`
+> fixtures but has not yet been live-verified on a real Linux host. User units
+> also only start at login unless lingering is enabled for the account
+> (`loginctl enable-linger <user>`). Both remain to be proven on a target
+> distribution before production use.
+
 ## Optional Hermes skill
 
 Expose thread origination to a Hermes profile:
@@ -362,7 +415,7 @@ One provider-neutral T3 bridge, with Hermes and Pi Agent adapters today and a
 stable extension seam for additional ACP harnesses.
 
 - Contract-test newer T3 Code and Hermes releases.
-- Add Linux service packaging.
+- Live-verify Linux systemd service packaging (unit-tested; not yet proven on a real host).
 - Explore an upstream-safe inline reply extension.
 - Add more ACP harnesses through the same ownership-safe parallel-provider seam.
 
