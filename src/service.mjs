@@ -796,7 +796,10 @@ function uninstallSystemdUnit(identity, deps) {
   const currentStatus = systemdUnitStatus(identity, deps);
   if (currentStatus.loaded && !existing) throw new Error(`Refusing to remove loaded systemd unit without an owned unit file: ${paths.label}`);
   const wasEnabled = assertSystemdEnableLinkOwned(enableLink, paths.unit, deps);
-  if (currentStatus.loaded) deps.systemctl.stop(unitName);
+  // Stop on either live signal: if the LoadState probe itself errors (user bus
+  // hiccup), `loaded` reads false while the unit may still be running; skipping
+  // stop would orphan a watcher whose unit file is about to be removed.
+  if (currentStatus.loaded || currentStatus.running) deps.systemctl.stop(unitName);
   if (wasEnabled) deps.fs.unlinkSync(enableLink);
   if (existing) deps.fs.unlinkSync(paths.unit);
   // Only reload the user manager when something actually changed, so a no-op

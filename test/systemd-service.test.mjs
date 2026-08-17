@@ -32,8 +32,10 @@ function fixture() {
   const running = new Set();  // units currently active (ActiveState=active)
   const calls = [];
   let failStart = 0;
+  let failLoad = false;
   const systemctl = {
     load(target) {
+      if (failLoad) return { status: 1, stdout: "" }; // user-bus hiccup: probe errors
       return { status: loaded.has(target) ? 0 : 1, stdout: loaded.has(target) ? "loaded\n" : "" };
     },
     status(target) {
@@ -76,6 +78,7 @@ function fixture() {
     markLoaded: (target) => { loaded.add(target); },
     stopUnit: (target) => { running.delete(target); },
     failNextStart: () => { failStart += 1; },
+    failLoadProbe: () => { failLoad = true; },
   };
 }
 
@@ -321,4 +324,24 @@ test("uninstalling a never-installed identity performs no systemctl calls", () =
   const result = uninstallService(setup.config, setup.deps);
   assert.equal(result.removed, false);
   assert.deepEqual(setup.calls, []);
+});
+
+test("uninstall stops a running unit even when the LoadState probe fails", () => {
+  const setup = fixture();
+  installService(setup.config, setup.deps);
+  const paths = servicePaths(setup.config, setup.deps);
+  const events = [];
+  const systemctl = { ...setup.deps.systemctl, stop(target) { events.push(["stop", target]); setup.deps.systemctl.stop(target); } };
+  const fsSpy = { ...fs, unlinkSync(p) { events.push(["unlink", p]); fs.unlinkSync(p); } };
+  setup.failLoadProbe(); // LoadState probe errors like a user-bus hiccup
+  const result = uninstallService(setup.config, { ...setup.deps, systemctl, fs: fsSpy });
+  assert.equal(result.removed, true);
+  const unitName = `${serviceLabel(setup.config)}.service`;
+  const stopIndex = events.findIndex(([name]) => name === "stop");
+  const unitUnlinkIndex = events.findIndex(([name, p]) => name === "unlink" && p === paths.unit);
+  assert.ok(stopIndex >= 0, "stop must be called despite the failing LoadState probe");
+  assert.equal(events[stopIndex][1], unitName);
+  assert.ok(unitUnlinkIndex >= 0, "unit file must be removed");
+  assert.ok(stopIndex < unitUnlinkIndex, "stop must happen before the unit file is removed");
+  assert.equal(fs.existsSync(paths.unit), false);
 });
