@@ -1,28 +1,38 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { T3Client } from "./t3-client.mjs";
 import {
   ALLOW_ALL_MENTION_POLICY,
   doctor,
+  installDeepSeekProvider,
+  installKimiProvider,
   installProvider,
   installPiProvider,
   originate,
+  removeDeepSeekProvider,
+  removeKimiProvider,
   removeProvider,
   removePiProvider,
+  restoreNativeGrok,
   routeMentionsOnce,
 } from "./bridge.mjs";
 import {
+  DEFAULT_DEEPSEEK_INSTANCE_ID,
+  DEFAULT_DEEPSEEK_MODEL,
   DEFAULT_HERMES_PROFILE,
   DEFAULT_INSTANCE_ID,
+  DEFAULT_KIMI_INSTANCE_ID,
+  DEFAULT_KIMI_MODEL,
   DEFAULT_MODEL,
   DEFAULT_PI_INSTANCE_ID,
   DEFAULT_PI_MODEL,
   DEFAULT_PI_PROVIDER,
   resolveExecutable,
 } from "./config.mjs";
+import { applyIntents, observe } from "./orchestrate.mjs";
 import {
   installService,
   restartService,
@@ -43,7 +53,7 @@ function parseArgs(argv) {
       continue;
     }
     const key = argument.slice(2);
-    if (key === "once" || key === "allow-all-projects") {
+    if (key === "once" || key === "allow-all-projects" || key === "no-wait") {
       options[key] = true;
       continue;
     }
@@ -61,10 +71,57 @@ function required(options, key) {
   return value;
 }
 
+export function parseIntentOption(options) {
+  const hasIntent = options.intent !== undefined;
+  const hasIntentFile = options["intent-file"] !== undefined;
+  if (hasIntent && hasIntentFile) {
+    throw new Error("act accepts --intent or --intent-file, not both; pass exactly one");
+  }
+  const raw = hasIntent ? options.intent : hasIntentFile ? readIntentFile(options["intent-file"]) : null;
+  if (raw === null) throw new Error("act requires --intent '{...}' or --intent-file PATH");
+  try { return JSON.parse(raw); }
+  catch (error) { throw new Error(`Intent is not valid JSON: ${error.message}`); }
+}
+
+function parseIntentFileOption(options) {
+  const file = required(options, "intent-file");
+  const raw = readIntentFile(file);
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch (error) { throw new Error(`Intent file is not valid JSON: ${error.message}`); }
+  const intents = Array.isArray(parsed) ? parsed : parsed.intents;
+  if (!Array.isArray(intents)) throw new Error("Intent file must contain an array of intents or an object with an intents array");
+  return intents;
+}
+
+function readIntentFile(file) {
+  const destination = path.resolve(file);
+  const stat = fs.statSync(destination);
+  if (!stat.isFile()) throw new Error(`Intent file is not a regular file: ${destination}`);
+  if (stat.size > 4 * 1024 * 1024) throw new Error(`Intent file exceeds the 4 MiB bound: ${destination}`);
+  return fs.readFileSync(destination, "utf8");
+}
+
 function resolvePiExecutable() {
   const configured = process.env.PI_BIN;
   if (!configured) return resolveExecutable("pi");
   if (!path.isAbsolute(configured)) throw new Error("PI_BIN must be an absolute executable path when installing the Pi provider");
+  fs.accessSync(configured, fs.constants.X_OK);
+  return fs.realpathSync(configured);
+}
+
+function resolveDshAcpExecutable(option) {
+  const configured = option || process.env.DSH_ACP_BIN;
+  if (!configured) return undefined;
+  if (!path.isAbsolute(configured)) throw new Error("DSH_ACP_BIN must be an absolute executable path when installing the DeepSeek provider");
+  fs.accessSync(configured, fs.constants.X_OK);
+  return fs.realpathSync(configured);
+}
+
+function resolveKimiExecutable(option) {
+  const configured = option || process.env.KIMI_BIN;
+  if (!configured) return resolveExecutable("kimi");
+  if (!path.isAbsolute(configured)) throw new Error("KIMI_BIN must be an absolute executable path when installing the Kimi provider");
   fs.accessSync(configured, fs.constants.X_OK);
   return fs.realpathSync(configured);
 }
@@ -78,6 +135,14 @@ Usage:
   t3-agent-bridge remove-provider [--instance hermes]
   t3-agent-bridge install-pi-provider [--instance pi] [--model gpt-5.6-terra] [--pi-provider openai-codex]
   t3-agent-bridge remove-pi-provider [--instance pi]
+  t3-agent-bridge install-deepseek-provider [--instance deepseek] [--model deepseek-v4-flash] [--dsh-acp-bin PATH]
+  t3-agent-bridge remove-deepseek-provider [--instance deepseek]
+  t3-agent-bridge install-kimi-provider [--instance kimi] [--model kimi-code/k3] [--kimi-bin PATH]
+  t3-agent-bridge remove-kimi-provider [--instance kimi]
+  t3-agent-bridge restore-native-grok
+  t3-agent-bridge observe
+  t3-agent-bridge act --intent '{...}' [--intent-file PATH] [--no-wait]
+  t3-agent-bridge orchestrate --intent-file PATH [--no-wait]
   t3-agent-bridge originate --workspace PATH --title TITLE --message TEXT [--idempotency-key KEY]
   t3-agent-bridge watch --once --allow-all-projects [--profile PROFILE] [--instance INSTANCE]
   t3-agent-bridge watch --allow-all-projects [--interval 2000] [--state-file PATH] [--max-messages 10]
@@ -202,6 +267,56 @@ async function main() {
     console.log(JSON.stringify(await removePiProvider(client, { instanceId: options.instance || DEFAULT_PI_INSTANCE_ID }), null, 2));
     return;
   }
+  if (command === "install-deepseek-provider") {
+    const deepseekInstanceId = options.instance || DEFAULT_DEEPSEEK_INSTANCE_ID;
+    const deepseekModel = options.model || DEFAULT_DEEPSEEK_MODEL;
+    const result = await installDeepSeekProvider(client, {
+      wrapperPath: path.join(repoRoot, "bin", "t3-deepseek-acp"),
+      instanceId: deepseekInstanceId,
+      model: deepseekModel,
+      dshAcpBin: resolveDshAcpExecutable(options["dsh-acp-bin"]),
+    });
+    console.log(JSON.stringify({ installed: true, instanceId: deepseekInstanceId, provider: result.provider?.instanceId || deepseekInstanceId }, null, 2));
+    return;
+  }
+  if (command === "remove-deepseek-provider") {
+    console.log(JSON.stringify(await removeDeepSeekProvider(client, { instanceId: options.instance || DEFAULT_DEEPSEEK_INSTANCE_ID }), null, 2));
+    return;
+  }
+  if (command === "install-kimi-provider") {
+    const kimiInstanceId = options.instance || DEFAULT_KIMI_INSTANCE_ID;
+    const kimiModel = options.model || DEFAULT_KIMI_MODEL;
+    const result = await installKimiProvider(client, {
+      wrapperPath: path.join(repoRoot, "bin", "t3-kimi-acp"),
+      instanceId: kimiInstanceId,
+      model: kimiModel,
+      kimiBin: resolveKimiExecutable(options["kimi-bin"]),
+    });
+    console.log(JSON.stringify({ installed: true, instanceId: kimiInstanceId, provider: result.provider?.instanceId || kimiInstanceId }, null, 2));
+    return;
+  }
+  if (command === "remove-kimi-provider") {
+    console.log(JSON.stringify(await removeKimiProvider(client, { instanceId: options.instance || DEFAULT_KIMI_INSTANCE_ID }), null, 2));
+    return;
+  }
+  if (command === "restore-native-grok") {
+    console.log(JSON.stringify(await restoreNativeGrok(client), null, 2));
+    return;
+  }
+  if (command === "observe") {
+    console.log(JSON.stringify(await observe(client), null, 2));
+    return;
+  }
+  if (command === "act") {
+    const intent = parseIntentOption(options);
+    console.log(JSON.stringify(await applyIntents(client, [intent], { wait: options["no-wait"] !== true }), null, 2));
+    return;
+  }
+  if (command === "orchestrate") {
+    const intents = parseIntentFileOption(options);
+    console.log(JSON.stringify(await applyIntents(client, intents, { wait: options["no-wait"] !== true }), null, 2));
+    return;
+  }
   if (command === "originate") {
     const result = await originate(client, {
       workspace: path.resolve(required(options, "workspace")),
@@ -265,7 +380,11 @@ async function main() {
   throw new Error(`Unknown command: ${command}\n\n${usage()}`);
 }
 
-main().catch((error) => {
-  console.error(`t3-agent-bridge: ${error.message}`);
-  process.exitCode = 1;
-});
+// Only run the CLI when executed directly (bin/t3-agent-bridge execs this
+// module); importing it for tests must not start a command.
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main().catch((error) => {
+    console.error(`t3-agent-bridge: ${error.message}`);
+    process.exitCode = 1;
+  });
+}

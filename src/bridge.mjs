@@ -4,9 +4,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   DEFAULT_BRIDGE_STATE_FILE,
+  DEFAULT_DEEPSEEK_INSTANCE_ID,
+  DEFAULT_DEEPSEEK_MODEL,
   DEFAULT_HERMES_PROFILE,
   DEFAULT_HERMES_URL,
   DEFAULT_INSTANCE_ID,
+  DEFAULT_KIMI_INSTANCE_ID,
+  DEFAULT_KIMI_MODEL,
   DEFAULT_MODEL,
   DEFAULT_PI_INSTANCE_ID,
   DEFAULT_PI_MODEL,
@@ -21,6 +25,9 @@ const BRIDGE_OWNER_VARIABLE = "T3_HERMES_BRIDGE_OWNER";
 const BRIDGE_OWNER_VALUE = "t3-hermes-bridge/v1";
 const BRIDGE_HARNESS_VARIABLE = "T3_HERMES_BRIDGE_HARNESS";
 const PI_HARNESS_VALUE = "pi";
+export const DEEPSEEK_HARNESS_VALUE = "deepseek";
+export const KIMI_HARNESS_VALUE = "kimi";
+const KNOWN_HARNESS_VALUES = new Set([PI_HARNESS_VALUE, DEEPSEEK_HARNESS_VALUE, KIMI_HARNESS_VALUE]);
 const STATE_VERSION = 2;
 const PROCESSED_FALLBACK_LIMIT = 1_000;
 const PENDING_LIMIT = 1_000;
@@ -42,7 +49,8 @@ export function providerHarness(instance) {
   if (instance?.driver !== "grok" || !isBridgeOwnedProvider(instance)) return null;
   const marker = (instance.environment || []).find((variable) => variable.name === BRIDGE_HARNESS_VARIABLE);
   // v0.1 providers predate the harness marker and remain Hermes-owned.
-  return marker ? (marker.value === PI_HARNESS_VALUE ? PI_HARNESS_VALUE : null) : "hermes";
+  if (!marker) return "hermes";
+  return KNOWN_HARNESS_VALUES.has(marker.value) ? marker.value : null;
 }
 
 export function isBridgeOwnedProvider(instance) {
@@ -58,6 +66,41 @@ export function hasRedactedSecrets(providerInstances) {
       (variable) => variable.sensitive === true && variable.valueRedacted === true,
     ),
   );
+}
+
+// The native Grok connector is T3 Code's built-in `grok` provider instance.
+// The bridge registers Hermes/Pi on the same driver (T3's configurable
+// ACP-over-stdio adapter), so it must never disable, rename, or drop the
+// built-in instance. This instance is the one slot the bridge treats as
+// "someone else's provider" and preserves verbatim on every settings write.
+export const NATIVE_GROK_INSTANCE_ID = "grok";
+
+export function isNativeGrokInstance(instanceId, instance) {
+  return instanceId === NATIVE_GROK_INSTANCE_ID && instance?.driver === "grok" && !isBridgeOwnedProvider(instance);
+}
+
+// Re-enable the native Grok connector if a previous settings write left it
+// disabled. Returns the previous enabled state so callers can report whether
+// this was a no-op or an actual repair.
+export async function restoreNativeGrok(client) {
+  const settings = await client.getSettings();
+  const current = settings.providerInstances || {};
+  const native = current[NATIVE_GROK_INSTANCE_ID];
+  if (!native) return { restored: false, reason: "native-grok-instance-absent" };
+  const envelopeEnabled = native.enabled ?? true;
+  const configEnabled = native.config && typeof native.config === "object" && !Array.isArray(native.config) && native.config.enabled !== undefined ? native.config.enabled : true;
+  if (envelopeEnabled && configEnabled) return { restored: false, reason: "already-enabled" };
+  const providerInstances = {
+    ...current,
+    [NATIVE_GROK_INSTANCE_ID]: {
+      ...native,
+      enabled: true,
+      config: { ...(native.config && typeof native.config === "object" ? native.config : {}), enabled: true },
+    },
+  };
+  await client.updateSettings({ providerInstances });
+  await client.refreshProvider(NATIVE_GROK_INSTANCE_ID);
+  return { restored: true, instanceId: NATIVE_GROK_INSTANCE_ID };
 }
 
 export async function installProvider(client, {
@@ -160,6 +203,107 @@ export async function removePiProvider(client, { instanceId = DEFAULT_PI_INSTANC
   if (!(instanceId in current)) return { removed: false };
   if (providerHarness(current[instanceId]) !== PI_HARNESS_VALUE) {
     throw new Error(`Refusing to remove provider instance '${instanceId}' because it is not owned by the Pi harness`);
+  }
+  const providerInstances = { ...current };
+  delete providerInstances[instanceId];
+  await client.updateSettings({ providerInstances });
+  return { removed: true };
+}
+
+export async function installDeepSeekProvider(client, {
+  wrapperPath,
+  instanceId = DEFAULT_DEEPSEEK_INSTANCE_ID,
+  model = DEFAULT_DEEPSEEK_MODEL,
+  dshAcpBin,
+} = {}) {
+  if (!wrapperPath || !path.isAbsolute(wrapperPath)) throw new Error("install-deepseek-provider requires an absolute ACP wrapper path");
+  if (dshAcpBin !== undefined && (!dshAcpBin || !path.isAbsolute(dshAcpBin))) throw new Error("install-deepseek-provider requires an absolute dsh-acp executable path");
+  const settings = await client.getSettings();
+  const current = settings.providerInstances || {};
+  if (hasRedactedSecrets(current)) {
+    throw new Error("Refusing provider map replacement because T3 returned redacted provider secrets; use the T3 settings UI or remove those secrets first");
+  }
+  if (current[instanceId] && providerHarness(current[instanceId]) !== DEEPSEEK_HARNESS_VALUE) {
+    throw new Error(`Refusing to replace provider instance '${instanceId}' because it is not owned by the DeepSeek harness`);
+  }
+  const environment = [
+    { name: BRIDGE_OWNER_VARIABLE, value: BRIDGE_OWNER_VALUE, sensitive: false },
+    { name: BRIDGE_HARNESS_VARIABLE, value: DEEPSEEK_HARNESS_VALUE, sensitive: false },
+  ];
+  if (dshAcpBin) environment.push({ name: "DSH_ACP_BIN", value: dshAcpBin, sensitive: false });
+  environment.push({ name: "DEEPSEEK_MODEL", value: model, sensitive: false });
+  const providerInstances = {
+    ...current,
+    [instanceId]: {
+      driver: "grok",
+      displayName: "DeepSeek",
+      accentColor: "#0EA5E9",
+      enabled: true,
+      environment,
+      config: { binaryPath: wrapperPath, customModels: [model] },
+    },
+  };
+  await client.updateSettings({ providerInstances });
+  return await client.refreshProvider(instanceId);
+}
+
+export async function removeDeepSeekProvider(client, { instanceId = DEFAULT_DEEPSEEK_INSTANCE_ID } = {}) {
+  const settings = await client.getSettings();
+  const current = settings.providerInstances || {};
+  if (hasRedactedSecrets(current)) throw new Error("Refusing provider map replacement because T3 returned redacted provider secrets");
+  if (!(instanceId in current)) return { removed: false };
+  if (providerHarness(current[instanceId]) !== DEEPSEEK_HARNESS_VALUE) {
+    throw new Error(`Refusing to remove provider instance '${instanceId}' because it is not owned by the DeepSeek harness`);
+  }
+  const providerInstances = { ...current };
+  delete providerInstances[instanceId];
+  await client.updateSettings({ providerInstances });
+  return { removed: true };
+}
+
+export async function installKimiProvider(client, {
+  wrapperPath,
+  instanceId = DEFAULT_KIMI_INSTANCE_ID,
+  model = DEFAULT_KIMI_MODEL,
+  kimiBin,
+} = {}) {
+  if (!wrapperPath || !path.isAbsolute(wrapperPath)) throw new Error("install-kimi-provider requires an absolute ACP wrapper path");
+  if (!kimiBin || !path.isAbsolute(kimiBin)) throw new Error("install-kimi-provider requires an absolute Kimi executable path");
+  const settings = await client.getSettings();
+  const current = settings.providerInstances || {};
+  if (hasRedactedSecrets(current)) {
+    throw new Error("Refusing provider map replacement because T3 returned redacted provider secrets; use the T3 settings UI or remove those secrets first");
+  }
+  if (current[instanceId] && providerHarness(current[instanceId]) !== KIMI_HARNESS_VALUE) {
+    throw new Error(`Refusing to replace provider instance '${instanceId}' because it is not owned by the Kimi harness`);
+  }
+  const providerInstances = {
+    ...current,
+    [instanceId]: {
+      driver: "grok",
+      displayName: "Kimi",
+      accentColor: "#10B981",
+      enabled: true,
+      environment: [
+        { name: BRIDGE_OWNER_VARIABLE, value: BRIDGE_OWNER_VALUE, sensitive: false },
+        { name: BRIDGE_HARNESS_VARIABLE, value: KIMI_HARNESS_VALUE, sensitive: false },
+        { name: "KIMI_BIN", value: kimiBin, sensitive: false },
+        { name: "KIMI_MODEL", value: model, sensitive: false },
+      ],
+      config: { binaryPath: wrapperPath, customModels: [model] },
+    },
+  };
+  await client.updateSettings({ providerInstances });
+  return await client.refreshProvider(instanceId);
+}
+
+export async function removeKimiProvider(client, { instanceId = DEFAULT_KIMI_INSTANCE_ID } = {}) {
+  const settings = await client.getSettings();
+  const current = settings.providerInstances || {};
+  if (hasRedactedSecrets(current)) throw new Error("Refusing provider map replacement because T3 returned redacted provider secrets");
+  if (!(instanceId in current)) return { removed: false };
+  if (providerHarness(current[instanceId]) !== KIMI_HARNESS_VALUE) {
+    throw new Error(`Refusing to remove provider instance '${instanceId}' because it is not owned by the Kimi harness`);
   }
   const providerInstances = { ...current };
   delete providerInstances[instanceId];
@@ -640,5 +784,16 @@ export async function doctor(client, {
   if (!health || typeof health !== "object" || Array.isArray(health)) {
     throw new Error("Hermes health check returned an invalid payload");
   }
-  return { t3: { reachable: true, projects: shell.projects.length, threads: shell.threads.length }, hermes: { reachable: true, status: health.status || "ok", version: health.version || null }, provider: { configured: Boolean(settings.providerInstances?.[instanceId]), instanceId, ready: provider?.status === "ready", installed: provider?.installed === true, status: provider?.status || null, modelCount: provider?.models?.length || 0 } };
+  const nativeInstance = settings.providerInstances?.[NATIVE_GROK_INSTANCE_ID];
+  const nativeConfig = nativeInstance && typeof nativeInstance.config === "object" && !Array.isArray(nativeInstance.config) ? nativeInstance.config : undefined;
+  const nativeEnvelopeEnabled = nativeInstance ? nativeInstance.enabled ?? true : undefined;
+  const nativeConfigEnabled = nativeConfig?.enabled;
+  const nativeGrok = {
+    instanceId: NATIVE_GROK_INSTANCE_ID,
+    present: Boolean(nativeInstance),
+    enabled: nativeEnvelopeEnabled ?? true,
+    configEnabled: nativeConfigEnabled ?? true,
+    disabled: nativeInstance !== undefined && (nativeEnvelopeEnabled === false || nativeConfigEnabled === false),
+  };
+  return { t3: { reachable: true, projects: shell.projects.length, threads: shell.threads.length }, hermes: { reachable: true, status: health.status || "ok", version: health.version || null }, provider: { configured: Boolean(settings.providerInstances?.[instanceId]), instanceId, ready: provider?.status === "ready", installed: provider?.installed === true, status: provider?.status || null, modelCount: provider?.models?.length || 0 }, nativeGrok };
 }

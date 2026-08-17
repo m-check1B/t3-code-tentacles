@@ -99,12 +99,28 @@ export class T3Client {
     return this.request("/api/orchestration/shell");
   }
 
+  // Shell snapshot of archived threads. Unlike the active shell, this lives
+  // behind the WebSocket RPC surface (orchestration.getArchivedShellSnapshot).
+  archivedShell() {
+    return this.rpc("orchestration.getArchivedShellSnapshot", {}, { timeoutMs: 30_000 });
+  }
+
   snapshot() {
     return this.request("/api/orchestration/snapshot");
   }
 
   thread(threadId) {
     return this.request(`/api/orchestration/threads/${encodeURIComponent(threadId)}`);
+  }
+
+  // Windowed thread read. `turnLimit` bounds returned turns and `beforeCursor`
+  // pages backwards through older history.
+  threadDetail(threadId, { turnLimit, beforeCursor } = {}) {
+    const query = new URLSearchParams();
+    if (turnLimit !== undefined) query.set("turnLimit", String(turnLimit));
+    if (beforeCursor !== undefined) query.set("beforeCursor", beforeCursor);
+    const suffix = query.size > 0 ? `?${query.toString()}` : "";
+    return this.request(`/api/orchestration/threads/${encodeURIComponent(threadId)}${suffix}`);
   }
 
   dispatch(command) {
