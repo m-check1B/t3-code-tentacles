@@ -523,9 +523,15 @@ export async function continueThread(client, {
   turnCommandId = randomUUID(),
   messageId = randomUUID(),
 }) {
-  const modelSelection = instanceId !== undefined && model !== undefined
-    ? resolveModelSelection({ instanceId, model, options, budget })
-    : undefined;
+  const modelSelection =
+    instanceId === undefined && model === undefined && options === undefined && budget === undefined
+      ? undefined
+      : resolveModelSelection({
+          instanceId: instanceId ?? DEFAULT_INSTANCE_ID,
+          model: model ?? DEFAULT_MODEL,
+          options,
+          budget,
+        });
   runtimeMode = requireRuntimeMode(runtimeMode);
   const detail = await waitForThread(client, threadId);
   if (!(detail.thread.messages || []).some((entry) => entry.id === messageId)) {

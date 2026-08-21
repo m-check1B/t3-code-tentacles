@@ -233,6 +233,49 @@ test("continueThread preserves an existing non-Hermes selection when lab/model a
   });
 });
 
+test("continueThread resolves a partial legacy selection and omits only the all-absent case", async () => {
+  const client = recordingClient();
+  await startThread(client, {
+    projectId: "p1",
+    threadId: "partial-thread",
+    title: "Partial",
+    message: "hello",
+    messageId: "m1",
+    instanceId: "grok",
+    model: "grok-build",
+  });
+
+  await continueThread(client, {
+    threadId: "partial-thread",
+    message: "only-model",
+    messageId: "m2",
+    model: "openai-codex:gpt-5.6-sol",
+  });
+  assert.deepEqual(client.commands[2].modelSelection, {
+    instanceId: "hermes",
+    model: "openai-codex:gpt-5.6-sol",
+  });
+
+  await continueThread(client, {
+    threadId: "partial-thread",
+    message: "only-budget",
+    messageId: "m3",
+    budget: "high",
+  });
+  assert.deepEqual(client.commands[3].modelSelection, {
+    instanceId: "hermes",
+    model: "openai-codex:gpt-5.6-sol",
+    options: [{ id: "reasoningEffort", value: "high" }],
+  });
+
+  await continueThread(client, {
+    threadId: "partial-thread",
+    message: "all-omitted",
+    messageId: "m4",
+  });
+  assert.equal("modelSelection" in client.commands[4], false);
+});
+
 test("startThread omits options when none are provided", async () => {
   const client = recordingClient();
   await startThread(client, {
