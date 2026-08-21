@@ -32,6 +32,13 @@ import {
   DEFAULT_PI_PROVIDER,
   resolveExecutable,
 } from "./config.mjs";
+import {
+  ORIGINATE_LABS,
+  parseModelOptionFlags,
+  requireRuntimeMode,
+  resolveModelSelection,
+  RUNTIME_MODES,
+} from "./model-selection.mjs";
 import { applyIntents, observe } from "./orchestrate.mjs";
 import {
   installService,
@@ -43,7 +50,7 @@ import {
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const [command = "help", ...rest] = argv;
   const options = { _: [] };
   for (let index = 0; index < rest.length; index += 1) {
@@ -59,7 +66,12 @@ function parseArgs(argv) {
     }
     const value = rest[index + 1];
     if (value === undefined || value.startsWith("--")) throw new Error(`Missing value for --${key}`);
-    options[key] = value;
+    if (key === "option") {
+      if (!Array.isArray(options.option)) options.option = [];
+      options.option.push(value);
+    } else {
+      options[key] = value;
+    }
     index += 1;
   }
   return { command, options };
@@ -126,7 +138,7 @@ function resolveKimiExecutable(option) {
   return fs.realpathSync(configured);
 }
 
-function usage() {
+export function usage() {
   return `t3-agent-bridge — provider-neutral T3 Code ACP bridge
 
 Usage:
@@ -143,7 +155,7 @@ Usage:
   t3-agent-bridge observe
   t3-agent-bridge act --intent '{...}' [--intent-file PATH] [--no-wait]
   t3-agent-bridge orchestrate --intent-file PATH [--no-wait]
-  t3-agent-bridge originate --workspace PATH --title TITLE --message TEXT [--idempotency-key KEY]
+  t3-agent-bridge originate --workspace PATH --title TITLE --message TEXT [--idempotency-key KEY] [--instance ${ORIGINATE_LABS.join("|")}] [--model MODEL] [--runtime-mode ${RUNTIME_MODES.join("|")}] [--budget low|medium|high] [--option id=value]
   t3-agent-bridge watch --once --allow-all-projects [--profile PROFILE] [--instance INSTANCE]
   t3-agent-bridge watch --allow-all-projects [--interval 2000] [--state-file PATH] [--max-messages 10]
   t3-agent-bridge install-service --profile PROFILE --instance INSTANCE [service options]
@@ -318,13 +330,20 @@ async function main() {
     return;
   }
   if (command === "originate") {
+    const modelSelection = resolveModelSelection({
+      instanceId,
+      model,
+      options: parseModelOptionFlags(options.option),
+      budget: options.budget,
+    });
     const result = await originate(client, {
       workspace: path.resolve(required(options, "workspace")),
       title: required(options, "title"),
       message: required(options, "message"),
-      instanceId,
-      model,
-      runtimeMode: options["runtime-mode"] || "approval-required",
+      instanceId: modelSelection.instanceId,
+      model: modelSelection.model,
+      options: modelSelection.options,
+      runtimeMode: requireRuntimeMode(options["runtime-mode"] || "approval-required", "--runtime-mode"),
       idempotencyKey: options["idempotency-key"],
       stateFile: options["state-file"],
     });

@@ -85,6 +85,44 @@ test("buildCommandFromIntent maps the full intent vocabulary", () => {
   }
 });
 
+test("thread.create and thread.set-model accept modelSelection options", () => {
+  const options = [{ id: "reasoningEffort", value: "high" }, { id: "serviceTier", value: "default" }];
+  const created = buildCommandFromIntent({
+    action: "thread.create",
+    projectId: "p1",
+    title: "T",
+    instanceId: "codex",
+    model: "gpt-5.6-sol",
+    options,
+  }, { commandId: "cc" });
+  assert.equal(created.type, "thread.create");
+  assert.deepEqual(created.modelSelection, { instanceId: "codex", model: "gpt-5.6-sol", options });
+
+  const nested = buildCommandFromIntent({
+    action: "thread.set-model",
+    threadId: "t1",
+    instanceId: "claudeAgent",
+    model: "claude-sonnet-5",
+    modelSelection: { options: [{ id: "effort", value: "high" }, { id: "contextWindow", value: "1m" }] },
+  }, { commandId: "cm" });
+  assert.equal(nested.type, "thread.meta.update");
+  assert.deepEqual(nested.modelSelection, {
+    instanceId: "claudeAgent",
+    model: "claude-sonnet-5",
+    options: [{ id: "effort", value: "high" }, { id: "contextWindow", value: "1m" }],
+  });
+
+  const budgeted = buildCommandFromIntent({
+    action: "thread.create",
+    projectId: "p1",
+    title: "T",
+    instanceId: "hermes",
+    model: "openai-codex:gpt-5.6-sol",
+    budget: "low",
+  });
+  assert.deepEqual(budgeted.modelSelection.options, [{ id: "reasoningEffort", value: "low" }]);
+});
+
 test("buildCommandFromIntent rejects unknown actions and missing fields", () => {
   assert.throws(() => buildCommandFromIntent({ action: "thread.explode", threadId: "t1" }), /Unknown intent action/);
   assert.throws(() => buildCommandFromIntent({ action: "thread.continue" }), /threadId/);

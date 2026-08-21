@@ -13,6 +13,7 @@
 
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
+import { resolveModelSelection } from "./model-selection.mjs";
 import { T3HttpError } from "./t3-client.mjs";
 
 const RUNTIME_MODES = new Set(["approval-required", "auto-accept-edits", "auto", "full-access"]);
@@ -31,7 +32,12 @@ function requireString(value, label) {
 function modelSelection(intent, label = "model selection") {
   const instanceId = requireString(intent.instanceId, `${label} instanceId`);
   const model = requireString(intent.model, `${label} model`);
-  return { instanceId, model };
+  return resolveModelSelection({
+    instanceId,
+    model,
+    options: intent.options ?? intent.modelSelection?.options,
+    budget: intent.budget,
+  });
 }
 
 // ── Command builders ────────────────────────────────────────────────────────
