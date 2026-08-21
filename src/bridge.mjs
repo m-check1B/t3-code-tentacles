@@ -515,15 +515,17 @@ export async function startThread(client, { projectId, title, message, instanceI
 export async function continueThread(client, {
   threadId,
   message,
-  instanceId = DEFAULT_INSTANCE_ID,
-  model = DEFAULT_MODEL,
+  instanceId,
+  model,
   options,
   budget,
   runtimeMode = "approval-required",
   turnCommandId = randomUUID(),
   messageId = randomUUID(),
 }) {
-  const modelSelection = resolveModelSelection({ instanceId, model, options, budget });
+  const modelSelection = instanceId !== undefined && model !== undefined
+    ? resolveModelSelection({ instanceId, model, options, budget })
+    : undefined;
   runtimeMode = requireRuntimeMode(runtimeMode);
   const detail = await waitForThread(client, threadId);
   if (!(detail.thread.messages || []).some((entry) => entry.id === messageId)) {
@@ -532,7 +534,7 @@ export async function continueThread(client, {
       commandId: turnCommandId,
       threadId,
       message: userMessage(message, messageId),
-      modelSelection,
+      ...(modelSelection !== undefined ? { modelSelection } : {}),
       runtimeMode,
       interactionMode: "default",
       createdAt: now(),

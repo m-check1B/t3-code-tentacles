@@ -171,6 +171,68 @@ test("startThread and continueThread put options on the dispatched command JSON"
   });
 });
 
+test("continueThread preserves an existing non-Hermes selection when lab/model are omitted", async () => {
+  const client = recordingClient();
+  await startThread(client, {
+    projectId: "p1",
+    threadId: "grok-thread",
+    title: "Grok",
+    message: "hello",
+    messageId: "m1",
+    instanceId: "grok",
+    model: "grok-build",
+    runtimeMode: "auto-accept-edits",
+  });
+  assert.deepEqual(client.threads.get("grok-thread").modelSelection, {
+    instanceId: "grok",
+    model: "grok-build",
+  });
+
+  await continueThread(client, {
+    threadId: "grok-thread",
+    message: "again",
+    messageId: "m2",
+    runtimeMode: "auto-accept-edits",
+  });
+  const continued = client.commands[2];
+  assert.equal(continued.type, "thread.turn.start");
+  assert.equal("modelSelection" in continued, false);
+  assert.notDeepEqual(continued.modelSelection, {
+    instanceId: "hermes",
+    model: "openai-codex:gpt-5.6-sol",
+  });
+  assert.equal(continued.runtimeMode, "auto-accept-edits");
+  assert.equal(continued.message.messageId, "m2");
+  assert.deepEqual(client.threads.get("grok-thread").modelSelection, {
+    instanceId: "grok",
+    model: "grok-build",
+  });
+  assert.equal(client.threads.get("grok-thread").messages.some((entry) => entry.id === "m2"), true);
+
+  const beforeReplay = client.commands.length;
+  await continueThread(client, {
+    threadId: "grok-thread",
+    message: "again",
+    messageId: "m2",
+  });
+  assert.equal(client.commands.length, beforeReplay);
+
+  await continueThread(client, {
+    threadId: "grok-thread",
+    message: "switch",
+    messageId: "m3",
+    instanceId: "codex",
+    model: "gpt-5.6-sol",
+    options: [{ id: "serviceTier", value: "default" }],
+    budget: "high",
+  });
+  assert.deepEqual(client.commands[3].modelSelection, {
+    instanceId: "codex",
+    model: "gpt-5.6-sol",
+    options: [{ id: "serviceTier", value: "default" }, { id: "reasoningEffort", value: "high" }],
+  });
+});
+
 test("startThread omits options when none are provided", async () => {
   const client = recordingClient();
   await startThread(client, {
