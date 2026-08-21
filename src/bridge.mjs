@@ -18,6 +18,7 @@ import {
   ensurePrivateDirectory,
   requireLoopbackUrl,
 } from "./config.mjs";
+import { resolveModelSelection, requireRuntimeMode } from "./model-selection.mjs";
 import { readBoundedResponseText, T3HttpError } from "./t3-client.mjs";
 
 const HERMES_MENTION = /(^|\s)@hermes\b/i;
@@ -486,23 +487,26 @@ async function waitForMessage(client, threadId, messageId) {
   }, `message ${messageId} in thread ${threadId}`);
 }
 
-export async function ensureProject(client, { workspace, title, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, projectId = randomUUID(), projectCommandId = randomUUID() }) {
+export async function ensureProject(client, { workspace, title, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, options, budget, projectId = randomUUID(), projectCommandId = randomUUID() }) {
   const shell = await client.shell();
   const existing = shell.projects.find((project) => project.workspaceRoot === workspace || project.id === projectId);
   if (existing) return { project: existing, created: false, shell };
-  await client.dispatch({ type: "project.create", commandId: projectCommandId, projectId, title: title || path.basename(workspace) || "Hermes", workspaceRoot: workspace, createWorkspaceRootIfMissing: false, defaultModelSelection: { instanceId, model }, createdAt: now() });
+  const defaultModelSelection = resolveModelSelection({ instanceId, model, options, budget });
+  await client.dispatch({ type: "project.create", commandId: projectCommandId, projectId, title: title || path.basename(workspace) || "Hermes", workspaceRoot: workspace, createWorkspaceRootIfMissing: false, defaultModelSelection, createdAt: now() });
   const projected = await waitFor(async () => (await client.shell()).projects.find((project) => project.id === projectId) || null, `project ${projectId}`);
   return { project: projected, created: true, shell };
 }
 
-export async function startThread(client, { projectId, title, message, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, runtimeMode = "approval-required", threadId = randomUUID(), threadCommandId = randomUUID(), turnCommandId = randomUUID(), messageId = randomUUID() }) {
+export async function startThread(client, { projectId, title, message, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, options, budget, runtimeMode = "approval-required", threadId = randomUUID(), threadCommandId = randomUUID(), turnCommandId = randomUUID(), messageId = randomUUID() }) {
+  const modelSelection = resolveModelSelection({ instanceId, model, options, budget });
+  runtimeMode = requireRuntimeMode(runtimeMode);
   let detail = await getThreadIfProjected(client, threadId);
   if (!detail) {
-    await client.dispatch({ type: "thread.create", commandId: threadCommandId, threadId, projectId, title, modelSelection: { instanceId, model }, runtimeMode, interactionMode: "default", branch: null, worktreePath: null, createdAt: now() });
+    await client.dispatch({ type: "thread.create", commandId: threadCommandId, threadId, projectId, title, modelSelection, runtimeMode, interactionMode: "default", branch: null, worktreePath: null, createdAt: now() });
     detail = await waitForThread(client, threadId);
   }
   if (!(detail.thread.messages || []).some((entry) => entry.id === messageId)) {
-    await client.dispatch({ type: "thread.turn.start", commandId: turnCommandId, threadId, message: userMessage(message, messageId), modelSelection: { instanceId, model }, titleSeed: title, runtimeMode, interactionMode: "default", createdAt: now() });
+    await client.dispatch({ type: "thread.turn.start", commandId: turnCommandId, threadId, message: userMessage(message, messageId), modelSelection, titleSeed: title, runtimeMode, interactionMode: "default", createdAt: now() });
     await waitForMessage(client, threadId, messageId);
   }
   return { threadId, projectId };
@@ -513,10 +517,14 @@ export async function continueThread(client, {
   message,
   instanceId = DEFAULT_INSTANCE_ID,
   model = DEFAULT_MODEL,
+  options,
+  budget,
   runtimeMode = "approval-required",
   turnCommandId = randomUUID(),
   messageId = randomUUID(),
 }) {
+  const modelSelection = resolveModelSelection({ instanceId, model, options, budget });
+  runtimeMode = requireRuntimeMode(runtimeMode);
   const detail = await waitForThread(client, threadId);
   if (!(detail.thread.messages || []).some((entry) => entry.id === messageId)) {
     await client.dispatch({
@@ -524,7 +532,7 @@ export async function continueThread(client, {
       commandId: turnCommandId,
       threadId,
       message: userMessage(message, messageId),
-      modelSelection: { instanceId, model },
+      modelSelection,
       runtimeMode,
       interactionMode: "default",
       createdAt: now(),
@@ -535,10 +543,12 @@ export async function continueThread(client, {
 }
 
 function digest(message) { return createHash("sha256").update(message).digest("hex"); }
-export async function originate(client, { workspace, title, message, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, runtimeMode = "approval-required", idempotencyKey, stateFile = DEFAULT_BRIDGE_STATE_FILE } = {}) {
+export async function originate(client, { workspace, title, message, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, options, budget, runtimeMode = "approval-required", idempotencyKey, stateFile = DEFAULT_BRIDGE_STATE_FILE } = {}) {
+  const modelSelection = resolveModelSelection({ instanceId, model, options, budget });
+  runtimeMode = requireRuntimeMode(runtimeMode);
   if (!idempotencyKey) {
-    const { project, created } = await ensureProject(client, { workspace, title: path.basename(workspace), instanceId, model });
-    return { ...(await startThread(client, { projectId: project.id, title, message, instanceId, model, runtimeMode })), projectCreated: created };
+    const { project, created } = await ensureProject(client, { workspace, title: path.basename(workspace), instanceId: modelSelection.instanceId, model: modelSelection.model, options: modelSelection.options });
+    return { ...(await startThread(client, { projectId: project.id, title, message, instanceId: modelSelection.instanceId, model: modelSelection.model, options: modelSelection.options, runtimeMode })), projectCreated: created };
   }
   if (typeof idempotencyKey !== "string" || !/^[A-Za-z0-9._:-]{1,256}$/.test(idempotencyKey)) throw new Error("originate idempotencyKey must be 1-256 safe characters");
   const release = acquireStateLock(stateFile);
@@ -555,8 +565,8 @@ export async function originate(client, { workspace, title, message, instanceId 
       state.originations[idempotencyKey] = intent;
       writeBridgeState(state, stateFile);
     }
-    const { project, created } = await ensureProject(client, { workspace, title: path.basename(workspace), instanceId, model, projectId: intent.projectId, projectCommandId: intent.projectCommandId });
-    const result = await startThread(client, { projectId: project.id, title, message, instanceId, model, runtimeMode, threadId: intent.threadId, threadCommandId: intent.threadCommandId, turnCommandId: intent.turnCommandId, messageId: intent.messageId });
+    const { project, created } = await ensureProject(client, { workspace, title: path.basename(workspace), instanceId: modelSelection.instanceId, model: modelSelection.model, options: modelSelection.options, projectId: intent.projectId, projectCommandId: intent.projectCommandId });
+    const result = await startThread(client, { projectId: project.id, title, message, instanceId: modelSelection.instanceId, model: modelSelection.model, options: modelSelection.options, runtimeMode, threadId: intent.threadId, threadCommandId: intent.threadCommandId, turnCommandId: intent.turnCommandId, messageId: intent.messageId });
     return { ...result, projectCreated: created, idempotencyKey };
   } finally {
     release();

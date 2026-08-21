@@ -1,7 +1,11 @@
-# T3 Agent Bridge
+# Tentacles
+
+T3 Code tentacles — originate any ready lab (instance + model + budget).
+Hermes was the first tentacle, not the product.
 
 Repository documentation and integration authority boundaries start at
-[docs/README.md](docs/README.md).
+[docs/README.md](docs/README.md). The GitHub repo and CLI binary remain
+`t3-agent-bridge`; `tentacles` is an exact command alias.
 
 [![CI](https://github.com/m-check1B/t3-agent-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/m-check1B/t3-agent-bridge/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/m-check1B/t3-agent-bridge)](https://github.com/m-check1B/t3-agent-bridge/releases)

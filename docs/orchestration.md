@@ -1,9 +1,13 @@
 # Orchestration control plane
 
-The bridge can act as the top orchestrator of a T3 Code environment, not just a
-provider adapter. This document describes the read (`observe`) and write
-(`act` / `orchestrate`) surfaces any system — Hermes, a cron job, another agent
-— can drive over the bridge's existing loopback-authenticated HTTP/RPC client.
+Tentacles is the user-side of T3 Code: each lab is a tentacle. Hermes was the
+first tentacle, not the product. T3 Code tentacles — originate any ready lab
+(instance + model + budget).
+
+This document describes the read (`observe`) and write (`act` / `orchestrate`)
+surfaces any system — TOP-G, a cron job, another agent — can drive over the
+bridge's existing loopback-authenticated HTTP/RPC client. The CLI binary remains
+`t3-agent-bridge`.
 
 ## Read: observe
 
@@ -49,9 +53,9 @@ An intent file is a JSON array of intents, or `{"intents": [...]}`.
 |---|---|---|
 | `project.create` | `title`, `workspaceRoot` (`instanceId`+`model` optional) | `project.create` |
 | `project.rename` | `projectId`, `title` | `project.meta.update` |
-| `project.set-model` | `projectId`, `instanceId`, `model` | `project.meta.update` |
+| `project.set-model` | `projectId`, `instanceId`, `model` (`options` optional) | `project.meta.update` |
 | `project.delete` | `projectId` | `project.delete` |
-| `thread.create` | `projectId`, `title`, `instanceId`, `model` | `thread.create` |
+| `thread.create` | `projectId`, `title`, `instanceId`, `model` (`options` optional) | `thread.create` |
 | `thread.continue` | `threadId`, `text` | `thread.turn.start` |
 | `thread.interrupt` | `threadId` | `thread.turn.interrupt` |
 | `thread.stop` | `threadId` | `thread.session.stop` |
@@ -59,7 +63,7 @@ An intent file is a JSON array of intents, or `{"intents": [...]}`.
 | `thread.user-input.respond` | `threadId`, `requestId`, `answers` | `thread.user-input.respond` |
 | `thread.checkpoint.revert` | `threadId`, `turnCount` | `thread.checkpoint.revert` |
 | `thread.set-runtime-mode` | `threadId`, `runtimeMode` | `thread.runtime-mode.set` |
-| `thread.set-model` | `threadId`, `instanceId`, `model` | `thread.meta.update` |
+| `thread.set-model` | `threadId`, `instanceId`, `model` (`options` optional) | `thread.meta.update` |
 | `thread.rename` | `threadId`, `title` | `thread.meta.update` |
 | `thread.archive` / `unarchive` / `settle` / `unsettle` / `pin` / `unpin` / `delete` | `threadId` | matching command |
 | `thread.snooze` | `threadId`, `snoozedUntil` (ISO) | `thread.snooze` |
@@ -68,11 +72,15 @@ An intent file is a JSON array of intents, or `{"intents": [...]}`.
 
 Enums: `runtimeMode` ∈ `approval-required`, `auto-accept-edits`, `auto`,
 `full-access`; `decision` ∈ `accept`, `acceptForSession`, `decline`, `cancel`;
-`interactionMode` ∈ `default`, `plan`.
+`interactionMode` ∈ `default`, `plan`. Optional `options` is
+`[{ id, value }]` and rides on T3 `modelSelection` / `defaultModelSelection`.
+Optional `budget` (`low`/`medium`/`high`) fills the lab effort knob when that
+lab has a known id and no overlapping explicit option: `reasoningEffort` for
+`codex` and `hermes` (`openai-codex:*` models), `effort` for `claudeAgent`.
 
 ## Orchestrator loop
 
-A Hermes orchestrator runs a closed loop entirely through this surface:
+A Tentacles orchestrator runs a closed loop entirely through this surface:
 
 1. `observe` → read `pendingWork` + `activeTurns`.
 2. Decide the next intent (approve, answer user input, continue, interrupt, set
