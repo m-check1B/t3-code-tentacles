@@ -256,6 +256,8 @@ test("CLI parseArgs collects repeatable --option and usage documents originate f
   );
 
   const help = usage();
+  assert.match(help, /^Tentacles — T3 Code tentacles — originate any ready lab/m);
+  assert.match(help, /Hermes was the first tentacle/);
   assert.match(help, /originate --workspace PATH --title TITLE --message TEXT/);
   assert.match(help, /--instance hermes\|codex\|claudeAgent\|grok\|deepseek\|kimi\|pi\|opencode/);
   assert.match(help, /--model MODEL/);

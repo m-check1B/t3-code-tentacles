@@ -139,7 +139,8 @@ function resolveKimiExecutable(option) {
 }
 
 export function usage() {
-  return `t3-agent-bridge — provider-neutral T3 Code ACP bridge
+  return `Tentacles — T3 Code tentacles — originate any ready lab (instance + model + budget).
+Hermes was the first tentacle. The CLI binary remains t3-agent-bridge.
 
 Usage:
   t3-agent-bridge doctor
@@ -163,6 +164,7 @@ Usage:
   t3-agent-bridge restart-service --profile PROFILE --instance INSTANCE
   t3-agent-bridge uninstall-service --profile PROFILE --instance INSTANCE
 
+The tentacles command is an exact alias of t3-agent-bridge.
 The legacy t3-hermes command remains an exact compatibility alias.
 
 Environment:

@@ -1,7 +1,7 @@
 {
   "name": "t3-agent-bridge",
   "version": "0.2.1",
-  "description": "Provider-neutral T3 Code ACP bridge with Hermes and Pi Agent adapters",
+  "description": "T3 Code tentacles — originate any ready lab (instance + model + budget).",
   "type": "module",
   "author": "Matej Havlin (m-check1B)",
   "homepage": "https://github.com/m-check1B/t3-agent-bridge#readme",
@@ -35,6 +35,7 @@
   ],
   "bin": {
     "t3-agent-bridge": "./bin/t3-agent-bridge",
+    "tentacles": "./bin/t3-agent-bridge",
     "t3-hermes": "./bin/t3-hermes",
     "t3-pi-acp": "./bin/t3-pi-acp"
   },

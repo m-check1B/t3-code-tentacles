@@ -1,9 +1,13 @@
 # Orchestration control plane
 
-The bridge can act as the top orchestrator of a T3 Code environment, not just a
-provider adapter. This document describes the read (`observe`) and write
-(`act` / `orchestrate`) surfaces any system — Hermes, a cron job, another agent
-— can drive over the bridge's existing loopback-authenticated HTTP/RPC client.
+Tentacles is the user-side of T3 Code: each lab is a tentacle. Hermes was the
+first tentacle, not the product. T3 Code tentacles — originate any ready lab
+(instance + model + budget).
+
+This document describes the read (`observe`) and write (`act` / `orchestrate`)
+surfaces any system — TOP-G, a cron job, another agent — can drive over the
+bridge's existing loopback-authenticated HTTP/RPC client. The CLI binary remains
+`t3-agent-bridge`.
 
 ## Read: observe
 
@@ -76,7 +80,7 @@ lab has a known id and no overlapping explicit option: `reasoningEffort` for
 
 ## Orchestrator loop
 
-A Hermes orchestrator runs a closed loop entirely through this surface:
+A Tentacles orchestrator runs a closed loop entirely through this surface:
 
 1. `observe` → read `pendingWork` + `activeTurns`.
 2. Decide the next intent (approve, answer user input, continue, interrupt, set
