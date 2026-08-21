@@ -26,13 +26,14 @@ test("command builders produce the wire shape T3 expects", () => {
   const thread = threadCreate({ commandId: "c2", threadId: "t1", projectId: "p1", title: "T", modelSelection: SAMPLE_MODEL });
   assert.equal(thread.type, "thread.create");
   assert.equal(thread.modelSelection.instanceId, "codex");
-  assert.equal(thread.runtimeMode, "full-access");
+  assert.equal(thread.runtimeMode, "approval-required");
   assert.equal(thread.interactionMode, "default");
   assert.equal(thread.branch, null);
   assert.equal(thread.worktreePath, null);
 
   const turn = threadTurnStart({ commandId: "c3", threadId: "t1", text: "hi" });
   assert.equal(turn.type, "thread.turn.start");
+  assert.equal(turn.runtimeMode, "approval-required");
   assert.equal(turn.message.role, "user");
   assert.equal(turn.message.text, "hi");
   assert.deepEqual(turn.message.attachments, []);
