@@ -276,6 +276,50 @@ test("continueThread resolves a partial legacy selection and omits only the all-
   assert.equal("modelSelection" in client.commands[4], false);
 });
 
+test("continueThread rejects explicit null lab/model instead of substituting Hermes defaults", async () => {
+  const client = recordingClient();
+  await startThread(client, {
+    projectId: "p1",
+    threadId: "null-thread",
+    title: "Null",
+    message: "hello",
+    messageId: "m1",
+    instanceId: "grok",
+    model: "grok-build",
+  });
+  const beforeNulls = client.commands.length;
+
+  await assert.rejects(
+    () => continueThread(client, {
+      threadId: "null-thread",
+      message: "null-instance",
+      messageId: "m2",
+      instanceId: null,
+    }),
+    /modelSelection\.instanceId must be a non-empty string/,
+  );
+  await assert.rejects(
+    () => continueThread(client, {
+      threadId: "null-thread",
+      message: "null-model",
+      messageId: "m3",
+      model: null,
+    }),
+    /modelSelection\.model must be a non-empty string/,
+  );
+
+  assert.equal(client.commands.length, beforeNulls);
+  assert.equal(client.commands.some((command) => command.modelSelection?.instanceId === "hermes"), false);
+  assert.equal(
+    client.commands.some((command) => command.modelSelection?.model === "openai-codex:gpt-5.6-sol"),
+    false,
+  );
+  assert.deepEqual(client.threads.get("null-thread").modelSelection, {
+    instanceId: "grok",
+    model: "grok-build",
+  });
+});
+
 test("startThread omits options when none are provided", async () => {
   const client = recordingClient();
   await startThread(client, {

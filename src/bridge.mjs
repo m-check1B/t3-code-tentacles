@@ -527,8 +527,8 @@ export async function continueThread(client, {
     instanceId === undefined && model === undefined && options === undefined && budget === undefined
       ? undefined
       : resolveModelSelection({
-          instanceId: instanceId ?? DEFAULT_INSTANCE_ID,
-          model: model ?? DEFAULT_MODEL,
+          instanceId: instanceId === undefined ? DEFAULT_INSTANCE_ID : instanceId,
+          model: model === undefined ? DEFAULT_MODEL : model,
           options,
           budget,
         });
