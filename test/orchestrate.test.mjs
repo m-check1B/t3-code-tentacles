@@ -153,6 +153,37 @@ test("applyIntent skips projection when wait is false", async () => {
   assert.equal(commands[0].type, "thread.session.stop");
 });
 
+test("applyIntent waits for exact project id in the shell projection", async () => {
+  const commands = [];
+  const threadLookups = [];
+  let shellCalls = 0;
+  const project = { id: "p1", title: "P", workspaceRoot: "/w" };
+  const client = {
+    dispatch: async (command) => { commands.push(command); return { sequence: 1 }; },
+    thread: async (threadId) => { threadLookups.push(threadId); throw new Error(`unexpected thread lookup for ${threadId}`); },
+    shell: async () => {
+      shellCalls += 1;
+      return { projects: shellCalls === 1 ? [] : [project] };
+    },
+  };
+  const result = await applyIntent(client, {
+    action: "project.create",
+    projectId: "p1",
+    title: "P",
+    workspaceRoot: "/w",
+  }, { commandId: "cc", intervalMs: 0, timeoutMs: 1_000 });
+  assert.equal(result.action, "project.create");
+  assert.equal(result.commandId, "cc");
+  assert.equal(result.projectId, "p1");
+  assert.equal(result.projected, true);
+  assert.equal(commands.length, 1);
+  assert.equal(commands[0].type, "project.create");
+  assert.equal(commands[0].commandId, "cc");
+  assert.equal(commands[0].projectId, "p1");
+  assert.equal(shellCalls, 2);
+  assert.deepEqual(threadLookups, []);
+});
+
 test("applyIntents stops at the first failure and bounds the list", async () => {
   const client = { dispatch: async () => ({ sequence: 1 }), thread: async () => ({ thread: { id: "x", messages: [] } }) };
   await assert.rejects(

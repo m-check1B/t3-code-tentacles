@@ -37,6 +37,10 @@ it through the bridge library, not a standalone verb.
 
 Each command carries an immutable `commandId` (for idempotent retry) and is
 projected back with the same exact-ID wait used by `originate`.
+`project.create` waits on the shell project snapshot; `thread.create` and
+`thread.continue` wait on thread/message projection. Caller-supplied
+`commandId` and `projectId` are preserved across verification polls so a
+timeout/retry cannot create a second project.
 
 ```bash
 t3-agent-bridge act --intent '{"action":"thread.continue","threadId":"...","text":"go"}'

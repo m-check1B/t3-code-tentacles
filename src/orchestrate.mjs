@@ -399,17 +399,32 @@ export async function waitForMessageProjection(client, threadId, messageId, { ti
   throw new Error(`Timed out waiting for message ${messageId} in thread ${threadId}`);
 }
 
+export async function waitForProjectProjection(client, projectId, { timeoutMs = 15_000, intervalMs = 100 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const shell = await client.shell();
+    const project = (shell?.projects ?? []).find((entry) => entry.id === projectId);
+    if (project) return project;
+    await delay(intervalMs);
+  }
+  throw new Error(`Timed out waiting for T3 projection: project ${projectId}`);
+}
+
 // Apply one intent: build the command, dispatch it, project it back, and
 // return evidence an orchestrator can record. `wait` toggles projection
 // verification (off for fire-and-forget lifecycle commands).
-export async function applyIntent(client, intent, { wait = true, commandId, createdAt } = {}) {
+export async function applyIntent(client, intent, { wait = true, commandId, createdAt, timeoutMs, intervalMs } = {}) {
   const command = buildCommandFromIntent(intent, { commandId, createdAt });
   const dispatchResult = await client.dispatch(command);
+  const waitOptions = { timeoutMs, intervalMs };
   let projection = null;
   if (wait && command.type === "thread.turn.start") {
-    projection = await waitForMessageProjection(client, command.threadId, command.message.messageId);
-  } else if (wait && (command.type === "thread.create" || command.type === "project.create")) {
-    projection = await waitForThreadProjection(client, command.threadId ?? command.projectId);
+    projection = await waitForMessageProjection(client, command.threadId, command.message.messageId, waitOptions);
+  } else if (wait && command.type === "thread.create") {
+    projection = await waitForThreadProjection(client, command.threadId, waitOptions);
+  } else if (wait && command.type === "project.create") {
+    // Projects live in the shell snapshot; a projectId is not a thread-detail id.
+    projection = await waitForProjectProjection(client, command.projectId, waitOptions);
   }
   return {
     action: intent.action,
