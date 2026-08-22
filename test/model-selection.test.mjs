@@ -154,6 +154,7 @@ test("startThread and continueThread put options on the dispatched command JSON"
   assert.deepEqual(client.commands[0].modelSelection, expected);
   assert.deepEqual(client.commands[1].modelSelection, expected);
   assert.equal(client.commands[0].runtimeMode, "auto-accept-edits");
+  assert.equal(client.commands[1].runtimeMode, "auto-accept-edits");
 
   await continueThread(client, {
     threadId: "t1",

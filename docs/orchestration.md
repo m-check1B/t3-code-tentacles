@@ -55,8 +55,8 @@ An intent file is a JSON array of intents, or `{"intents": [...]}`.
 | `project.rename` | `projectId`, `title` | `project.meta.update` |
 | `project.set-model` | `projectId`, `instanceId`, `model` (`options` optional) | `project.meta.update` |
 | `project.delete` | `projectId` | `project.delete` |
-| `thread.create` | `projectId`, `title`, `instanceId`, `model` (`options` optional) | `thread.create` |
-| `thread.continue` | `threadId`, `text` | `thread.turn.start` |
+| `thread.create` | `projectId`, `title`, `instanceId`, `model` (`options` and `runtimeMode` optional; omitted `runtimeMode` defaults to `approval-required`) | `thread.create` |
+| `thread.continue` | `threadId`, `text` (`runtimeMode` optional; omitted defaults to `approval-required`) | `thread.turn.start` |
 | `thread.interrupt` | `threadId` | `thread.turn.interrupt` |
 | `thread.stop` | `threadId` | `thread.session.stop` |
 | `thread.approval.respond` | `threadId`, `requestId`, `decision` | `thread.approval.respond` |
@@ -71,7 +71,9 @@ An intent file is a JSON array of intents, or `{"intents": [...]}`.
 | `thread.external-message` | `threadId`, `text` | `thread.external-message.append` |
 
 Enums: `runtimeMode` ∈ `approval-required`, `auto-accept-edits`, `auto`,
-`full-access`; `decision` ∈ `accept`, `acceptForSession`, `decline`, `cancel`;
+`full-access`. Omitted `runtimeMode` on thread create/turn start is
+`approval-required`; the bridge does not silently fall back to `full-access`.
+`decision` ∈ `accept`, `acceptForSession`, `decline`, `cancel`;
 `interactionMode` ∈ `default`, `plan`. Optional `options` is
 `[{ id, value }]` and rides on T3 `modelSelection` / `defaultModelSelection`.
 Optional `budget` (`low`/`medium`/`high`) fills the lab effort knob when that
