@@ -273,7 +273,7 @@ test("originate idempotency reconciles an accepted-but-ambiguous turn without du
       throw new Error("accepted before connection failure");
     },
   };
-  const options = { workspace: "/tmp/idempotent", title: "Idempotent", message: "hello", idempotencyKey: "origin-1", stateFile };
+  const options = { workspace: "/tmp/idempotent", title: "Idempotent", message: "hello", runtimeMode: "full-access", idempotencyKey: "origin-1", stateFile };
   fs.writeFileSync(stateFile, `${JSON.stringify({
     version: 1,
     startedAt: "2026-01-01T00:00:00.000Z",

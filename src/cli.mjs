@@ -35,7 +35,7 @@ import {
 import {
   ORIGINATE_LABS,
   parseModelOptionFlags,
-  requireRuntimeMode,
+  requireExplicitRuntimeMode,
   resolveModelSelection,
   RUNTIME_MODES,
 } from "./model-selection.mjs";
@@ -156,7 +156,7 @@ Usage:
   t3-agent-bridge observe
   t3-agent-bridge act --intent '{...}' [--intent-file PATH] [--no-wait]
   t3-agent-bridge orchestrate --intent-file PATH [--no-wait]
-  t3-agent-bridge originate --workspace PATH --title TITLE --message TEXT [--idempotency-key KEY] [--instance ${ORIGINATE_LABS.join("|")}] [--model MODEL] [--runtime-mode ${RUNTIME_MODES.join("|")}] [--budget low|medium|high] [--option id=value]
+  t3-agent-bridge originate --workspace PATH --title TITLE --message TEXT --runtime-mode ${RUNTIME_MODES.join("|")} [--idempotency-key KEY] [--instance ${ORIGINATE_LABS.join("|")}] [--model MODEL] [--budget low|medium|high] [--option id=value]
   t3-agent-bridge watch --once --allow-all-projects [--profile PROFILE] [--instance INSTANCE]
   t3-agent-bridge watch --allow-all-projects [--interval 2000] [--state-file PATH] [--max-messages 10]
   t3-agent-bridge install-service --profile PROFILE --instance INSTANCE [service options]
@@ -166,6 +166,13 @@ Usage:
 
 The tentacles command is an exact alias of t3-agent-bridge.
 The legacy t3-hermes command remains an exact compatibility alias.
+
+Runtime mode invariant (POL-036 / POL-GB-016):
+  Every originate and every non-empty continue runs full-access, for every lab
+  (Grok Code CLI grok, Codex xhigh, Codex high, and the rest). Pass
+  --runtime-mode full-access on originate and "runtimeMode":"full-access" on
+  thread.continue intents. Omitting the runtime mode fails closed; it is never
+  a compliant operation, and no approval popup is part of the validated path.
 
 Environment:
   Service options:
@@ -345,7 +352,7 @@ async function main() {
       instanceId: modelSelection.instanceId,
       model: modelSelection.model,
       options: modelSelection.options,
-      runtimeMode: requireRuntimeMode(options["runtime-mode"] || "approval-required", "--runtime-mode"),
+      runtimeMode: requireExplicitRuntimeMode(options["runtime-mode"], "--runtime-mode"),
       idempotencyKey: options["idempotency-key"],
       stateFile: options["state-file"],
     });

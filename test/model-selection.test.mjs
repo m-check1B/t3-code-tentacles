@@ -164,6 +164,7 @@ test("startThread and continueThread put options on the dispatched command JSON"
     model: "claude-sonnet-5",
     options: [{ id: "contextWindow", value: "1m" }],
     budget: "low",
+    runtimeMode: "full-access",
   });
   assert.deepEqual(client.commands[2].modelSelection, {
     instanceId: "claudeAgent",
@@ -215,6 +216,7 @@ test("continueThread preserves an existing non-Hermes selection when lab/model a
     threadId: "grok-thread",
     message: "again",
     messageId: "m2",
+    runtimeMode: "full-access",
   });
   assert.equal(client.commands.length, beforeReplay);
 
@@ -226,6 +228,7 @@ test("continueThread preserves an existing non-Hermes selection when lab/model a
     model: "gpt-5.6-sol",
     options: [{ id: "serviceTier", value: "default" }],
     budget: "high",
+    runtimeMode: "full-access",
   });
   assert.deepEqual(client.commands[3].modelSelection, {
     instanceId: "codex",
@@ -244,6 +247,7 @@ test("continueThread resolves a partial legacy selection and omits only the all-
     messageId: "m1",
     instanceId: "grok",
     model: "grok-build",
+    runtimeMode: "full-access",
   });
 
   await continueThread(client, {
@@ -251,6 +255,7 @@ test("continueThread resolves a partial legacy selection and omits only the all-
     message: "only-model",
     messageId: "m2",
     model: "openai-codex:gpt-5.6-sol",
+    runtimeMode: "full-access",
   });
   assert.deepEqual(client.commands[2].modelSelection, {
     instanceId: "hermes",
@@ -262,6 +267,7 @@ test("continueThread resolves a partial legacy selection and omits only the all-
     message: "only-budget",
     messageId: "m3",
     budget: "high",
+    runtimeMode: "full-access",
   });
   assert.deepEqual(client.commands[3].modelSelection, {
     instanceId: "hermes",
@@ -273,6 +279,7 @@ test("continueThread resolves a partial legacy selection and omits only the all-
     threadId: "partial-thread",
     message: "all-omitted",
     messageId: "m4",
+    runtimeMode: "full-access",
   });
   assert.equal("modelSelection" in client.commands[4], false);
 });
@@ -287,6 +294,7 @@ test("continueThread rejects explicit null lab/model instead of substituting Her
     messageId: "m1",
     instanceId: "grok",
     model: "grok-build",
+    runtimeMode: "full-access",
   });
   const beforeNulls = client.commands.length;
 
@@ -296,6 +304,7 @@ test("continueThread rejects explicit null lab/model instead of substituting Her
       message: "null-instance",
       messageId: "m2",
       instanceId: null,
+      runtimeMode: "full-access",
     }),
     /modelSelection\.instanceId must be a non-empty string/,
   );
@@ -305,6 +314,7 @@ test("continueThread rejects explicit null lab/model instead of substituting Her
       message: "null-model",
       messageId: "m3",
       model: null,
+      runtimeMode: "full-access",
     }),
     /modelSelection\.model must be a non-empty string/,
   );
@@ -331,6 +341,7 @@ test("startThread omits options when none are provided", async () => {
     messageId: "watch-message",
     instanceId: "hermes",
     model: "openai-codex:gpt-5.6-sol",
+    runtimeMode: "full-access",
   });
   assert.deepEqual(client.commands[0].modelSelection, { instanceId: "hermes", model: "openai-codex:gpt-5.6-sol" });
   assert.equal("options" in client.commands[0].modelSelection, false);
@@ -347,6 +358,7 @@ test("originate and ensureProject put options on project.create and thread comma
     model: "openai-codex:gpt-5.6-sol",
     budget: "high",
     options: [{ id: "serviceTier", value: "default" }],
+    runtimeMode: "full-access",
   });
   const projectCreate = client.commands.find((command) => command.type === "project.create");
   const threadCreate = client.commands.find((command) => command.type === "thread.create");
@@ -408,10 +420,16 @@ test("CLI parseArgs collects repeatable --option and usage documents originate f
   const help = usage();
   assert.match(help, /^Tentacles — T3 Code tentacles — originate any ready lab/m);
   assert.match(help, /Hermes was the first tentacle/);
-  assert.match(help, /originate --workspace PATH --title TITLE --message TEXT/);
+  assert.match(help, /originate --workspace PATH --title TITLE --message TEXT --runtime-mode approval-required\|auto-accept-edits\|auto\|full-access/);
   assert.match(help, /--instance hermes\|codex\|claudeAgent\|grok\|deepseek\|kimi\|pi\|opencode/);
   assert.match(help, /--model MODEL/);
   assert.match(help, /--runtime-mode approval-required\|auto-accept-edits\|auto\|full-access/);
+  assert.doesNotMatch(help, /\[--runtime-mode/);
+  assert.match(help, /Runtime mode invariant \(POL-036 \/ POL-GB-016\)/);
+  assert.match(help, /Every originate and every non-empty continue runs full-access/);
+  assert.match(help, /Grok Code CLI grok, Codex xhigh, Codex high/);
+  assert.match(help, /Omitting the runtime mode fails closed/);
+  assert.match(help, /"runtimeMode":"full-access"/);
   assert.match(help, /--budget low\|medium\|high/);
   assert.match(help, /--option id=value/);
 
@@ -419,4 +437,5 @@ test("CLI parseArgs collects repeatable --option and usage documents originate f
   assert.equal(spawned.status, 0);
   assert.match(spawned.stdout, /--budget low\|medium\|high/);
   assert.match(spawned.stdout, /--option id=value/);
+  assert.match(spawned.stdout, /Every originate and every non-empty continue runs full-access/);
 });

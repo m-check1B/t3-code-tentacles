@@ -411,6 +411,7 @@ test("thread start waits for asynchronous T3 projections", async () => {
     title: "Async",
     message: "hello",
     messageId: "async-message",
+    runtimeMode: "full-access",
   });
   assert.equal(threads.get("async-thread").messages[0].id, "async-message");
 });

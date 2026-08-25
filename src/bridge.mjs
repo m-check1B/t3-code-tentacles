@@ -18,7 +18,7 @@ import {
   ensurePrivateDirectory,
   requireLoopbackUrl,
 } from "./config.mjs";
-import { resolveModelSelection, requireRuntimeMode } from "./model-selection.mjs";
+import { requireExplicitRuntimeMode, resolveModelSelection } from "./model-selection.mjs";
 import { readBoundedResponseText, T3HttpError } from "./t3-client.mjs";
 
 const HERMES_MENTION = /(^|\s)@hermes\b/i;
@@ -497,9 +497,9 @@ export async function ensureProject(client, { workspace, title, instanceId = DEF
   return { project: projected, created: true, shell };
 }
 
-export async function startThread(client, { projectId, title, message, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, options, budget, runtimeMode = "approval-required", threadId = randomUUID(), threadCommandId = randomUUID(), turnCommandId = randomUUID(), messageId = randomUUID() }) {
+export async function startThread(client, { projectId, title, message, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, options, budget, runtimeMode, threadId = randomUUID(), threadCommandId = randomUUID(), turnCommandId = randomUUID(), messageId = randomUUID() }) {
   const modelSelection = resolveModelSelection({ instanceId, model, options, budget });
-  runtimeMode = requireRuntimeMode(runtimeMode);
+  runtimeMode = requireExplicitRuntimeMode(runtimeMode);
   let detail = await getThreadIfProjected(client, threadId);
   if (!detail) {
     await client.dispatch({ type: "thread.create", commandId: threadCommandId, threadId, projectId, title, modelSelection, runtimeMode, interactionMode: "default", branch: null, worktreePath: null, createdAt: now() });
@@ -519,7 +519,7 @@ export async function continueThread(client, {
   model,
   options,
   budget,
-  runtimeMode = "approval-required",
+  runtimeMode,
   turnCommandId = randomUUID(),
   messageId = randomUUID(),
 }) {
@@ -532,7 +532,7 @@ export async function continueThread(client, {
           options,
           budget,
         });
-  runtimeMode = requireRuntimeMode(runtimeMode);
+  runtimeMode = requireExplicitRuntimeMode(runtimeMode);
   const detail = await waitForThread(client, threadId);
   if (!(detail.thread.messages || []).some((entry) => entry.id === messageId)) {
     await client.dispatch({
@@ -551,9 +551,9 @@ export async function continueThread(client, {
 }
 
 function digest(message) { return createHash("sha256").update(message).digest("hex"); }
-export async function originate(client, { workspace, title, message, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, options, budget, runtimeMode = "approval-required", idempotencyKey, stateFile = DEFAULT_BRIDGE_STATE_FILE } = {}) {
+export async function originate(client, { workspace, title, message, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, options, budget, runtimeMode, idempotencyKey, stateFile = DEFAULT_BRIDGE_STATE_FILE } = {}) {
   const modelSelection = resolveModelSelection({ instanceId, model, options, budget });
-  runtimeMode = requireRuntimeMode(runtimeMode);
+  runtimeMode = requireExplicitRuntimeMode(runtimeMode);
   if (!idempotencyKey) {
     const { project, created } = await ensureProject(client, { workspace, title: path.basename(workspace), instanceId: modelSelection.instanceId, model: modelSelection.model, options: modelSelection.options });
     return { ...(await startThread(client, { projectId: project.id, title, message, instanceId: modelSelection.instanceId, model: modelSelection.model, options: modelSelection.options, runtimeMode })), projectCreated: created };
@@ -700,7 +700,7 @@ function makeIntent(source, message, messages, messageIndex, targetThreadId) {
   };
 }
 async function deliverIntent(client, intent, { instanceId, model }) {
-  return await startThread(client, { projectId: intent.sourceProjectId, title: `[Hermes] ${intent.sourceTitle}`, message: intent.prompt, instanceId, model, threadId: intent.targetThreadId, threadCommandId: intent.threadCommandId, turnCommandId: intent.turnCommandId, messageId: intent.targetMessageId });
+  return await startThread(client, { projectId: intent.sourceProjectId, title: `[Hermes] ${intent.sourceTitle}`, message: intent.prompt, instanceId, model, threadId: intent.targetThreadId, threadCommandId: intent.threadCommandId, turnCommandId: intent.turnCommandId, messageId: intent.targetMessageId, runtimeMode: "full-access" });
 }
 async function attemptIntent(client, state, messageId, intent, options, routed) {
   if (intent.nextAttemptAt > Date.now()) return;

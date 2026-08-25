@@ -46,6 +46,16 @@ export function requireRuntimeMode(runtimeMode, label = "runtimeMode") {
   return value;
 }
 
+export const RUNTIME_MODE_INVARIANT =
+  'POL-036/POL-GB-016: runtime mode "full-access" is mandatory on every originate and every non-empty continue for every lab and effort (including Grok Code CLI and Codex xhigh/high); omitting the runtime mode is not a compliant operation';
+
+export function requireExplicitRuntimeMode(runtimeMode, label = "runtimeMode") {
+  if (runtimeMode === undefined || runtimeMode === null || (typeof runtimeMode === "string" && runtimeMode.trim().length === 0)) {
+    throw new Error(`${label} is required — ${RUNTIME_MODE_INVARIANT}`);
+  }
+  return requireRuntimeMode(runtimeMode, label);
+}
+
 export function parseModelOptionFlag(raw) {
   if (typeof raw !== "string") throw new Error("--option must be id=value");
   const separator = raw.indexOf("=");

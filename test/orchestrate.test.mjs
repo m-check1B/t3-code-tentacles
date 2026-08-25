@@ -23,17 +23,17 @@ test("command builders produce the wire shape T3 expects", () => {
     type: "project.create", commandId: "c1", projectId: "p1", title: "P", workspaceRoot: "/w", createdAt: "2026-08-13T00:00:00.000Z",
   });
 
-  const thread = threadCreate({ commandId: "c2", threadId: "t1", projectId: "p1", title: "T", modelSelection: SAMPLE_MODEL });
+  const thread = threadCreate({ commandId: "c2", threadId: "t1", projectId: "p1", title: "T", modelSelection: SAMPLE_MODEL, runtimeMode: "full-access" });
   assert.equal(thread.type, "thread.create");
   assert.equal(thread.modelSelection.instanceId, "codex");
-  assert.equal(thread.runtimeMode, "approval-required");
+  assert.equal(thread.runtimeMode, "full-access");
   assert.equal(thread.interactionMode, "default");
   assert.equal(thread.branch, null);
   assert.equal(thread.worktreePath, null);
 
-  const turn = threadTurnStart({ commandId: "c3", threadId: "t1", text: "hi" });
+  const turn = threadTurnStart({ commandId: "c3", threadId: "t1", text: "hi", runtimeMode: "full-access" });
   assert.equal(turn.type, "thread.turn.start");
-  assert.equal(turn.runtimeMode, "approval-required");
+  assert.equal(turn.runtimeMode, "full-access");
   assert.equal(turn.message.role, "user");
   assert.equal(turn.message.text, "hi");
   assert.deepEqual(turn.message.attachments, []);
@@ -62,8 +62,8 @@ test("buildCommandFromIntent maps the full intent vocabulary", () => {
     [{ action: "project.create", projectId: "p1", title: "P", workspaceRoot: "/w", instanceId: "codex", model: "gpt-5.6-sol" }, "project.create"],
     [{ action: "project.rename", projectId: "p1", title: "P2" }, "project.meta.update"],
     [{ action: "project.delete", projectId: "p1" }, "project.delete"],
-    [{ action: "thread.create", projectId: "p1", title: "T", instanceId: "codex", model: "gpt-5.6-sol" }, "thread.create"],
-    [{ action: "thread.continue", threadId: "t1", text: "go" }, "thread.turn.start"],
+    [{ action: "thread.create", projectId: "p1", title: "T", instanceId: "codex", model: "gpt-5.6-sol", runtimeMode: "full-access" }, "thread.create"],
+    [{ action: "thread.continue", threadId: "t1", text: "go", runtimeMode: "full-access" }, "thread.turn.start"],
     [{ action: "thread.interrupt", threadId: "t1" }, "thread.turn.interrupt"],
     [{ action: "thread.stop", threadId: "t1" }, "thread.session.stop"],
     [{ action: "thread.approval.respond", threadId: "t1", requestId: "r1", decision: "decline" }, "thread.approval.respond"],
@@ -95,6 +95,7 @@ test("thread.create and thread.set-model accept modelSelection options", () => {
     instanceId: "codex",
     model: "gpt-5.6-sol",
     options,
+    runtimeMode: "full-access",
   }, { commandId: "cc" });
   assert.equal(created.type, "thread.create");
   assert.deepEqual(created.modelSelection, { instanceId: "codex", model: "gpt-5.6-sol", options });
@@ -120,6 +121,7 @@ test("thread.create and thread.set-model accept modelSelection options", () => {
     instanceId: "hermes",
     model: "openai-codex:gpt-5.6-sol",
     budget: "low",
+    runtimeMode: "full-access",
   });
   assert.deepEqual(budgeted.modelSelection.options, [{ id: "reasoningEffort", value: "low" }]);
 });
@@ -137,7 +139,7 @@ test("applyIntent dispatches, projects, and returns evidence", async () => {
     dispatch: async (command) => { commands.push(command); return { sequence: commands.length }; },
     thread: async () => ({ thread: { id: "t1", messages: [{ id: commands[0].message.messageId }] } }),
   };
-  const result = await applyIntent(client, { action: "thread.continue", threadId: "t1", text: "go" }, { commandId: "cc" });
+  const result = await applyIntent(client, { action: "thread.continue", threadId: "t1", text: "go", runtimeMode: "full-access" }, { commandId: "cc" });
   assert.equal(result.action, "thread.continue");
   assert.equal(result.commandId, "cc");
   assert.equal(result.projected, true);

@@ -43,7 +43,7 @@ projected back with the same exact-ID wait used by `originate`.
 timeout/retry cannot create a second project.
 
 ```bash
-t3-agent-bridge act --intent '{"action":"thread.continue","threadId":"...","text":"go"}'
+t3-agent-bridge act --intent '{"action":"thread.continue","threadId":"...","text":"go","runtimeMode":"full-access"}'
 t3-agent-bridge act --intent-file intent.json
 t3-agent-bridge orchestrate --intent-file intents.json          # array of intents, in order
 t3-agent-bridge orchestrate --intent-file plan.json --no-wait   # fire-and-forget
@@ -59,8 +59,8 @@ An intent file is a JSON array of intents, or `{"intents": [...]}`.
 | `project.rename` | `projectId`, `title` | `project.meta.update` |
 | `project.set-model` | `projectId`, `instanceId`, `model` (`options` optional) | `project.meta.update` |
 | `project.delete` | `projectId` | `project.delete` |
-| `thread.create` | `projectId`, `title`, `instanceId`, `model` (`options` and `runtimeMode` optional; omitted `runtimeMode` defaults to `approval-required`) | `thread.create` |
-| `thread.continue` | `threadId`, `text` (`runtimeMode` optional; omitted defaults to `approval-required`) | `thread.turn.start` |
+| `thread.create` | `projectId`, `title`, `instanceId`, `model`, `runtimeMode` (`options` optional) | `thread.create` |
+| `thread.continue` | `threadId`, `text`, `runtimeMode` | `thread.turn.start` |
 | `thread.interrupt` | `threadId` | `thread.turn.interrupt` |
 | `thread.stop` | `threadId` | `thread.session.stop` |
 | `thread.approval.respond` | `threadId`, `requestId`, `decision` | `thread.approval.respond` |
@@ -75,8 +75,10 @@ An intent file is a JSON array of intents, or `{"intents": [...]}`.
 | `thread.external-message` | `threadId`, `text` | `thread.external-message.append` |
 
 Enums: `runtimeMode` ∈ `approval-required`, `auto-accept-edits`, `auto`,
-`full-access`. Omitted `runtimeMode` on thread create/turn start is
-`approval-required`; the bridge does not silently fall back to `full-access`.
+`full-access`. POL-036/POL-GB-016 mandate `"runtimeMode":"full-access"` on
+every originate and every non-empty continue for every lab and effort
+(including Codex xhigh/high); an omitted `runtimeMode` fails closed and is
+never a compliant operation. The bridge does not substitute any default.
 `decision` ∈ `accept`, `acceptForSession`, `decline`, `cancel`;
 `interactionMode` ∈ `default`, `plan`. Optional `options` is
 `[{ id, value }]` and rides on T3 `modelSelection` / `defaultModelSelection`.

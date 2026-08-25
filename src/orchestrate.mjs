@@ -13,10 +13,9 @@
 
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { requireRuntimeMode, resolveModelSelection } from "./model-selection.mjs";
+import { requireExplicitRuntimeMode, requireRuntimeMode, resolveModelSelection } from "./model-selection.mjs";
 import { T3HttpError } from "./t3-client.mjs";
 
-const DEFAULT_RUNTIME_MODE = "approval-required";
 const INTERACTION_MODES = new Set(["default", "plan"]);
 const APPROVAL_DECISIONS = new Set(["accept", "acceptForSession", "decline", "cancel"]);
 
@@ -87,7 +86,7 @@ export function threadCreate(input) {
     projectId: requireString(input.projectId, "projectId"),
     title: requireString(input.title, "title"),
     modelSelection: input.modelSelection,
-    runtimeMode: requireRuntimeMode(input.runtimeMode ?? DEFAULT_RUNTIME_MODE),
+    runtimeMode: requireExplicitRuntimeMode(input.runtimeMode),
     interactionMode: input.interactionMode ?? "default",
     branch: input.branch ?? null,
     worktreePath: input.worktreePath ?? null,
@@ -170,7 +169,7 @@ export function threadTurnStart(input) {
       text: input.text ?? "",
       attachments: input.attachments ?? [],
     },
-    runtimeMode: requireRuntimeMode(input.runtimeMode ?? DEFAULT_RUNTIME_MODE),
+    runtimeMode: requireExplicitRuntimeMode(input.runtimeMode),
     interactionMode: input.interactionMode ?? "default",
     createdAt: input.createdAt ?? now(),
   };
@@ -283,9 +282,9 @@ export function buildCommandFromIntent(intent, { commandId, createdAt } = {}) {
     case "project.delete":
       return projectDelete({ ...base, projectId: intent.projectId, ...(intent.force !== undefined ? { force: intent.force } : {}) });
     case "thread.create":
-      return threadCreate({ ...base, threadId: intent.threadId ?? randomUUID(), projectId: intent.projectId, title: intent.title, modelSelection: modelSelection(intent), runtimeMode: intent.runtimeMode ?? DEFAULT_RUNTIME_MODE });
+      return threadCreate({ ...base, threadId: intent.threadId ?? randomUUID(), projectId: intent.projectId, title: intent.title, modelSelection: modelSelection(intent), runtimeMode: intent.runtimeMode });
     case "thread.continue":
-      return threadTurnStart({ ...base, threadId: intent.threadId, text: intent.text ?? "", runtimeMode: intent.runtimeMode ?? DEFAULT_RUNTIME_MODE, ...(intent.instanceId && intent.model ? { modelSelection: modelSelection(intent) } : {}), ...(intent.titleSeed !== undefined ? { titleSeed: intent.titleSeed } : {}) });
+      return threadTurnStart({ ...base, threadId: intent.threadId, text: intent.text ?? "", runtimeMode: intent.runtimeMode, ...(intent.instanceId && intent.model ? { modelSelection: modelSelection(intent) } : {}), ...(intent.titleSeed !== undefined ? { titleSeed: intent.titleSeed } : {}) });
     case "thread.interrupt":
       return threadTurnInterrupt({ ...base, threadId: intent.threadId, ...(intent.turnId !== undefined ? { turnId: intent.turnId } : {}) });
     case "thread.stop":

@@ -212,10 +212,15 @@ as the Hermes and Pi providers.
 t3-agent-bridge originate \
   --workspace "$PWD" \
   --title "Hermes surfaced this" \
-  --message "This T3 thread originated through the standalone Hermes bridge."
+  --message "This T3 thread originated through the standalone Hermes bridge." \
+  --runtime-mode full-access
 ```
 
 A new Hermes-backed thread should appear in T3 Code.
+
+POL-036/POL-GB-016 mandate `--runtime-mode full-access` on every originate
+and `"runtimeMode":"full-access"` on every non-empty continue, for every lab
+and effort; an omitted runtime mode is refused, never defaulted.
 
 ### 5. Enable `@hermes`
 

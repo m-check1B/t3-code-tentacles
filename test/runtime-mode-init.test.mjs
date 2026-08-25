@@ -2,20 +2,23 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { originate, startThread } from "../src/bridge.mjs";
+import { continueThread, originate, startThread } from "../src/bridge.mjs";
+import { usage } from "../src/cli.mjs";
 import {
   buildCommandFromIntent,
   threadCreate,
   threadTurnStart,
 } from "../src/orchestrate.mjs";
+import { requireExplicitRuntimeMode } from "../src/model-selection.mjs";
 import { T3HttpError } from "../src/t3-client.mjs";
 
-const SAMPLE_MODEL = { instanceId: "codex", model: "gpt-5.6-sol" };
+const CLI_PATH = path.resolve("src/cli.mjs");
 
 // T3 session-start binds `session.runtimeMode` from the thread row at
 // `thread.turn.start` (the decider copies `targetThread.runtimeMode`, not a
-// silent full-access fallback). A thread row alone is not the session.
+// silent fallback). A thread row alone is not the session.
 function sessionBindingClient({ projectWorkspace } = {}) {
   const commands = [];
   const projects = new Map();
@@ -75,150 +78,138 @@ function sessionStartCommands(commands) {
   };
 }
 
-test("thread.create and thread.turn.start default to approval-required, never silent full-access", () => {
-  const created = threadCreate({
-    commandId: "c1",
-    threadId: "t1",
-    projectId: "p1",
-    title: "T",
-    modelSelection: SAMPLE_MODEL,
-  });
-  assert.equal(created.runtimeMode, "approval-required");
-  assert.notEqual(created.runtimeMode, "full-access");
-
-  const turn = threadTurnStart({ commandId: "c2", threadId: "t1", text: "hi" });
-  assert.equal(turn.runtimeMode, "approval-required");
-  assert.notEqual(turn.runtimeMode, "full-access");
-
+test("session-init builders refuse an omitted runtime mode and accept only explicit values", () => {
+  assert.throws(
+    () => threadCreate({ commandId: "c1", threadId: "t1", projectId: "p1", title: "T", modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" } }),
+    /runtimeMode is required .*POL-036\/POL-GB-016.*full-access.*not a compliant operation/,
+  );
+  assert.throws(
+    () => threadTurnStart({ commandId: "c2", threadId: "t1", text: "hi" }),
+    /runtimeMode is required .*full-access.*not a compliant operation/,
+  );
   assert.equal(
     threadCreate({
       commandId: "c3",
       threadId: "t2",
       projectId: "p1",
       title: "T",
-      modelSelection: SAMPLE_MODEL,
-      runtimeMode: "auto-accept-edits",
+      modelSelection: { instanceId: "grok", model: "grok-4.6" },
+      runtimeMode: "full-access",
     }).runtimeMode,
-    "auto-accept-edits",
+    "full-access",
   );
   assert.equal(
-    threadTurnStart({ commandId: "c4", threadId: "t2", text: "hi", runtimeMode: "auto-accept-edits" }).runtimeMode,
-    "auto-accept-edits",
+    threadTurnStart({ commandId: "c4", threadId: "t2", text: "hi", runtimeMode: "full-access" }).runtimeMode,
+    "full-access",
   );
-  assert.throws(
-    () => threadCreate({
+  assert.equal(
+    threadCreate({
       commandId: "c5",
       threadId: "t3",
       projectId: "p1",
       title: "T",
-      modelSelection: SAMPLE_MODEL,
-      runtimeMode: "banana",
-    }),
-    /runtimeMode/,
+      modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+      runtimeMode: "auto-accept-edits",
+    }).runtimeMode,
+    "auto-accept-edits",
   );
   assert.throws(
-    () => threadTurnStart({ commandId: "c6", threadId: "t3", text: "hi", runtimeMode: "banana" }),
-    /runtimeMode/,
+    () => threadCreate({ commandId: "c6", threadId: "t4", projectId: "p1", title: "T", modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" }, runtimeMode: "banana" }),
+    /runtimeMode must be one of/,
   );
 });
 
-test("thread.create and thread.continue intents default to approval-required", () => {
-  const created = buildCommandFromIntent({
-    action: "thread.create",
-    projectId: "p1",
-    title: "T",
-    instanceId: "codex",
-    model: "gpt-5.6-sol",
-  }, { commandId: "cc" });
-  assert.equal(created.type, "thread.create");
-  assert.equal(created.runtimeMode, "approval-required");
+test("thread.create and thread.continue intents fail closed without an explicit runtime mode", () => {
+  assert.throws(
+    () => buildCommandFromIntent({ action: "thread.create", projectId: "p1", title: "T", instanceId: "codex", model: "gpt-5.6-sol" }, { commandId: "cc" }),
+    /runtimeMode is required .*full-access/,
+  );
+  assert.throws(
+    () => buildCommandFromIntent({ action: "thread.continue", threadId: "t1", text: "go" }, { commandId: "cd" }),
+    /runtimeMode is required .*full-access/,
+  );
 
-  const continued = buildCommandFromIntent({
-    action: "thread.continue",
-    threadId: "t1",
-    text: "go",
-  }, { commandId: "cd" });
+  const continued = buildCommandFromIntent({ action: "thread.continue", threadId: "t1", text: "go", runtimeMode: "full-access" }, { commandId: "ce" });
   assert.equal(continued.type, "thread.turn.start");
-  assert.equal(continued.runtimeMode, "approval-required");
+  assert.equal(continued.runtimeMode, "full-access");
 
-  const requested = buildCommandFromIntent({
-    action: "thread.create",
-    projectId: "p1",
-    title: "T",
-    instanceId: "codex",
-    model: "gpt-5.6-sol",
-    runtimeMode: "auto-accept-edits",
-  }, { commandId: "ce" });
-  assert.equal(requested.runtimeMode, "auto-accept-edits");
-
-  const continuedRequested = buildCommandFromIntent({
-    action: "thread.continue",
-    threadId: "t1",
-    text: "go",
-    runtimeMode: "auto-accept-edits",
-  }, { commandId: "cf" });
-  assert.equal(continuedRequested.runtimeMode, "auto-accept-edits");
+  const created = buildCommandFromIntent({ action: "thread.create", projectId: "p1", title: "T", instanceId: "codex", model: "gpt-5.6-sol", runtimeMode: "full-access" }, { commandId: "cf" });
+  assert.equal(created.type, "thread.create");
+  assert.equal(created.runtimeMode, "full-access");
 });
 
-test("originate default runtime mode reaches session-start binding as approval-required", async () => {
+test("requireExplicitRuntimeMode rejects empty strings, not just absent values", () => {
+  assert.throws(() => requireExplicitRuntimeMode(undefined), /runtimeMode is required/);
+  assert.throws(() => requireExplicitRuntimeMode(null, "--runtime-mode"), /--runtime-mode is required/);
+  assert.throws(() => requireExplicitRuntimeMode("   ", "--runtime-mode"), /--runtime-mode is required/);
+  assert.equal(requireExplicitRuntimeMode("full-access"), "full-access");
+});
+
+test("originate refuses to run without --runtime-mode and propagates full-access to session start", async () => {
   const client = sessionBindingClient();
+  await assert.rejects(
+    () => originate(client, {
+      workspace: "/tmp/originate-omitted",
+      title: "Omitted mode",
+      message: "start",
+      instanceId: "codex",
+      model: "gpt-5.6-sol",
+    }),
+    /--?runtime-mode|runtimeMode is required .*full-access/,
+  );
+  assert.deepEqual(client.commands, []);
+
   const result = await originate(client, {
-    workspace: "/tmp/originate-approval",
-    title: "Approval default",
+    workspace: "/tmp/originate-full-access",
+    title: "Codex high review lane",
     message: "start",
     instanceId: "codex",
     model: "gpt-5.6-sol",
+    options: [{ id: "reasoningEffort", value: "high" }],
+    runtimeMode: "full-access",
   });
   const { threadCreate: created, turnStart } = sessionStartCommands(client.commands);
   assert.equal(created.type, "thread.create");
   assert.equal(turnStart.type, "thread.turn.start");
-  assert.equal(created.runtimeMode, "approval-required");
-  assert.equal(turnStart.runtimeMode, "approval-required");
+  assert.equal(created.runtimeMode, "full-access");
+  assert.equal(turnStart.runtimeMode, "full-access");
+  assert.notEqual(created.runtimeMode, "approval-required");
+  assert.notEqual(turnStart.runtimeMode, "approval-required");
+
+  // Fresh readback: effective mode recorded at BOTH the thread row and the live session binding.
   const projected = await client.thread(result.threadId);
-  assert.equal(projected.thread.runtimeMode, "approval-required");
-  assert.equal(projected.thread.session?.runtimeMode, "approval-required");
-  assert.notEqual(projected.thread.session?.runtimeMode, "full-access");
+  assert.equal(projected.thread.runtimeMode, "full-access");
+  assert.equal(projected.thread.session?.runtimeMode, "full-access");
+  assert.notEqual(projected.thread.session?.runtimeMode, "approval-required");
 });
 
-test("originate requested auto-accept-edits survives thread.create, turn.start, and session binding", async () => {
+test("continueThread refuses an omitted mode and full-access continues bind at thread and session level", async () => {
   const client = sessionBindingClient();
-  const result = await originate(client, {
-    workspace: "/tmp/originate-auto-edits",
-    title: "Auto edits",
-    message: "start",
-    instanceId: "codex",
-    model: "gpt-5.6-sol",
-    runtimeMode: "auto-accept-edits",
+  const started = await originate(client, {
+    workspace: "/tmp/continue-full-access",
+    title: "Grok Code lane",
+    message: "first task",
+    instanceId: "grok",
+    model: "grok-4.6",
+    runtimeMode: "full-access",
   });
-  const { threadCreate: created, turnStart } = sessionStartCommands(client.commands);
-  assert.equal(created.runtimeMode, "auto-accept-edits");
-  assert.equal(turnStart.runtimeMode, "auto-accept-edits");
-  const projected = await client.thread(result.threadId);
-  assert.equal(projected.thread.runtimeMode, "auto-accept-edits");
-  assert.equal(projected.thread.session?.runtimeMode, "auto-accept-edits");
+
+  await assert.rejects(
+    () => continueThread(client, { threadId: started.threadId, message: "non-empty continue without a mode", messageId: "m-missing-mode" }),
+    /runtimeMode is required .*full-access/,
+  );
+  assert.equal(client.commands.some((command) => command.type === "thread.turn.start" && command.message.text === "non-empty continue without a mode"), false);
+
+  await continueThread(client, { threadId: started.threadId, message: "second task", messageId: "m-second", runtimeMode: "full-access" });
+  const turns = client.commands.filter((command) => command.type === "thread.turn.start");
+  assert.deepEqual(turns.map((turn) => turn.runtimeMode), ["full-access", "full-access"]);
+
+  const projected = await client.thread(started.threadId);
+  assert.equal(projected.thread.runtimeMode, "full-access");
+  assert.equal(projected.thread.session?.runtimeMode, "full-access");
 });
 
-test("startThread puts the requested mode on both session-init commands", async () => {
-  const client = sessionBindingClient();
-  await startThread(client, {
-    projectId: "p1",
-    threadId: "t-init",
-    title: "Init",
-    message: "hello",
-    messageId: "m-init",
-    instanceId: "hermes",
-    model: "openai-codex:gpt-5.6-sol",
-    runtimeMode: "auto-accept-edits",
-  });
-  assert.equal(client.commands[0].type, "thread.create");
-  assert.equal(client.commands[1].type, "thread.turn.start");
-  assert.equal(client.commands[0].runtimeMode, "auto-accept-edits");
-  assert.equal(client.commands[1].runtimeMode, "auto-accept-edits");
-  const projected = await client.thread("t-init");
-  assert.equal(projected.thread.session.runtimeMode, "auto-accept-edits");
-});
-
-test("idempotent originate retries keep the requested runtime mode without duplicate session-init commands", async () => {
+test("idempotent originate retries keep full-access without duplicate session-init commands", async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "t3-bridge-runtime-mode-"));
   const stateFile = path.join(directory, "state.json");
   const client = sessionBindingClient();
@@ -228,7 +219,8 @@ test("idempotent originate retries keep the requested runtime mode without dupli
     message: "hello",
     instanceId: "codex",
     model: "gpt-5.6-sol",
-    runtimeMode: "auto-accept-edits",
+    options: [{ id: "reasoningEffort", value: "xhigh" }],
+    runtimeMode: "full-access",
     idempotencyKey: "origin-mode-1",
     stateFile,
   };
@@ -237,12 +229,46 @@ test("idempotent originate retries keep the requested runtime mode without dupli
   assert.equal(first.threadId, second.threadId);
   assert.deepEqual(
     client.commands.filter((command) => command.type === "thread.create").map((command) => command.runtimeMode),
-    ["auto-accept-edits"],
+    ["full-access"],
   );
   assert.deepEqual(
     client.commands.filter((command) => command.type === "thread.turn.start").map((command) => command.runtimeMode),
-    ["auto-accept-edits"],
+    ["full-access"],
   );
   const projected = await client.thread(first.threadId);
-  assert.equal(projected.thread.session.runtimeMode, "auto-accept-edits");
+  assert.equal(projected.thread.session.runtimeMode, "full-access");
+});
+
+test("usage documents the required flag, every-lab coverage, and non-compliance of omission", () => {
+  const help = usage();
+  assert.match(help, /originate --workspace PATH --title TITLE --message TEXT --runtime-mode approval-required\|auto-accept-edits\|auto\|full-access/);
+  assert.match(help, /Runtime mode invariant \(POL-036 \/ POL-GB-016\)/);
+  assert.match(help, /Every originate and every non-empty continue runs full-access/);
+  assert.match(help, /Grok Code CLI grok, Codex xhigh, Codex high/);
+  assert.match(help, /--runtime-mode full-access on originate and "runtimeMode":"full-access" on/);
+  assert.match(help, /thread\.continue intents\. Omitting the runtime mode fails closed; it is never/);
+  assert.doesNotMatch(help, /\[--runtime-mode /);
+});
+
+test("CLI originate without --runtime-mode exits non-zero with the compliance error before any dispatch", () => {
+  const tokenDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "t3-bridge-cli-token-"));
+  const tokenFile = path.join(tokenDirectory, "t3.token");
+  fs.writeFileSync(tokenFile, "0".repeat(32) + "\n", { mode: 0o600 });
+  const spawned = spawnSync(process.execPath, [
+    CLI_PATH,
+    "originate",
+    "--workspace", "/tmp/cli-no-runtime-mode",
+    "--title", "Missing mode",
+    "--message", "must fail closed",
+  ], {
+    encoding: "utf8",
+    env: { ...process.env, T3_HERMES_TOKEN_FILE: tokenFile, T3_URL: "http://127.0.0.1:9" },
+  });
+  assert.equal(spawned.status, 1);
+  assert.match(`${spawned.stderr}`, /--runtime-mode is required .*POL-036\/POL-GB-016.*full-access/);
+
+  const helpSpawned = spawnSync(process.execPath, [CLI_PATH, "help"], { encoding: "utf8" });
+  assert.equal(helpSpawned.status, 0);
+  assert.match(helpSpawned.stdout, /Every originate and every non-empty continue runs full-access/);
+  assert.match(helpSpawned.stdout, /Grok Code CLI grok, Codex xhigh, Codex high/);
 });
