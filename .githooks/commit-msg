@@ -1,0 +1,19 @@
+#!/bin/sh
+# KRA-5513 attribution lock — reject third-party attribution trailers.
+# Forbidden anywhere in the commit message: Co-authored-by / Generated-by /
+# Made-with. Sole human identity: Matej Havlin <matej.havlin@gmail.com>.
+# Policy: orbit-workspace brain/policies/POL-040.
+
+msg="$1"
+pattern='^[[:space:]]*(co-authored-by|generated-by|made-with)[[:space:]]*:' 
+
+if grep -Eiq "$pattern" "$msg"; then
+	hook="$(basename "$0")"
+	printf '%s: REJECTED: third-party attribution trailer found in commit message.\n' "$hook" >&2
+	grep -Ein "$pattern" "$msg" >&2
+	printf '%s: forbidden keys (case-insensitive): Co-authored-by / Generated-by / Made-with\n' "$hook" >&2
+	printf '%s: this repo attributes work solely to Matej Havlin <matej.havlin@gmail.com>\n' "$hook" >&2
+	exit 1
+fi
+
+exit 0

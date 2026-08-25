@@ -1,0 +1,27 @@
+#!/bin/sh
+# KRA-5513 identity lock — fail closed unless BOTH author and committer resolve
+# to Matej Havlin <matej.havlin@gmail.com> (source of truth: .gitidentity).
+# Never bypass with --no-verify. Policy: orbit-workspace brain/policies/POL-040.
+
+expected="Matej Havlin <matej.havlin@gmail.com>"
+hook="$(basename "$0")"
+
+check_ident() {
+	label="$1"
+	ident="$(git var "GIT_${label}_IDENT" 2>/dev/null)" || {
+		printf '%s: cannot resolve GIT_%s_IDENT; is user.name/user.email configured? run: sh scripts/setup-git.sh\n' "$hook" "$label" >&2
+		return 1
+	}
+	who="$(printf '%s' "$ident" | sed -e 's/^\(.*<[^>]*>\).*$/\1/')"
+	if [ "$who" != "$expected" ]; then
+		printf '%s: refused: GIT_%s_IDENT is "%s"\n' "$hook" "$label" "$who" >&2
+		printf '%s: this repo locks author/committer to "%s"\n' "$hook" "$expected" >&2
+		printf '%s: fix: sh scripts/setup-git.sh (do NOT use --no-verify)\n' "$hook" >&2
+		return 1
+	fi
+	return 0
+}
+
+check_ident AUTHOR || exit 1
+check_ident COMMITTER || exit 1
+exit 0
