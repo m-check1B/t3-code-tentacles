@@ -18,6 +18,7 @@ import {
   removePiProvider,
   restoreNativeGrok,
   routeMentionsOnce,
+  useNativeGrokCachedAuth,
 } from "./bridge.mjs";
 import {
   DEFAULT_DEEPSEEK_INSTANCE_ID,
@@ -153,6 +154,7 @@ Usage:
   t3-agent-bridge install-kimi-provider [--instance kimi] [--model kimi-code/k3] [--kimi-bin PATH]
   t3-agent-bridge remove-kimi-provider [--instance kimi]
   t3-agent-bridge restore-native-grok
+  t3-agent-bridge use-native-grok-cached-auth
   t3-agent-bridge observe
   t3-agent-bridge act --intent '{...}' [--intent-file PATH] [--no-wait]
   t3-agent-bridge orchestrate --intent-file PATH [--no-wait]
@@ -322,6 +324,12 @@ async function main() {
   }
   if (command === "restore-native-grok") {
     console.log(JSON.stringify(await restoreNativeGrok(client), null, 2));
+    return;
+  }
+  if (command === "use-native-grok-cached-auth") {
+    console.log(JSON.stringify(await useNativeGrokCachedAuth(client, {
+      wrapperPath: path.join(repoRoot, "bin", "t3-native-grok-cached-auth"),
+    }), null, 2));
     return;
   }
   if (command === "observe") {

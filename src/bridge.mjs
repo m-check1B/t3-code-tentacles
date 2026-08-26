@@ -75,6 +75,7 @@ export function hasRedactedSecrets(providerInstances) {
 // built-in instance. This instance is the one slot the bridge treats as
 // "someone else's provider" and preserves verbatim on every settings write.
 export const NATIVE_GROK_INSTANCE_ID = "grok";
+const NATIVE_GROK_API_KEY_VARIABLE = "XAI_API_KEY";
 
 export function isNativeGrokInstance(instanceId, instance) {
   return instanceId === NATIVE_GROK_INSTANCE_ID && instance?.driver === "grok" && !isBridgeOwnedProvider(instance);
@@ -102,6 +103,52 @@ export async function restoreNativeGrok(client) {
   await client.updateSettings({ providerInstances });
   await client.refreshProvider(NATIVE_GROK_INSTANCE_ID);
   return { restored: true, instanceId: NATIVE_GROK_INSTANCE_ID };
+}
+
+// T3 passes provider environment variables to the native Grok ACP process.
+// Grok gives XAI_API_KEY precedence over its cached login, and Grok 1.0.5's
+// ACP path otherwise keeps API-key preference even when no key is available.
+// The wrapper removes the inherited key, explicitly disables API-key auth so
+// cached OIDC is used, and adapts T3's cached_token ACP handshake. This repair
+// leaves every other provider instance and redacted secret marker untouched.
+export async function useNativeGrokCachedAuth(client, { wrapperPath } = {}) {
+  if (!wrapperPath || !path.isAbsolute(wrapperPath)) {
+    throw new Error("use-native-grok-cached-auth requires an absolute Grok wrapper path");
+  }
+  const settings = await client.getSettings();
+  const current = settings.providerInstances || {};
+  const native = current[NATIVE_GROK_INSTANCE_ID];
+  if (!native) return { repaired: false, reason: "native-grok-instance-absent" };
+  if (!isNativeGrokInstance(NATIVE_GROK_INSTANCE_ID, native)) {
+    throw new Error("Refusing cached-auth repair because the grok slot is not the native Grok provider");
+  }
+  const environment = Array.isArray(native.environment) ? native.environment : [];
+  const overrides = environment.filter((variable) => variable?.name === NATIVE_GROK_API_KEY_VARIABLE);
+  if (overrides.some((variable) => variable.sensitive !== true || variable.valueRedacted !== true)) {
+    throw new Error("Refusing cached-auth repair because T3 did not return XAI_API_KEY as a redacted sensitive value");
+  }
+  const config = native.config && typeof native.config === "object" && !Array.isArray(native.config) ? native.config : {};
+  if (overrides.length === 0 && config.binaryPath === wrapperPath) {
+    await client.refreshProvider(NATIVE_GROK_INSTANCE_ID);
+    return { repaired: false, reason: "native-grok-cached-auth-already-enforced", refreshed: true };
+  }
+  const providerInstances = {
+    ...current,
+    [NATIVE_GROK_INSTANCE_ID]: {
+      ...native,
+      environment: environment.filter((variable) => variable?.name !== NATIVE_GROK_API_KEY_VARIABLE),
+      config: { ...config, binaryPath: wrapperPath },
+    },
+  };
+  await client.updateSettings({ providerInstances });
+  await client.refreshProvider(NATIVE_GROK_INSTANCE_ID);
+  return {
+    repaired: true,
+    instanceId: NATIVE_GROK_INSTANCE_ID,
+    authMethod: "cached_token",
+    removedApiKeyOverride: overrides.length > 0,
+    refreshed: true,
+  };
 }
 
 export async function installProvider(client, {

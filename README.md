@@ -73,6 +73,25 @@ which closed without merging; the reviewed patch remains available in our
 A neutral generic-ACP provider/icon extension in T3 Code remains the clean
 long-term solution.
 
+If native Grok turns end immediately with no assistant message and Grok's own
+session events report invalid API-key authentication, an `XAI_API_KEY` stored
+on T3's native `grok` instance may be overriding a valid cached Grok login.
+Switch that instance back to cached login explicitly:
+
+```bash
+t3-agent-bridge use-native-grok-cached-auth
+```
+
+This command removes only the native Grok instance's stored `XAI_API_KEY` and
+routes that instance through a bridge wrapper that unsets an inherited
+`XAI_API_KEY` and sets `GROK_DISABLE_API_KEY_AUTH=true` before starting Grok,
+forcing Grok's cached OIDC login instead of its ACP API-key preference. It
+also acknowledges T3's driver-specific `cached_token` ACP handshake locally;
+Grok continues to own and refresh the cached credential, and all other ACP
+frames pass through unchanged. The repair preserves every other provider
+setting and refreshes the native provider. It is never run automatically by
+`originate` or `act`.
+
 ## Five-minute setup
 
 ### 1. Prerequisites

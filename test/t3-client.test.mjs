@@ -17,6 +17,7 @@ import {
   routeMentionsOnce,
   startThread,
   stripMention,
+  useNativeGrokCachedAuth,
   writeBridgeState,
 } from "../src/bridge.mjs";
 import { readToken, requireLoopbackUrl, resolveExecutable } from "../src/config.mjs";
@@ -252,6 +253,70 @@ test("restoreNativeGrok is a no-op when already enabled or absent", async () => 
     refreshProvider: async () => ({}),
   };
   assert.deepEqual(await restoreNativeGrok(absent), { restored: false, reason: "native-grok-instance-absent" });
+});
+
+test("useNativeGrokCachedAuth removes only the native Grok API-key override", async () => {
+  const wrapperPath = "/tmp/t3-native-grok-cached-auth";
+  const otherProvider = {
+    driver: "grok",
+    enabled: true,
+    environment: [{ name: "TOKEN", value: "", sensitive: true, valueRedacted: true }],
+  };
+  let patch;
+  const refreshed = [];
+  const client = {
+    getSettings: async () => ({
+      providerInstances: {
+        grok: {
+          driver: "grok",
+          enabled: true,
+          config: { binaryPath: "grok", customModels: [] },
+          environment: [
+            { name: "XAI_API_KEY", value: "", sensitive: true, valueRedacted: true },
+            { name: "GROK_KEEP", value: "yes", sensitive: false },
+          ],
+        },
+        hermes: otherProvider,
+      },
+    }),
+    updateSettings: async (value) => { patch = value; },
+    refreshProvider: async (instanceId) => { refreshed.push(instanceId); },
+  };
+
+  assert.deepEqual(await useNativeGrokCachedAuth(client, { wrapperPath }), {
+    repaired: true,
+    instanceId: "grok",
+    authMethod: "cached_token",
+    removedApiKeyOverride: true,
+    refreshed: true,
+  });
+  assert.equal(patch.providerInstances.grok.config.binaryPath, wrapperPath);
+  assert.deepEqual(patch.providerInstances.grok.environment, [
+    { name: "GROK_KEEP", value: "yes", sensitive: false },
+  ]);
+  assert.deepEqual(patch.providerInstances.hermes, otherProvider);
+  assert.deepEqual(refreshed, ["grok"]);
+});
+
+test("useNativeGrokCachedAuth refreshes an already configured wrapper and refuses a foreign collision", async () => {
+  const wrapperPath = "/tmp/t3-native-grok-cached-auth";
+  const refreshed = [];
+  const noOverride = {
+    getSettings: async () => ({ providerInstances: { grok: { driver: "grok", config: { binaryPath: wrapperPath }, environment: [] } } }),
+    updateSettings: async () => { throw new Error("must not write"); },
+    refreshProvider: async (instanceId) => { refreshed.push(instanceId); },
+  };
+  assert.deepEqual(await useNativeGrokCachedAuth(noOverride, { wrapperPath }), {
+    repaired: false,
+    reason: "native-grok-cached-auth-already-enforced",
+    refreshed: true,
+  });
+  assert.deepEqual(refreshed, ["grok"]);
+
+  const collision = {
+    getSettings: async () => ({ providerInstances: { grok: { driver: "codex", environment: [] } } }),
+  };
+  await assert.rejects(useNativeGrokCachedAuth(collision, { wrapperPath }), /native Grok provider/);
 });
 
 test("provider install refuses to overwrite a redacted secret map", async () => {
