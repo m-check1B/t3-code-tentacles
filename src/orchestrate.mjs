@@ -14,7 +14,7 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { requireExplicitRuntimeMode, requireRuntimeMode, resolveModelSelection } from "./model-selection.mjs";
-import { T3HttpError } from "./t3-client.mjs";
+import { readOrchestrationSnapshot, T3HttpError } from "./t3-client.mjs";
 
 const INTERACTION_MODES = new Set(["default", "plan"]);
 const APPROVAL_DECISIONS = new Set(["accept", "acceptForSession", "decline", "cancel"]);
@@ -321,10 +321,67 @@ export function buildCommandFromIntent(intent, { commandId, createdAt } = {}) {
 // Snapshot everything an orchestrator needs to choose the next action: active
 // and archived projects/threads, plus a compact pending-work index.
 
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function recordArray(value) {
+  return Array.isArray(value) ? value.filter(isRecord) : [];
+}
+
+function hasOpenRequest(activities, requestedKind, resolvedKind) {
+  const open = new Set();
+  for (const activity of recordArray(activities)) {
+    const payload = isRecord(activity.payload) ? activity.payload : {};
+    const requestId = typeof payload.requestId === "string" ? payload.requestId : null;
+    if (!requestId) continue;
+    if (activity.kind === requestedKind) open.add(requestId);
+    if (activity.kind === resolvedKind) open.delete(requestId);
+  }
+  return open.size > 0;
+}
+
+function projectSession(session) {
+  if (!isRecord(session)) return null;
+  return {
+    status: session.status ?? null,
+    activeTurnId: session.activeTurnId ?? null,
+    providerName: session.providerName ?? null,
+    providerInstanceId: session.providerInstanceId ?? null,
+    runtimeMode: session.runtimeMode ?? null,
+  };
+}
+
+function projectThreadSummary(thread) {
+  const hasPendingApprovals = typeof thread.hasPendingApprovals === "boolean"
+    ? thread.hasPendingApprovals
+    : hasOpenRequest(thread.activities, "approval.requested", "approval.resolved");
+  const hasPendingUserInput = typeof thread.hasPendingUserInput === "boolean"
+    ? thread.hasPendingUserInput
+    : hasOpenRequest(thread.activities, "user-input.requested", "user-input.resolved");
+  return {
+    id: thread.id ?? null,
+    projectId: thread.projectId ?? null,
+    title: thread.title ?? null,
+    modelSelection: thread.modelSelection ?? null,
+    runtimeMode: thread.runtimeMode ?? null,
+    archivedAt: thread.archivedAt ?? null,
+    settledAt: thread.settledAt ?? null,
+    snoozedUntil: thread.snoozedUntil ?? null,
+    session: projectSession(thread.session),
+    hasPendingApprovals,
+    hasPendingUserInput,
+  };
+}
+
 export async function observe(client) {
-  const [shell, archived] = await Promise.all([client.shell(), client.archivedShell()]);
-  const threads = shell.threads ?? [];
-  const archivedThreads = archived?.threads ?? [];
+  const [snapshot, archived] = await Promise.all([readOrchestrationSnapshot(client), client.archivedShell()]);
+  const readModel = isRecord(snapshot) ? snapshot : {};
+  const projects = recordArray(readModel.projects).filter((project) => project.deletedAt == null);
+  const threads = recordArray(readModel.threads)
+    .filter((thread) => thread.deletedAt == null && thread.archivedAt == null)
+    .map(projectThreadSummary);
+  const archivedThreads = recordArray(isRecord(archived) ? archived.threads : []).map(projectThreadSummary);
   const pendingWork = [];
   for (const thread of threads) {
     if (thread.hasPendingApprovals || thread.hasPendingUserInput) {
@@ -353,15 +410,15 @@ export async function observe(client) {
       runtimeMode: thread.session.runtimeMode,
     }));
   return {
-    snapshotSequence: shell.snapshotSequence,
-    updatedAt: shell.updatedAt,
-    projects: shell.projects ?? [],
+    snapshotSequence: readModel.snapshotSequence ?? null,
+    updatedAt: readModel.updatedAt ?? null,
+    projects,
     threads,
     archivedThreads,
     pendingWork,
     activeTurns,
     counts: {
-      projects: (shell.projects ?? []).length,
+      projects: projects.length,
       threads: threads.length,
       archivedThreads: archivedThreads.length,
       pendingApprovals: pendingWork.filter((entry) => entry.approvals).length,
@@ -401,8 +458,8 @@ export async function waitForMessageProjection(client, threadId, messageId, { ti
 export async function waitForProjectProjection(client, projectId, { timeoutMs = 15_000, intervalMs = 100 } = {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const shell = await client.shell();
-    const project = (shell?.projects ?? []).find((entry) => entry.id === projectId);
+    const snapshot = await readOrchestrationSnapshot(client);
+    const project = recordArray(isRecord(snapshot) ? snapshot.projects : []).find((entry) => entry.id === projectId);
     if (project) return project;
     await delay(intervalMs);
   }

@@ -79,7 +79,8 @@ test("mention routing rejects invalid work bounds before touching state", async 
 
 test("doctor bounds and validates the Hermes health response", async () => {
   const client = {
-    shell: async () => ({ projects: [], threads: [] }),
+    snapshot: async () => ({ projects: [], threads: [] }),
+    shell: async () => { throw new Error("hanging shell endpoint must not be called"); },
     getSettings: async () => ({ providerInstances: {} }),
     rpc: async () => ({ providers: [] }),
   };

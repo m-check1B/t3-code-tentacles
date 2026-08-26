@@ -155,7 +155,7 @@ test("applyIntent skips projection when wait is false", async () => {
   assert.equal(commands[0].type, "thread.session.stop");
 });
 
-test("applyIntent waits for exact project id in the shell projection", async () => {
+test("applyIntent waits for exact project id in the full snapshot without calling shell", async () => {
   const commands = [];
   const threadLookups = [];
   let shellCalls = 0;
@@ -163,10 +163,11 @@ test("applyIntent waits for exact project id in the shell projection", async () 
   const client = {
     dispatch: async (command) => { commands.push(command); return { sequence: 1 }; },
     thread: async (threadId) => { threadLookups.push(threadId); throw new Error(`unexpected thread lookup for ${threadId}`); },
-    shell: async () => {
+    snapshot: async () => {
       shellCalls += 1;
       return { projects: shellCalls === 1 ? [] : [project] };
     },
+    shell: async () => { throw new Error("hanging shell endpoint must not be called"); },
   };
   const result = await applyIntent(client, {
     action: "project.create",
@@ -200,15 +201,16 @@ test("applyIntents stops at the first failure and bounds the list", async () => 
 
 test("observe surfaces pending work, active turns, and archived threads", async () => {
   const client = {
-    shell: async () => ({
+    snapshot: async () => ({
       snapshotSequence: 7,
       updatedAt: "2026-08-13T00:00:00.000Z",
       projects: [{ id: "p1", title: "P", workspaceRoot: "/w" }],
       threads: [
-        { id: "t1", projectId: "p1", title: "Approval", hasPendingApprovals: true, hasPendingUserInput: false, modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" }, session: { status: "ready", activeTurnId: "turn1", providerName: "Codex" } },
+        { id: "t1", projectId: "p1", title: "Approval", messages: [{ role: "user", text: "must not escape observe" }], activities: [{ kind: "approval.requested", payload: { requestId: "approval-1", detail: "must not escape observe" } }], modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" }, session: { status: "ready", activeTurnId: "turn1", providerName: "Codex" } },
         { id: "t2", projectId: "p1", title: "Idle", hasPendingApprovals: false, hasPendingUserInput: false, session: { status: "idle", activeTurnId: null } },
       ],
     }),
+    shell: async () => { throw new Error("hanging shell endpoint must not be called"); },
     archivedShell: async () => ({ snapshotSequence: 7, updatedAt: "2026-08-13T00:00:00.000Z", projects: [], threads: [{ id: "t3", projectId: "p1", title: "Archived" }] }),
   };
   const state = await observe(client);
@@ -220,4 +222,23 @@ test("observe surfaces pending work, active turns, and archived threads", async 
   assert.equal(state.pendingWork[0].threadId, "t1");
   assert.equal(state.pendingWork[0].approvals, true);
   assert.equal(state.activeTurns[0].activeTurnId, "turn1");
+  assert.equal(Object.hasOwn(state.threads[0], "messages"), false);
+  assert.equal(Object.hasOwn(state.threads[0], "activities"), false);
+});
+
+test("observe tolerates missing and partial thread fields in projected snapshots", async () => {
+  const state = await observe({
+    snapshot: async () => ({
+      threads: [null, {}, { id: "partial", session: { status: "running" } }],
+    }),
+    archivedShell: async () => null,
+  });
+  assert.equal(state.snapshotSequence, null);
+  assert.equal(state.updatedAt, null);
+  assert.equal(state.counts.projects, 0);
+  assert.equal(state.counts.threads, 2);
+  assert.equal(state.counts.activeTurns, 1);
+  assert.equal(state.activeTurns[0].threadId, "partial");
+  assert.equal(state.activeTurns[0].activeTurnId, null);
+  assert.equal(state.activeTurns[0].runtimeMode, null);
 });

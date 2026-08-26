@@ -19,7 +19,7 @@ import {
   requireLoopbackUrl,
 } from "./config.mjs";
 import { requireExplicitRuntimeMode, resolveModelSelection } from "./model-selection.mjs";
-import { readBoundedResponseText, T3HttpError } from "./t3-client.mjs";
+import { readBoundedResponseText, readOrchestrationSnapshot, T3HttpError } from "./t3-client.mjs";
 
 const HERMES_MENTION = /(^|\s)@hermes\b/i;
 const BRIDGE_OWNER_VARIABLE = "T3_HERMES_BRIDGE_OWNER";
@@ -535,13 +535,17 @@ async function waitForMessage(client, threadId, messageId) {
 }
 
 export async function ensureProject(client, { workspace, title, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, options, budget, projectId = randomUUID(), projectCommandId = randomUUID() }) {
-  const shell = await client.shell();
-  const existing = shell.projects.find((project) => project.workspaceRoot === workspace || project.id === projectId);
-  if (existing) return { project: existing, created: false, shell };
+  const snapshot = await readOrchestrationSnapshot(client);
+  const projects = Array.isArray(snapshot?.projects) ? snapshot.projects : [];
+  const existing = projects.find((project) => project?.deletedAt == null && (project.workspaceRoot === workspace || project.id === projectId));
+  if (existing) return { project: existing, created: false, shell: snapshot };
   const defaultModelSelection = resolveModelSelection({ instanceId, model, options, budget });
   await client.dispatch({ type: "project.create", commandId: projectCommandId, projectId, title: title || path.basename(workspace) || "Hermes", workspaceRoot: workspace, createWorkspaceRootIfMissing: false, defaultModelSelection, createdAt: now() });
-  const projected = await waitFor(async () => (await client.shell()).projects.find((project) => project.id === projectId) || null, `project ${projectId}`);
-  return { project: projected, created: true, shell };
+  const projected = await waitFor(async () => {
+    const current = await readOrchestrationSnapshot(client);
+    return (Array.isArray(current?.projects) ? current.projects : []).find((project) => project?.id === projectId) || null;
+  }, `project ${projectId}`);
+  return { project: projected, created: true, shell: snapshot };
 }
 
 export async function startThread(client, { projectId, title, message, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, options, budget, runtimeMode, threadId = randomUUID(), threadCommandId = randomUUID(), turnCommandId = randomUUID(), messageId = randomUUID() }) {
@@ -792,7 +796,7 @@ async function routeMentionsLocked(client, { stateFile, instanceId, model, maxMe
     await attemptIntent(client, state, messageId, intent, { instanceId, model }, routed);
     writeBridgeState(state, stateFile);
   }
-  const shell = await client.shell();
+  const shell = await readOrchestrationSnapshot(client);
   const processed = new Set(state.processedMessageIds);
   for (const source of shell.threads || []) {
     if (routed.length >= maxMessages) break;
@@ -835,7 +839,7 @@ export async function doctor(client, {
   instanceId = DEFAULT_INSTANCE_ID,
   fetchImpl = globalThis.fetch,
 } = {}) {
-  const shell = await client.shell();
+  const shell = await readOrchestrationSnapshot(client);
   const settings = await client.getSettings();
   const config = await client.rpc("server.getConfig", {});
   const provider = config.providers.find((entry) => entry.instanceId === instanceId);
@@ -860,5 +864,7 @@ export async function doctor(client, {
     configEnabled: nativeConfigEnabled ?? true,
     disabled: nativeInstance !== undefined && (nativeEnvelopeEnabled === false || nativeConfigEnabled === false),
   };
-  return { t3: { reachable: true, projects: shell.projects.length, threads: shell.threads.length }, hermes: { reachable: true, status: health.status || "ok", version: health.version || null }, provider: { configured: Boolean(settings.providerInstances?.[instanceId]), instanceId, ready: provider?.status === "ready", installed: provider?.installed === true, status: provider?.status || null, modelCount: provider?.models?.length || 0 }, nativeGrok };
+  const projects = Array.isArray(shell?.projects) ? shell.projects.filter((entry) => entry?.deletedAt == null) : [];
+  const threads = Array.isArray(shell?.threads) ? shell.threads.filter((entry) => entry?.deletedAt == null && entry?.archivedAt == null) : [];
+  return { t3: { reachable: true, projects: projects.length, threads: threads.length }, hermes: { reachable: true, status: health.status || "ok", version: health.version || null }, provider: { configured: Boolean(settings.providerInstances?.[instanceId]), instanceId, ready: provider?.status === "ready", installed: provider?.installed === true, status: provider?.status || null, modelCount: provider?.models?.length || 0 }, nativeGrok };
 }
