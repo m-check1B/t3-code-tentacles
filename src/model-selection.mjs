@@ -3,6 +3,7 @@ export const ORIGINATE_LABS = Object.freeze([
   "codex",
   "claudeAgent",
   "grok",
+  "cursor",
   "deepseek",
   "kimi",
   "pi",

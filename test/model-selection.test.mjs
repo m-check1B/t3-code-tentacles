@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
 import { parseArgs, usage } from "../src/cli.mjs";
+import { DEFAULT_INSTANCE_ID } from "../src/config.mjs";
 import {
   continueThread,
   ensureProject,
@@ -11,6 +12,7 @@ import {
 } from "../src/bridge.mjs";
 import {
   budgetOptionId,
+  ORIGINATE_LABS,
   parseModelOptionFlag,
   parseModelOptionFlags,
   requireRuntimeMode,
@@ -65,8 +67,50 @@ test("budgetOptionId maps only known lab effort knobs", () => {
   assert.equal(budgetOptionId("hermes", "openai-codex:gpt-5.6-sol"), "reasoningEffort");
   assert.equal(budgetOptionId("hermes", "some-other-model"), null);
   assert.equal(budgetOptionId("claudeAgent", "claude-opus-4-6"), "effort");
-  for (const lab of ["grok", "deepseek", "kimi", "pi", "opencode"]) {
+  for (const lab of ["grok", "cursor", "deepseek", "kimi", "pi", "opencode"]) {
     assert.equal(budgetOptionId(lab, "any"), null, lab);
+  }
+});
+
+test("Cursor is an explicit non-default originate lab with no invented budget option", () => {
+  assert.equal(ORIGINATE_LABS.includes("cursor"), true);
+  assert.equal(DEFAULT_INSTANCE_ID, "hermes");
+  assert.notEqual(DEFAULT_INSTANCE_ID, "cursor");
+  assert.deepEqual(
+    resolveModelSelection({ instanceId: "cursor", model: "default", budget: "high" }),
+    { instanceId: "cursor", model: "default" },
+  );
+  const parsed = parseArgs([
+    "originate",
+    "--workspace", "/tmp/cursor-explicit",
+    "--title", "Cursor explicit",
+    "--message", "validate only",
+    "--instance", "cursor",
+    "--model", "default",
+    "--runtime-mode", "full-access",
+  ]);
+  assert.equal(parsed.options.instance, "cursor");
+  assert.equal(parsed.options["runtime-mode"], "full-access");
+});
+
+test("Cursor session-init commands preserve the explicit lab and full-access mode", async () => {
+  const client = recordingClient();
+  await startThread(client, {
+    projectId: "p-cursor",
+    threadId: "t-cursor",
+    title: "Cursor",
+    message: "start",
+    messageId: "m-cursor",
+    instanceId: "cursor",
+    model: "default",
+    budget: "high",
+    runtimeMode: "full-access",
+  });
+  assert.equal(client.commands[0].type, "thread.create");
+  assert.equal(client.commands[1].type, "thread.turn.start");
+  for (const command of client.commands) {
+    assert.deepEqual(command.modelSelection, { instanceId: "cursor", model: "default" });
+    assert.equal(command.runtimeMode, "full-access");
   }
 });
 
@@ -421,7 +465,7 @@ test("CLI parseArgs collects repeatable --option and usage documents originate f
   assert.match(help, /^Tentacles — T3 Code tentacles — originate any ready lab/m);
   assert.match(help, /Hermes was the first tentacle/);
   assert.match(help, /originate --workspace PATH --title TITLE --message TEXT --runtime-mode approval-required\|auto-accept-edits\|auto\|full-access/);
-  assert.match(help, /--instance hermes\|codex\|claudeAgent\|grok\|deepseek\|kimi\|pi\|opencode/);
+  assert.match(help, /--instance hermes\|codex\|claudeAgent\|grok\|cursor\|deepseek\|kimi\|pi\|opencode/);
   assert.match(help, /--model MODEL/);
   assert.match(help, /--runtime-mode approval-required\|auto-accept-edits\|auto\|full-access/);
   assert.doesNotMatch(help, /\[--runtime-mode/);

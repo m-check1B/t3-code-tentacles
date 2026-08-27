@@ -237,6 +237,11 @@ t3-agent-bridge originate \
 
 A new Hermes-backed thread should appear in T3 Code.
 
+Cursor is an explicit, non-default lab: pass `--instance cursor` together with
+the model T3 currently advertises for that instance. Tentacles does not install,
+enable, or select Cursor by default; the T3 Cursor instance must already be
+enabled and ready before a real originate can succeed.
+
 POL-036/POL-GB-016 mandate `--runtime-mode full-access` on every originate
 and `"runtimeMode":"full-access"` on every non-empty continue, for every lab
 and effort; an omitted runtime mode is refused, never defaulted.
