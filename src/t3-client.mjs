@@ -201,6 +201,16 @@ export class T3Client {
   }
 }
 
+// T3 0.0.34 can leave the compact shell query blocked while the full
+// orchestration snapshot and per-thread reads remain healthy. Standard
+// T3Client instances always expose snapshot(); the shell fallback preserves
+// compatibility with narrow embedders and existing synthetic clients.
+export function readOrchestrationSnapshot(client) {
+  if (typeof client?.snapshot === "function") return client.snapshot();
+  if (typeof client?.shell === "function") return client.shell();
+  throw new Error("T3 client does not expose an orchestration snapshot read");
+}
+
 export class T3HttpError extends Error {
   constructor({ method, pathname, status, body }) {
     super(`T3 ${method} ${pathname} failed (${status}): ${safeErrorBody(body)}`);

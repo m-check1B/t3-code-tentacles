@@ -1,18 +1,20 @@
 {
-  "name": "t3-agent-bridge",
-  "version": "0.2.1",
-  "description": "Provider-neutral T3 Code ACP bridge with Hermes and Pi Agent adapters",
+  "name": "tentacles",
+  "version": "0.3.0",
+  "description": "Tentacles — T3 Code tentacles: originate any ready lab (instance + model + budget).",
   "type": "module",
   "author": "Matej Havlin (m-check1B)",
-  "homepage": "https://github.com/m-check1B/t3-agent-bridge#readme",
+  "homepage": "https://github.com/m-check1B/tentacles#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/m-check1B/t3-agent-bridge.git"
+    "url": "git+https://github.com/m-check1B/tentacles.git"
   },
   "bugs": {
-    "url": "https://github.com/m-check1B/t3-agent-bridge/issues"
+    "url": "https://github.com/m-check1B/tentacles/issues"
   },
   "keywords": [
+    "tentacles",
+    "t3-agent-bridge",
     "acp",
     "agent-client-protocol",
     "hermes-agent",
@@ -35,6 +37,7 @@
   ],
   "bin": {
     "t3-agent-bridge": "./bin/t3-agent-bridge",
+    "tentacles": "./bin/t3-agent-bridge",
     "t3-hermes": "./bin/t3-hermes",
     "t3-pi-acp": "./bin/t3-pi-acp"
   },
@@ -42,7 +45,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "check": "node --check src/cli.mjs && node --check src/t3-client.mjs && node --check src/bridge.mjs && node --check src/orchestrate.mjs && node --check src/pi-acp.mjs && node --check src/service.mjs && node --check src/deepseek-acp-launch.mjs && node --check src/kimi-acp-launch.mjs",
+    "check": "node --check src/cli.mjs && node --check src/t3-client.mjs && node --check src/bridge.mjs && node --check src/orchestrate.mjs && node --check src/model-selection.mjs && node --check src/pi-acp.mjs && node --check src/service.mjs && node --check src/deepseek-acp-launch.mjs && node --check src/kimi-acp-launch.mjs && node --check src/grok-acp-launch.mjs",
     "test": "node --test"
   },
   "license": "MIT"

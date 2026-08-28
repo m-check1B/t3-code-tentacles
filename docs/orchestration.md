@@ -1,9 +1,13 @@
 # Orchestration control plane
 
-The bridge can act as the top orchestrator of a T3 Code environment, not just a
-provider adapter. This document describes the read (`observe`) and write
-(`act` / `orchestrate`) surfaces any system — Hermes, a cron job, another agent
-— can drive over the bridge's existing loopback-authenticated HTTP/RPC client.
+Tentacles is the user-side of T3 Code: each lab is a tentacle. Hermes was the
+first tentacle, not the product. T3 Code tentacles — originate any ready lab
+(instance + model + budget).
+
+This document describes the read (`observe`) and write (`act` / `orchestrate`)
+surfaces any system — TOP-G, a cron job, another agent — can drive over the
+bridge's existing loopback-authenticated HTTP/RPC client. The CLI binary remains
+`t3-agent-bridge`.
 
 ## Read: observe
 
@@ -33,9 +37,17 @@ it through the bridge library, not a standalone verb.
 
 Each command carries an immutable `commandId` (for idempotent retry) and is
 projected back with the same exact-ID wait used by `originate`.
+`project.create` waits on the shell project snapshot; `thread.create` waits on
+thread projection. `thread.continue` and `thread.restart` wait until the exact
+user message reaches a live session or produces an assistant response; a
+projected user message followed by `session.status: error` fails with the
+session's real `lastError`. Caller-supplied
+`commandId` and `projectId` are preserved across verification polls so a
+timeout/retry cannot create a second project.
 
 ```bash
-t3-agent-bridge act --intent '{"action":"thread.continue","threadId":"...","text":"go"}'
+t3-agent-bridge act --intent '{"action":"thread.continue","threadId":"...","text":"go","runtimeMode":"full-access"}'
+t3-agent-bridge act --intent '{"action":"thread.restart","threadId":"...","text":"resume","runtimeMode":"full-access"}'
 t3-agent-bridge act --intent-file intent.json
 t3-agent-bridge orchestrate --intent-file intents.json          # array of intents, in order
 t3-agent-bridge orchestrate --intent-file plan.json --no-wait   # fire-and-forget
@@ -49,17 +61,18 @@ An intent file is a JSON array of intents, or `{"intents": [...]}`.
 |---|---|---|
 | `project.create` | `title`, `workspaceRoot` (`instanceId`+`model` optional) | `project.create` |
 | `project.rename` | `projectId`, `title` | `project.meta.update` |
-| `project.set-model` | `projectId`, `instanceId`, `model` | `project.meta.update` |
+| `project.set-model` | `projectId`, `instanceId`, `model` (`options` optional) | `project.meta.update` |
 | `project.delete` | `projectId` | `project.delete` |
-| `thread.create` | `projectId`, `title`, `instanceId`, `model` | `thread.create` |
-| `thread.continue` | `threadId`, `text` | `thread.turn.start` |
+| `thread.create` | `projectId`, `title`, `instanceId`, `model`, `runtimeMode` (`options` optional) | `thread.create` |
+| `thread.continue` | `threadId`, `text`, `runtimeMode` | `thread.turn.start` |
+| `thread.restart` | `threadId`, `text`, `runtimeMode` | ordered `thread.session.stop` + `thread.turn.start` |
 | `thread.interrupt` | `threadId` | `thread.turn.interrupt` |
 | `thread.stop` | `threadId` | `thread.session.stop` |
 | `thread.approval.respond` | `threadId`, `requestId`, `decision` | `thread.approval.respond` |
 | `thread.user-input.respond` | `threadId`, `requestId`, `answers` | `thread.user-input.respond` |
 | `thread.checkpoint.revert` | `threadId`, `turnCount` | `thread.checkpoint.revert` |
 | `thread.set-runtime-mode` | `threadId`, `runtimeMode` | `thread.runtime-mode.set` |
-| `thread.set-model` | `threadId`, `instanceId`, `model` | `thread.meta.update` |
+| `thread.set-model` | `threadId`, `instanceId`, `model` (`options` optional) | `thread.meta.update` |
 | `thread.rename` | `threadId`, `title` | `thread.meta.update` |
 | `thread.archive` / `unarchive` / `settle` / `unsettle` / `pin` / `unpin` / `delete` | `threadId` | matching command |
 | `thread.snooze` | `threadId`, `snoozedUntil` (ISO) | `thread.snooze` |
@@ -67,12 +80,26 @@ An intent file is a JSON array of intents, or `{"intents": [...]}`.
 | `thread.external-message` | `threadId`, `text` | `thread.external-message.append` |
 
 Enums: `runtimeMode` ∈ `approval-required`, `auto-accept-edits`, `auto`,
-`full-access`; `decision` ∈ `accept`, `acceptForSession`, `decline`, `cancel`;
-`interactionMode` ∈ `default`, `plan`.
+`full-access`. POL-036/POL-GB-016 mandate `"runtimeMode":"full-access"` on
+every originate and every non-empty continue for every lab and effort
+(including Codex xhigh/high); an omitted `runtimeMode` fails closed and is
+never a compliant operation. The bridge does not substitute any default.
+`decision` ∈ `accept`, `acceptForSession`, `decline`, `cancel`;
+`interactionMode` ∈ `default`, `plan`. Optional `options` is
+`[{ id, value }]` and rides on T3 `modelSelection` / `defaultModelSelection`.
+Optional `budget` (`low`/`medium`/`high`) fills the lab effort knob when that
+lab has a known id and no overlapping explicit option: `reasoningEffort` for
+`codex` and `hermes` (`openai-codex:*` models), `effort` for `claudeAgent`.
+
+`thread.continue` automatically performs the same ordered stop/start recovery
+when the projected session is already `error`. Use `thread.restart` explicitly
+when a provider transport is stale but T3 still projects the session as
+`ready` or `running`; healthy running Grok sessions continue normally and are
+not stopped by `thread.continue`.
 
 ## Orchestrator loop
 
-A Hermes orchestrator runs a closed loop entirely through this surface:
+A Tentacles orchestrator runs a closed loop entirely through this surface:
 
 1. `observe` → read `pendingWork` + `activeTurns`.
 2. Decide the next intent (approve, answer user input, continue, interrupt, set

@@ -18,6 +18,7 @@ import {
   removePiProvider,
   restoreNativeGrok,
   routeMentionsOnce,
+  useNativeGrokCachedAuth,
 } from "./bridge.mjs";
 import {
   DEFAULT_DEEPSEEK_INSTANCE_ID,
@@ -32,6 +33,14 @@ import {
   DEFAULT_PI_PROVIDER,
   resolveExecutable,
 } from "./config.mjs";
+import {
+  defaultModelForLab,
+  ORIGINATE_LABS,
+  parseModelOptionFlags,
+  requireExplicitRuntimeMode,
+  resolveModelSelection,
+  RUNTIME_MODES,
+} from "./model-selection.mjs";
 import { applyIntents, observe } from "./orchestrate.mjs";
 import {
   installService,
@@ -43,7 +52,7 @@ import {
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const [command = "help", ...rest] = argv;
   const options = { _: [] };
   for (let index = 0; index < rest.length; index += 1) {
@@ -59,7 +68,12 @@ function parseArgs(argv) {
     }
     const value = rest[index + 1];
     if (value === undefined || value.startsWith("--")) throw new Error(`Missing value for --${key}`);
-    options[key] = value;
+    if (key === "option") {
+      if (!Array.isArray(options.option)) options.option = [];
+      options.option.push(value);
+    } else {
+      options[key] = value;
+    }
     index += 1;
   }
   return { command, options };
@@ -126,11 +140,12 @@ function resolveKimiExecutable(option) {
   return fs.realpathSync(configured);
 }
 
-function usage() {
-  return `t3-agent-bridge — provider-neutral T3 Code ACP bridge
+export function usage() {
+  return `Tentacles — T3 Code tentacles — originate any ready lab (instance + model + budget).
+Hermes was the first tentacle. The public command is tentacles; t3-agent-bridge is an exact alias.
 
 Usage:
-  t3-agent-bridge doctor
+  tentacles doctor
   t3-agent-bridge install-provider [--instance hermes] [--profile default] [--model MODEL]
   t3-agent-bridge remove-provider [--instance hermes]
   t3-agent-bridge install-pi-provider [--instance pi] [--model gpt-5.6-terra] [--pi-provider openai-codex]
@@ -140,10 +155,11 @@ Usage:
   t3-agent-bridge install-kimi-provider [--instance kimi] [--model kimi-code/k3] [--kimi-bin PATH]
   t3-agent-bridge remove-kimi-provider [--instance kimi]
   t3-agent-bridge restore-native-grok
+  t3-agent-bridge use-native-grok-cached-auth
   t3-agent-bridge observe
   t3-agent-bridge act --intent '{...}' [--intent-file PATH] [--no-wait]
   t3-agent-bridge orchestrate --intent-file PATH [--no-wait]
-  t3-agent-bridge originate --workspace PATH --title TITLE --message TEXT [--idempotency-key KEY]
+  t3-agent-bridge originate --workspace PATH --title TITLE --message TEXT --runtime-mode ${RUNTIME_MODES.join("|")} [--idempotency-key KEY] [--instance ${ORIGINATE_LABS.join("|")}] [--model MODEL] [--budget low|medium|high] [--option id=value]
   t3-agent-bridge watch --once --allow-all-projects [--profile PROFILE] [--instance INSTANCE]
   t3-agent-bridge watch --allow-all-projects [--interval 2000] [--state-file PATH] [--max-messages 10]
   t3-agent-bridge install-service --profile PROFILE --instance INSTANCE [service options]
@@ -151,7 +167,16 @@ Usage:
   t3-agent-bridge restart-service --profile PROFILE --instance INSTANCE
   t3-agent-bridge uninstall-service --profile PROFILE --instance INSTANCE
 
+The tentacles command is the public CLI. t3-agent-bridge is an exact alias.
 The legacy t3-hermes command remains an exact compatibility alias.
+Run doctor to print the advertised lab matrix (ready / installed / explicit).
+
+Runtime mode invariant (POL-036 / POL-GB-016):
+  Every originate and every non-empty continue runs full-access, for every lab
+  (Grok Code CLI grok, Codex xhigh, Codex high, and the rest). Pass
+  --runtime-mode full-access on originate and "runtimeMode":"full-access" on
+  thread.continue intents. Omitting the runtime mode fails closed; it is never
+  a compliant operation, and no approval popup is part of the validated path.
 
 Environment:
   Service options:
@@ -210,6 +235,20 @@ async function main() {
   }
   const instanceId = options.instance || DEFAULT_INSTANCE_ID;
   const model = options.model || DEFAULT_MODEL;
+  let originateSelection = null;
+  if (command === "originate") {
+    const labInstanceId = options.instance || DEFAULT_INSTANCE_ID;
+    const labModel = options.model || defaultModelForLab(labInstanceId);
+    if (!labModel) {
+      throw new Error(`${labInstanceId} is an explicit lab; pass --model with a model T3 currently advertises`);
+    }
+    originateSelection = resolveModelSelection({
+      instanceId: labInstanceId,
+      model: labModel,
+      options: parseModelOptionFlags(options.option),
+      budget: options.budget,
+    });
+  }
 
   if (command === "install-service") {
     console.log(JSON.stringify(installService({ cliPath: fileURLToPath(import.meta.url), ...serviceOptions(options) }), null, 2));
@@ -303,6 +342,12 @@ async function main() {
     console.log(JSON.stringify(await restoreNativeGrok(client), null, 2));
     return;
   }
+  if (command === "use-native-grok-cached-auth") {
+    console.log(JSON.stringify(await useNativeGrokCachedAuth(client, {
+      wrapperPath: path.join(repoRoot, "bin", "t3-native-grok-cached-auth"),
+    }), null, 2));
+    return;
+  }
   if (command === "observe") {
     console.log(JSON.stringify(await observe(client), null, 2));
     return;
@@ -322,9 +367,10 @@ async function main() {
       workspace: path.resolve(required(options, "workspace")),
       title: required(options, "title"),
       message: required(options, "message"),
-      instanceId,
-      model,
-      runtimeMode: options["runtime-mode"] || "approval-required",
+      instanceId: originateSelection.instanceId,
+      model: originateSelection.model,
+      options: originateSelection.options,
+      runtimeMode: requireExplicitRuntimeMode(options["runtime-mode"], "--runtime-mode"),
       idempotencyKey: options["idempotency-key"],
       stateFile: options["state-file"],
     });

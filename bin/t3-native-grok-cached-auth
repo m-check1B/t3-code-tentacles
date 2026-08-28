@@ -1,0 +1,23 @@
+#!/bin/sh
+set -eu
+
+unset XAI_API_KEY
+export GROK_DISABLE_API_KEY_AUTH=true
+
+case "${1:-}" in
+  --version|-v|version)
+    exec grok "$@"
+    ;;
+  *)
+    SELF=$0
+    while [ -L "$SELF" ]; do
+      LINK=$(readlink "$SELF")
+      case "$LINK" in
+        /*) SELF=$LINK ;;
+        *) SELF=$(dirname -- "$SELF")/$LINK ;;
+      esac
+    done
+    SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$SELF")" && pwd)
+    exec node "$SCRIPT_DIR/../src/grok-acp-launch.mjs"
+    ;;
+esac

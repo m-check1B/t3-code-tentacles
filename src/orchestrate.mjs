@@ -13,9 +13,9 @@
 
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { T3HttpError } from "./t3-client.mjs";
+import { requireExplicitRuntimeMode, requireRuntimeMode, resolveModelSelection } from "./model-selection.mjs";
+import { readOrchestrationSnapshot, T3HttpError } from "./t3-client.mjs";
 
-const RUNTIME_MODES = new Set(["approval-required", "auto-accept-edits", "auto", "full-access"]);
 const INTERACTION_MODES = new Set(["default", "plan"]);
 const APPROVAL_DECISIONS = new Set(["accept", "acceptForSession", "decline", "cancel"]);
 
@@ -31,7 +31,12 @@ function requireString(value, label) {
 function modelSelection(intent, label = "model selection") {
   const instanceId = requireString(intent.instanceId, `${label} instanceId`);
   const model = requireString(intent.model, `${label} model`);
-  return { instanceId, model };
+  return resolveModelSelection({
+    instanceId,
+    model,
+    options: intent.options ?? intent.modelSelection?.options,
+    budget: intent.budget,
+  });
 }
 
 // ── Command builders ────────────────────────────────────────────────────────
@@ -81,7 +86,7 @@ export function threadCreate(input) {
     projectId: requireString(input.projectId, "projectId"),
     title: requireString(input.title, "title"),
     modelSelection: input.modelSelection,
-    runtimeMode: input.runtimeMode ?? "full-access",
+    runtimeMode: requireExplicitRuntimeMode(input.runtimeMode),
     interactionMode: input.interactionMode ?? "default",
     branch: input.branch ?? null,
     worktreePath: input.worktreePath ?? null,
@@ -143,8 +148,7 @@ export function threadMetaUpdate(input) {
 }
 
 export function threadRuntimeModeSet(input) {
-  const runtimeMode = requireString(input.runtimeMode, "runtimeMode");
-  if (!RUNTIME_MODES.has(runtimeMode)) throw new Error(`Intent runtimeMode must be one of ${[...RUNTIME_MODES].join(", ")}`);
+  const runtimeMode = requireRuntimeMode(requireString(input.runtimeMode, "runtimeMode"));
   return { type: "thread.runtime-mode.set", commandId: input.commandId ?? randomUUID(), threadId: requireString(input.threadId, "threadId"), runtimeMode, createdAt: input.createdAt ?? now() };
 }
 
@@ -165,7 +169,7 @@ export function threadTurnStart(input) {
       text: input.text ?? "",
       attachments: input.attachments ?? [],
     },
-    runtimeMode: input.runtimeMode ?? "full-access",
+    runtimeMode: requireExplicitRuntimeMode(input.runtimeMode),
     interactionMode: input.interactionMode ?? "default",
     createdAt: input.createdAt ?? now(),
   };
@@ -242,6 +246,7 @@ const INTENT_ACTIONS = new Set([
   "project.delete",
   "thread.create",
   "thread.continue",
+  "thread.restart",
   "thread.interrupt",
   "thread.stop",
   "thread.approval.respond",
@@ -278,9 +283,10 @@ export function buildCommandFromIntent(intent, { commandId, createdAt } = {}) {
     case "project.delete":
       return projectDelete({ ...base, projectId: intent.projectId, ...(intent.force !== undefined ? { force: intent.force } : {}) });
     case "thread.create":
-      return threadCreate({ ...base, threadId: intent.threadId ?? randomUUID(), projectId: intent.projectId, title: intent.title, modelSelection: modelSelection(intent), ...(intent.runtimeMode !== undefined ? { runtimeMode: intent.runtimeMode } : {}) });
+      return threadCreate({ ...base, threadId: intent.threadId ?? randomUUID(), projectId: intent.projectId, title: intent.title, modelSelection: modelSelection(intent), runtimeMode: intent.runtimeMode });
     case "thread.continue":
-      return threadTurnStart({ ...base, threadId: intent.threadId, text: intent.text ?? "", ...(intent.instanceId && intent.model ? { modelSelection: modelSelection(intent) } : {}), ...(intent.titleSeed !== undefined ? { titleSeed: intent.titleSeed } : {}) });
+    case "thread.restart":
+      return threadTurnStart({ ...base, threadId: intent.threadId, text: intent.text ?? "", runtimeMode: intent.runtimeMode, ...(intent.instanceId && intent.model ? { modelSelection: modelSelection(intent) } : {}), ...(intent.titleSeed !== undefined ? { titleSeed: intent.titleSeed } : {}) });
     case "thread.interrupt":
       return threadTurnInterrupt({ ...base, threadId: intent.threadId, ...(intent.turnId !== undefined ? { turnId: intent.turnId } : {}) });
     case "thread.stop":
@@ -317,10 +323,68 @@ export function buildCommandFromIntent(intent, { commandId, createdAt } = {}) {
 // Snapshot everything an orchestrator needs to choose the next action: active
 // and archived projects/threads, plus a compact pending-work index.
 
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function recordArray(value) {
+  return Array.isArray(value) ? value.filter(isRecord) : [];
+}
+
+function hasOpenRequest(activities, requestedKind, resolvedKind) {
+  const open = new Set();
+  for (const activity of recordArray(activities)) {
+    const payload = isRecord(activity.payload) ? activity.payload : {};
+    const requestId = typeof payload.requestId === "string" ? payload.requestId : null;
+    if (!requestId) continue;
+    if (activity.kind === requestedKind) open.add(requestId);
+    if (activity.kind === resolvedKind) open.delete(requestId);
+  }
+  return open.size > 0;
+}
+
+function projectSession(session) {
+  if (!isRecord(session)) return null;
+  return {
+    status: session.status ?? null,
+    activeTurnId: session.activeTurnId ?? null,
+    providerName: session.providerName ?? null,
+    providerInstanceId: session.providerInstanceId ?? null,
+    runtimeMode: session.runtimeMode ?? null,
+    lastError: session.lastError ?? null,
+  };
+}
+
+function projectThreadSummary(thread) {
+  const hasPendingApprovals = typeof thread.hasPendingApprovals === "boolean"
+    ? thread.hasPendingApprovals
+    : hasOpenRequest(thread.activities, "approval.requested", "approval.resolved");
+  const hasPendingUserInput = typeof thread.hasPendingUserInput === "boolean"
+    ? thread.hasPendingUserInput
+    : hasOpenRequest(thread.activities, "user-input.requested", "user-input.resolved");
+  return {
+    id: thread.id ?? null,
+    projectId: thread.projectId ?? null,
+    title: thread.title ?? null,
+    modelSelection: thread.modelSelection ?? null,
+    runtimeMode: thread.runtimeMode ?? null,
+    archivedAt: thread.archivedAt ?? null,
+    settledAt: thread.settledAt ?? null,
+    snoozedUntil: thread.snoozedUntil ?? null,
+    session: projectSession(thread.session),
+    hasPendingApprovals,
+    hasPendingUserInput,
+  };
+}
+
 export async function observe(client) {
-  const [shell, archived] = await Promise.all([client.shell(), client.archivedShell()]);
-  const threads = shell.threads ?? [];
-  const archivedThreads = archived?.threads ?? [];
+  const [snapshot, archived] = await Promise.all([readOrchestrationSnapshot(client), client.archivedShell()]);
+  const readModel = isRecord(snapshot) ? snapshot : {};
+  const projects = recordArray(readModel.projects).filter((project) => project.deletedAt == null);
+  const threads = recordArray(readModel.threads)
+    .filter((thread) => thread.deletedAt == null && thread.archivedAt == null)
+    .map(projectThreadSummary);
+  const archivedThreads = recordArray(isRecord(archived) ? archived.threads : []).map(projectThreadSummary);
   const pendingWork = [];
   for (const thread of threads) {
     if (thread.hasPendingApprovals || thread.hasPendingUserInput) {
@@ -349,15 +413,15 @@ export async function observe(client) {
       runtimeMode: thread.session.runtimeMode,
     }));
   return {
-    snapshotSequence: shell.snapshotSequence,
-    updatedAt: shell.updatedAt,
-    projects: shell.projects ?? [],
+    snapshotSequence: readModel.snapshotSequence ?? null,
+    updatedAt: readModel.updatedAt ?? null,
+    projects,
     threads,
     archivedThreads,
     pendingWork,
     activeTurns,
     counts: {
-      projects: (shell.projects ?? []).length,
+      projects: projects.length,
       threads: threads.length,
       archivedThreads: archivedThreads.length,
       pendingApprovals: pendingWork.filter((entry) => entry.approvals).length,
@@ -394,25 +458,117 @@ export async function waitForMessageProjection(client, threadId, messageId, { ti
   throw new Error(`Timed out waiting for message ${messageId} in thread ${threadId}`);
 }
 
+async function waitForStoppedSession(client, threadId, { timeoutMs = 15_000, intervalMs = 100 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const detail = await getThreadIfProjected(client, threadId);
+    if (detail && (detail.thread?.session == null || detail.thread.session.status === "stopped")) return detail;
+    await delay(intervalMs);
+  }
+  throw new Error(`Timed out waiting for T3 projection: stopped session in thread ${threadId}`);
+}
+
+export async function waitForTurnOutcome(client, threadId, messageId, {
+  baselineSession,
+  timeoutMs = 15_000,
+  intervalMs = 100,
+} = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const detail = await getThreadIfProjected(client, threadId);
+    const thread = detail?.thread;
+    const messages = recordArray(thread?.messages);
+    const messageIndex = messages.findIndex((message) => message.id === messageId);
+    if (messageIndex >= 0) {
+      const session = isRecord(thread?.session) ? thread.session : null;
+      if (session?.status === "error") {
+        throw new Error(`T3 thread ${threadId} entered error: ${session.lastError ?? "Unknown provider session error"}`);
+      }
+      const assistantProjected = messages
+        .slice(messageIndex + 1)
+        .some((message) => message.role === "assistant");
+      const activeSessionAdvanced = session !== null
+        && session.status === "running"
+        && (
+          baselineSession == null
+          || session.status !== baselineSession.status
+          || session.activeTurnId !== baselineSession.activeTurnId
+          || session.updatedAt !== baselineSession.updatedAt
+        );
+      if (assistantProjected || activeSessionAdvanced) return detail;
+    }
+    await delay(intervalMs);
+  }
+  throw new Error(`Timed out waiting for T3 turn outcome: message ${messageId} in thread ${threadId} never reached a live session or assistant response`);
+}
+
+export async function waitForProjectProjection(client, projectId, { timeoutMs = 15_000, intervalMs = 100 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const snapshot = await readOrchestrationSnapshot(client);
+    const project = recordArray(isRecord(snapshot) ? snapshot.projects : []).find((entry) => entry.id === projectId);
+    if (project) return project;
+    await delay(intervalMs);
+  }
+  throw new Error(`Timed out waiting for T3 projection: project ${projectId}`);
+}
+
 // Apply one intent: build the command, dispatch it, project it back, and
 // return evidence an orchestrator can record. `wait` toggles projection
 // verification (off for fire-and-forget lifecycle commands).
-export async function applyIntent(client, intent, { wait = true, commandId, createdAt } = {}) {
+export async function applyIntent(client, intent, { wait = true, commandId, createdAt, timeoutMs, intervalMs } = {}) {
   const command = buildCommandFromIntent(intent, { commandId, createdAt });
+  let baseline = null;
+  let restartCommand = null;
+  let restartDispatchResult = null;
+  if (command.type === "thread.turn.start") {
+    baseline = await getThreadIfProjected(client, command.threadId);
+    const sessionStatus = baseline?.thread?.session?.status ?? null;
+    const shouldRestart = intent.action === "thread.restart"
+      || (intent.action === "thread.continue" && sessionStatus === "error");
+    if (shouldRestart && sessionStatus !== null && sessionStatus !== "stopped") {
+      restartCommand = threadSessionStop({
+        threadId: command.threadId,
+        commandId: `restart:${command.commandId}`,
+        createdAt: command.createdAt,
+      });
+      restartDispatchResult = await client.dispatch(restartCommand);
+      baseline = await waitForStoppedSession(client, command.threadId, { timeoutMs, intervalMs });
+    }
+  }
+  const baselineSession = isRecord(baseline?.thread?.session)
+    ? { ...baseline.thread.session }
+    : null;
   const dispatchResult = await client.dispatch(command);
+  const waitOptions = { timeoutMs, intervalMs };
   let projection = null;
   if (wait && command.type === "thread.turn.start") {
-    projection = await waitForMessageProjection(client, command.threadId, command.message.messageId);
-  } else if (wait && (command.type === "thread.create" || command.type === "project.create")) {
-    projection = await waitForThreadProjection(client, command.threadId ?? command.projectId);
+    projection = await waitForTurnOutcome(client, command.threadId, command.message.messageId, {
+      ...waitOptions,
+      baselineSession,
+    });
+  } else if (wait && command.type === "thread.create") {
+    projection = await waitForThreadProjection(client, command.threadId, waitOptions);
+  } else if (wait && command.type === "project.create") {
+    // Projects live in the shell snapshot; a projectId is not a thread-detail id.
+    projection = await waitForProjectProjection(client, command.projectId, waitOptions);
   }
   return {
     action: intent.action,
     commandId: command.commandId,
     dispatchResult,
+    ...(restartCommand !== null ? {
+      restartCommandId: restartCommand.commandId,
+      restartDispatchResult,
+    } : {}),
     threadId: command.threadId ?? intent.threadId ?? null,
     projectId: command.projectId ?? intent.projectId ?? null,
     projected: projection !== null,
+    ...(projection?.thread?.session ? {
+      sessionStatus: projection.thread.session.status ?? null,
+      activeTurnId: projection.thread.session.activeTurnId ?? null,
+      lastError: projection.thread.session.lastError ?? null,
+    } : {}),
   };
 }
 

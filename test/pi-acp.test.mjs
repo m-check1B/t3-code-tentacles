@@ -291,8 +291,10 @@ test("Pi providers coexist with Hermes and refuse foreign or cross-harness owner
 test("CLI help documents Pi provider commands", () => {
   const result = spawnSync(process.execPath, [path.resolve("src/cli.mjs"), "help"], { encoding: "utf8" });
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /^t3-agent-bridge — provider-neutral T3 Code ACP bridge/m);
+  assert.match(result.stdout, /^Tentacles — T3 Code tentacles — originate any ready lab/m);
+  assert.match(result.stdout, /Hermes was the first tentacle/);
   assert.match(result.stdout, /install-pi-provider \[--instance pi\] \[--model gpt-5\.6-terra\] \[--pi-provider openai-codex\]/);
   assert.match(result.stdout, /remove-pi-provider \[--instance pi\]/);
+  assert.match(result.stdout, /tentacles command is the public CLI\. t3-agent-bridge is an exact alias/);
   assert.match(result.stdout, /legacy t3-hermes command remains an exact compatibility alias/);
 });

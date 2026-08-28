@@ -1,12 +1,12 @@
-# T3 Agent Bridge documentation index
+# Tentacles documentation index
 
 Status: active
 
 Owner: TBA-One integration engineering
 
-Last reviewed: 2026-08-13
+Last reviewed: 2026-08-28
 
-This non-product repository owns the standalone provider-neutral ACP bridge,
+The public product name is **Tentacles**. This repository owns the standalone provider-neutral ACP bridge,
 its adapter contracts, packaging, compatibility evidence, component security,
 and repository history. It connects independent systems without becoming their
 product or control-plane authority.

@@ -66,6 +66,8 @@ export function transformClientToAgentLine(line) {
  */
 export function startKimiAcpProxy({
   kimiBin,
+  childArgs = ["acp"],
+  errorLabel = "t3-kimi-acp",
   env = process.env,
   spawnImpl = spawn,
   stdin = process.stdin,
@@ -74,7 +76,7 @@ export function startKimiAcpProxy({
   exitImpl = defaultExit,
 } = {}) {
   const binary = kimiBin || resolveKimiBinary(env);
-  const child = spawnImpl(binary, ["acp"], {
+  const child = spawnImpl(binary, childArgs, {
     stdio: ["pipe", "pipe", "inherit"],
     env,
     detached: process.platform !== "win32",
@@ -139,7 +141,7 @@ export function startKimiAcpProxy({
   child.stdin.on("error", () => stop());
   stdout.on?.("error", () => stop());
   child.once("error", (error) => {
-    console.error(`t3-kimi-acp: failed to start ${binary}: ${error.message}`);
+    console.error(`${errorLabel}: failed to start ${binary}: ${error.message}`);
     stop();
   });
   child.once("exit", (code, signal) => {

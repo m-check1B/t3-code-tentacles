@@ -18,7 +18,15 @@ import {
   ensurePrivateDirectory,
   requireLoopbackUrl,
 } from "./config.mjs";
-import { readBoundedResponseText, T3HttpError } from "./t3-client.mjs";
+import {
+  defaultModelForLab,
+  labInstallHint,
+  labKind,
+  ORIGINATE_LABS,
+  requireExplicitRuntimeMode,
+  resolveModelSelection,
+} from "./model-selection.mjs";
+import { readBoundedResponseText, readOrchestrationSnapshot, T3HttpError } from "./t3-client.mjs";
 
 const HERMES_MENTION = /(^|\s)@hermes\b/i;
 const BRIDGE_OWNER_VARIABLE = "T3_HERMES_BRIDGE_OWNER";
@@ -74,6 +82,7 @@ export function hasRedactedSecrets(providerInstances) {
 // built-in instance. This instance is the one slot the bridge treats as
 // "someone else's provider" and preserves verbatim on every settings write.
 export const NATIVE_GROK_INSTANCE_ID = "grok";
+const NATIVE_GROK_API_KEY_VARIABLE = "XAI_API_KEY";
 
 export function isNativeGrokInstance(instanceId, instance) {
   return instanceId === NATIVE_GROK_INSTANCE_ID && instance?.driver === "grok" && !isBridgeOwnedProvider(instance);
@@ -101,6 +110,52 @@ export async function restoreNativeGrok(client) {
   await client.updateSettings({ providerInstances });
   await client.refreshProvider(NATIVE_GROK_INSTANCE_ID);
   return { restored: true, instanceId: NATIVE_GROK_INSTANCE_ID };
+}
+
+// T3 passes provider environment variables to the native Grok ACP process.
+// Grok gives XAI_API_KEY precedence over its cached login, and Grok 1.0.5's
+// ACP path otherwise keeps API-key preference even when no key is available.
+// The wrapper removes the inherited key, explicitly disables API-key auth so
+// cached OIDC is used, and adapts T3's cached_token ACP handshake. This repair
+// leaves every other provider instance and redacted secret marker untouched.
+export async function useNativeGrokCachedAuth(client, { wrapperPath } = {}) {
+  if (!wrapperPath || !path.isAbsolute(wrapperPath)) {
+    throw new Error("use-native-grok-cached-auth requires an absolute Grok wrapper path");
+  }
+  const settings = await client.getSettings();
+  const current = settings.providerInstances || {};
+  const native = current[NATIVE_GROK_INSTANCE_ID];
+  if (!native) return { repaired: false, reason: "native-grok-instance-absent" };
+  if (!isNativeGrokInstance(NATIVE_GROK_INSTANCE_ID, native)) {
+    throw new Error("Refusing cached-auth repair because the grok slot is not the native Grok provider");
+  }
+  const environment = Array.isArray(native.environment) ? native.environment : [];
+  const overrides = environment.filter((variable) => variable?.name === NATIVE_GROK_API_KEY_VARIABLE);
+  if (overrides.some((variable) => variable.sensitive !== true || variable.valueRedacted !== true)) {
+    throw new Error("Refusing cached-auth repair because T3 did not return XAI_API_KEY as a redacted sensitive value");
+  }
+  const config = native.config && typeof native.config === "object" && !Array.isArray(native.config) ? native.config : {};
+  if (overrides.length === 0 && config.binaryPath === wrapperPath) {
+    await client.refreshProvider(NATIVE_GROK_INSTANCE_ID);
+    return { repaired: false, reason: "native-grok-cached-auth-already-enforced", refreshed: true };
+  }
+  const providerInstances = {
+    ...current,
+    [NATIVE_GROK_INSTANCE_ID]: {
+      ...native,
+      environment: environment.filter((variable) => variable?.name !== NATIVE_GROK_API_KEY_VARIABLE),
+      config: { ...config, binaryPath: wrapperPath },
+    },
+  };
+  await client.updateSettings({ providerInstances });
+  await client.refreshProvider(NATIVE_GROK_INSTANCE_ID);
+  return {
+    repaired: true,
+    instanceId: NATIVE_GROK_INSTANCE_ID,
+    authMethod: "cached_token",
+    removedApiKeyOverride: overrides.length > 0,
+    refreshed: true,
+  };
 }
 
 export async function installProvider(client, {
@@ -486,23 +541,30 @@ async function waitForMessage(client, threadId, messageId) {
   }, `message ${messageId} in thread ${threadId}`);
 }
 
-export async function ensureProject(client, { workspace, title, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, projectId = randomUUID(), projectCommandId = randomUUID() }) {
-  const shell = await client.shell();
-  const existing = shell.projects.find((project) => project.workspaceRoot === workspace || project.id === projectId);
-  if (existing) return { project: existing, created: false, shell };
-  await client.dispatch({ type: "project.create", commandId: projectCommandId, projectId, title: title || path.basename(workspace) || "Hermes", workspaceRoot: workspace, createWorkspaceRootIfMissing: false, defaultModelSelection: { instanceId, model }, createdAt: now() });
-  const projected = await waitFor(async () => (await client.shell()).projects.find((project) => project.id === projectId) || null, `project ${projectId}`);
-  return { project: projected, created: true, shell };
+export async function ensureProject(client, { workspace, title, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, options, budget, projectId = randomUUID(), projectCommandId = randomUUID() }) {
+  const snapshot = await readOrchestrationSnapshot(client);
+  const projects = Array.isArray(snapshot?.projects) ? snapshot.projects : [];
+  const existing = projects.find((project) => project?.deletedAt == null && (project.workspaceRoot === workspace || project.id === projectId));
+  if (existing) return { project: existing, created: false, shell: snapshot };
+  const defaultModelSelection = resolveModelSelection({ instanceId, model, options, budget });
+  await client.dispatch({ type: "project.create", commandId: projectCommandId, projectId, title: title || path.basename(workspace) || "Hermes", workspaceRoot: workspace, createWorkspaceRootIfMissing: false, defaultModelSelection, createdAt: now() });
+  const projected = await waitFor(async () => {
+    const current = await readOrchestrationSnapshot(client);
+    return (Array.isArray(current?.projects) ? current.projects : []).find((project) => project?.id === projectId) || null;
+  }, `project ${projectId}`);
+  return { project: projected, created: true, shell: snapshot };
 }
 
-export async function startThread(client, { projectId, title, message, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, runtimeMode = "approval-required", threadId = randomUUID(), threadCommandId = randomUUID(), turnCommandId = randomUUID(), messageId = randomUUID() }) {
+export async function startThread(client, { projectId, title, message, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, options, budget, runtimeMode, threadId = randomUUID(), threadCommandId = randomUUID(), turnCommandId = randomUUID(), messageId = randomUUID() }) {
+  const modelSelection = resolveModelSelection({ instanceId, model, options, budget });
+  runtimeMode = requireExplicitRuntimeMode(runtimeMode);
   let detail = await getThreadIfProjected(client, threadId);
   if (!detail) {
-    await client.dispatch({ type: "thread.create", commandId: threadCommandId, threadId, projectId, title, modelSelection: { instanceId, model }, runtimeMode, interactionMode: "default", branch: null, worktreePath: null, createdAt: now() });
+    await client.dispatch({ type: "thread.create", commandId: threadCommandId, threadId, projectId, title, modelSelection, runtimeMode, interactionMode: "default", branch: null, worktreePath: null, createdAt: now() });
     detail = await waitForThread(client, threadId);
   }
   if (!(detail.thread.messages || []).some((entry) => entry.id === messageId)) {
-    await client.dispatch({ type: "thread.turn.start", commandId: turnCommandId, threadId, message: userMessage(message, messageId), modelSelection: { instanceId, model }, titleSeed: title, runtimeMode, interactionMode: "default", createdAt: now() });
+    await client.dispatch({ type: "thread.turn.start", commandId: turnCommandId, threadId, message: userMessage(message, messageId), modelSelection, titleSeed: title, runtimeMode, interactionMode: "default", createdAt: now() });
     await waitForMessage(client, threadId, messageId);
   }
   return { threadId, projectId };
@@ -511,12 +573,24 @@ export async function startThread(client, { projectId, title, message, instanceI
 export async function continueThread(client, {
   threadId,
   message,
-  instanceId = DEFAULT_INSTANCE_ID,
-  model = DEFAULT_MODEL,
-  runtimeMode = "approval-required",
+  instanceId,
+  model,
+  options,
+  budget,
+  runtimeMode,
   turnCommandId = randomUUID(),
   messageId = randomUUID(),
 }) {
+  const modelSelection =
+    instanceId === undefined && model === undefined && options === undefined && budget === undefined
+      ? undefined
+      : resolveModelSelection({
+          instanceId: instanceId === undefined ? DEFAULT_INSTANCE_ID : instanceId,
+          model: model === undefined ? DEFAULT_MODEL : model,
+          options,
+          budget,
+        });
+  runtimeMode = requireExplicitRuntimeMode(runtimeMode);
   const detail = await waitForThread(client, threadId);
   if (!(detail.thread.messages || []).some((entry) => entry.id === messageId)) {
     await client.dispatch({
@@ -524,7 +598,7 @@ export async function continueThread(client, {
       commandId: turnCommandId,
       threadId,
       message: userMessage(message, messageId),
-      modelSelection: { instanceId, model },
+      ...(modelSelection !== undefined ? { modelSelection } : {}),
       runtimeMode,
       interactionMode: "default",
       createdAt: now(),
@@ -535,10 +609,12 @@ export async function continueThread(client, {
 }
 
 function digest(message) { return createHash("sha256").update(message).digest("hex"); }
-export async function originate(client, { workspace, title, message, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, runtimeMode = "approval-required", idempotencyKey, stateFile = DEFAULT_BRIDGE_STATE_FILE } = {}) {
+export async function originate(client, { workspace, title, message, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, options, budget, runtimeMode, idempotencyKey, stateFile = DEFAULT_BRIDGE_STATE_FILE } = {}) {
+  const modelSelection = resolveModelSelection({ instanceId, model, options, budget });
+  runtimeMode = requireExplicitRuntimeMode(runtimeMode);
   if (!idempotencyKey) {
-    const { project, created } = await ensureProject(client, { workspace, title: path.basename(workspace), instanceId, model });
-    return { ...(await startThread(client, { projectId: project.id, title, message, instanceId, model, runtimeMode })), projectCreated: created };
+    const { project, created } = await ensureProject(client, { workspace, title: path.basename(workspace), instanceId: modelSelection.instanceId, model: modelSelection.model, options: modelSelection.options });
+    return { ...(await startThread(client, { projectId: project.id, title, message, instanceId: modelSelection.instanceId, model: modelSelection.model, options: modelSelection.options, runtimeMode })), projectCreated: created };
   }
   if (typeof idempotencyKey !== "string" || !/^[A-Za-z0-9._:-]{1,256}$/.test(idempotencyKey)) throw new Error("originate idempotencyKey must be 1-256 safe characters");
   const release = acquireStateLock(stateFile);
@@ -555,8 +631,8 @@ export async function originate(client, { workspace, title, message, instanceId 
       state.originations[idempotencyKey] = intent;
       writeBridgeState(state, stateFile);
     }
-    const { project, created } = await ensureProject(client, { workspace, title: path.basename(workspace), instanceId, model, projectId: intent.projectId, projectCommandId: intent.projectCommandId });
-    const result = await startThread(client, { projectId: project.id, title, message, instanceId, model, runtimeMode, threadId: intent.threadId, threadCommandId: intent.threadCommandId, turnCommandId: intent.turnCommandId, messageId: intent.messageId });
+    const { project, created } = await ensureProject(client, { workspace, title: path.basename(workspace), instanceId: modelSelection.instanceId, model: modelSelection.model, options: modelSelection.options, projectId: intent.projectId, projectCommandId: intent.projectCommandId });
+    const result = await startThread(client, { projectId: project.id, title, message, instanceId: modelSelection.instanceId, model: modelSelection.model, options: modelSelection.options, runtimeMode, threadId: intent.threadId, threadCommandId: intent.threadCommandId, turnCommandId: intent.turnCommandId, messageId: intent.messageId });
     return { ...result, projectCreated: created, idempotencyKey };
   } finally {
     release();
@@ -682,7 +758,7 @@ function makeIntent(source, message, messages, messageIndex, targetThreadId) {
   };
 }
 async function deliverIntent(client, intent, { instanceId, model }) {
-  return await startThread(client, { projectId: intent.sourceProjectId, title: `[Hermes] ${intent.sourceTitle}`, message: intent.prompt, instanceId, model, threadId: intent.targetThreadId, threadCommandId: intent.threadCommandId, turnCommandId: intent.turnCommandId, messageId: intent.targetMessageId });
+  return await startThread(client, { projectId: intent.sourceProjectId, title: `[Hermes] ${intent.sourceTitle}`, message: intent.prompt, instanceId, model, threadId: intent.targetThreadId, threadCommandId: intent.threadCommandId, turnCommandId: intent.turnCommandId, messageId: intent.targetMessageId, runtimeMode: "full-access" });
 }
 async function attemptIntent(client, state, messageId, intent, options, routed) {
   if (intent.nextAttemptAt > Date.now()) return;
@@ -727,7 +803,7 @@ async function routeMentionsLocked(client, { stateFile, instanceId, model, maxMe
     await attemptIntent(client, state, messageId, intent, { instanceId, model }, routed);
     writeBridgeState(state, stateFile);
   }
-  const shell = await client.shell();
+  const shell = await readOrchestrationSnapshot(client);
   const processed = new Set(state.processedMessageIds);
   for (const source of shell.threads || []) {
     if (routed.length >= maxMessages) break;
@@ -765,15 +841,24 @@ async function routeMentionsLocked(client, { stateFile, instanceId, model, maxMe
   return routed;
 }
 
-export async function doctor(client, {
-  hermesUrl = process.env.HERMES_URL || DEFAULT_HERMES_URL,
-  instanceId = DEFAULT_INSTANCE_ID,
-  fetchImpl = globalThis.fetch,
-} = {}) {
-  const shell = await client.shell();
-  const settings = await client.getSettings();
-  const config = await client.rpc("server.getConfig", {});
-  const provider = config.providers.find((entry) => entry.instanceId === instanceId);
+function modelSlugs(provider, limit = 8) {
+  const models = Array.isArray(provider?.models) ? provider.models : [];
+  return models.slice(0, limit).map((model) => {
+    if (typeof model === "string") return model;
+    return model?.slug || model?.id || model?.model || model?.name || null;
+  }).filter((value) => typeof value === "string" && value.length > 0);
+}
+
+function providerEnabled(settings, instanceId, configProvider) {
+  const catalog = settings?.providers?.[instanceId];
+  if (catalog && typeof catalog === "object" && catalog.enabled === false) return false;
+  const instance = settings?.providerInstances?.[instanceId];
+  if (instance && instance.enabled === false) return false;
+  if (configProvider?.status === "disabled") return false;
+  return true;
+}
+
+async function probeHermesHealth(hermesUrl, fetchImpl) {
   const hermesOrigin = requireLoopbackUrl(hermesUrl, "HERMES_URL");
   const hermesResponse = await fetchImpl(`${hermesOrigin}/health`, { redirect: "error", signal: AbortSignal.timeout(10_000) });
   if (!hermesResponse.ok) throw new Error(`Hermes health check failed (${hermesResponse.status})`);
@@ -784,16 +869,100 @@ export async function doctor(client, {
   if (!health || typeof health !== "object" || Array.isArray(health)) {
     throw new Error("Hermes health check returned an invalid payload");
   }
+  return { reachable: true, status: health.status || "ok", version: health.version || null };
+}
+
+function labRow({ instanceId, advertised, settings, configById }) {
+  const configProvider = configById.get(instanceId);
+  const instance = settings?.providerInstances?.[instanceId];
+  const enabled = providerEnabled(settings, instanceId, configProvider);
+  const installed = configProvider?.installed === true || Boolean(instance);
+  const ready = enabled && configProvider?.status === "ready";
+  const kind = labKind(instanceId);
+  const row = {
+    instanceId,
+    advertised,
+    kind,
+    enabled,
+    installed,
+    ready,
+    status: configProvider?.status || (instance ? "configured" : "absent"),
+    modelCount: Array.isArray(configProvider?.models) ? configProvider.models.length : 0,
+    models: modelSlugs(configProvider),
+    defaultModel: defaultModelForLab(instanceId),
+  };
+  if (typeof configProvider?.message === "string" && configProvider.message.trim()) {
+    row.message = configProvider.message.trim();
+  }
+  const install = labInstallHint(instanceId);
+  if (install && !ready) row.install = install;
+  return row;
+}
+
+export async function doctor(client, {
+  hermesUrl = process.env.HERMES_URL || DEFAULT_HERMES_URL,
+  instanceId = DEFAULT_INSTANCE_ID,
+  fetchImpl = globalThis.fetch,
+} = {}) {
+  const shell = await readOrchestrationSnapshot(client);
+  const settings = await client.getSettings();
+  const config = await client.rpc("server.getConfig", {});
+  const providers = Array.isArray(config?.providers) ? config.providers : [];
+  const configById = new Map(providers.map((entry) => [entry.instanceId, entry]));
+  const seen = new Set();
+  const labs = [];
+  for (const labId of ORIGINATE_LABS) {
+    labs.push(labRow({ instanceId: labId, advertised: true, settings, configById }));
+    seen.add(labId);
+  }
+  for (const entry of providers) {
+    if (!entry?.instanceId || seen.has(entry.instanceId)) continue;
+    labs.push(labRow({ instanceId: entry.instanceId, advertised: false, settings, configById }));
+    seen.add(entry.instanceId);
+  }
+  for (const extraId of Object.keys(settings?.providerInstances || {})) {
+    if (seen.has(extraId)) continue;
+    labs.push(labRow({ instanceId: extraId, advertised: ORIGINATE_LABS.includes(extraId), settings, configById }));
+  }
+
+  let hermes;
+  try {
+    hermes = await probeHermesHealth(hermesUrl, fetchImpl);
+  } catch (error) {
+    hermes = { reachable: false, errorType: error?.name || "Error", error: error?.message || "Hermes health check failed" };
+  }
+  const hermesLab = labs.find((lab) => lab.instanceId === "hermes");
+  if (hermesLab) {
+    hermesLab.health = hermes.reachable ? { status: hermes.status, version: hermes.version } : { reachable: false };
+  }
+
+  const provider = configById.get(instanceId);
   const nativeInstance = settings.providerInstances?.[NATIVE_GROK_INSTANCE_ID];
   const nativeConfig = nativeInstance && typeof nativeInstance.config === "object" && !Array.isArray(nativeInstance.config) ? nativeInstance.config : undefined;
   const nativeEnvelopeEnabled = nativeInstance ? nativeInstance.enabled ?? true : undefined;
   const nativeConfigEnabled = nativeConfig?.enabled;
   const nativeGrok = {
     instanceId: NATIVE_GROK_INSTANCE_ID,
-    present: Boolean(nativeInstance),
-    enabled: nativeEnvelopeEnabled ?? true,
+    present: Boolean(nativeInstance) || configById.has(NATIVE_GROK_INSTANCE_ID),
+    enabled: nativeEnvelopeEnabled ?? providerEnabled(settings, NATIVE_GROK_INSTANCE_ID, configById.get(NATIVE_GROK_INSTANCE_ID)),
     configEnabled: nativeConfigEnabled ?? true,
     disabled: nativeInstance !== undefined && (nativeEnvelopeEnabled === false || nativeConfigEnabled === false),
   };
-  return { t3: { reachable: true, projects: shell.projects.length, threads: shell.threads.length }, hermes: { reachable: true, status: health.status || "ok", version: health.version || null }, provider: { configured: Boolean(settings.providerInstances?.[instanceId]), instanceId, ready: provider?.status === "ready", installed: provider?.installed === true, status: provider?.status || null, modelCount: provider?.models?.length || 0 }, nativeGrok };
+  const projects = Array.isArray(shell?.projects) ? shell.projects.filter((entry) => entry?.deletedAt == null) : [];
+  const threads = Array.isArray(shell?.threads) ? shell.threads.filter((entry) => entry?.deletedAt == null && entry?.archivedAt == null) : [];
+  return {
+    product: "Tentacles",
+    t3: { reachable: true, projects: projects.length, threads: threads.length },
+    labs,
+    hermes,
+    provider: {
+      configured: Boolean(settings.providerInstances?.[instanceId]),
+      instanceId,
+      ready: provider?.status === "ready",
+      installed: provider?.installed === true,
+      status: provider?.status || null,
+      modelCount: provider?.models?.length || 0,
+    },
+    nativeGrok,
+  };
 }
