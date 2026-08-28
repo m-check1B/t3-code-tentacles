@@ -295,6 +295,6 @@ test("CLI help documents Pi provider commands", () => {
   assert.match(result.stdout, /Hermes was the first tentacle/);
   assert.match(result.stdout, /install-pi-provider \[--instance pi\] \[--model gpt-5\.6-terra\] \[--pi-provider openai-codex\]/);
   assert.match(result.stdout, /remove-pi-provider \[--instance pi\]/);
-  assert.match(result.stdout, /tentacles command is an exact alias of t3-agent-bridge/);
+  assert.match(result.stdout, /tentacles command is the public CLI\. t3-agent-bridge is an exact alias/);
   assert.match(result.stdout, /legacy t3-hermes command remains an exact compatibility alias/);
 });

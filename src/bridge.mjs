@@ -18,7 +18,14 @@ import {
   ensurePrivateDirectory,
   requireLoopbackUrl,
 } from "./config.mjs";
-import { requireExplicitRuntimeMode, resolveModelSelection } from "./model-selection.mjs";
+import {
+  defaultModelForLab,
+  labInstallHint,
+  labKind,
+  ORIGINATE_LABS,
+  requireExplicitRuntimeMode,
+  resolveModelSelection,
+} from "./model-selection.mjs";
 import { readBoundedResponseText, readOrchestrationSnapshot, T3HttpError } from "./t3-client.mjs";
 
 const HERMES_MENTION = /(^|\s)@hermes\b/i;
@@ -834,15 +841,24 @@ async function routeMentionsLocked(client, { stateFile, instanceId, model, maxMe
   return routed;
 }
 
-export async function doctor(client, {
-  hermesUrl = process.env.HERMES_URL || DEFAULT_HERMES_URL,
-  instanceId = DEFAULT_INSTANCE_ID,
-  fetchImpl = globalThis.fetch,
-} = {}) {
-  const shell = await readOrchestrationSnapshot(client);
-  const settings = await client.getSettings();
-  const config = await client.rpc("server.getConfig", {});
-  const provider = config.providers.find((entry) => entry.instanceId === instanceId);
+function modelSlugs(provider, limit = 8) {
+  const models = Array.isArray(provider?.models) ? provider.models : [];
+  return models.slice(0, limit).map((model) => {
+    if (typeof model === "string") return model;
+    return model?.slug || model?.id || model?.model || model?.name || null;
+  }).filter((value) => typeof value === "string" && value.length > 0);
+}
+
+function providerEnabled(settings, instanceId, configProvider) {
+  const catalog = settings?.providers?.[instanceId];
+  if (catalog && typeof catalog === "object" && catalog.enabled === false) return false;
+  const instance = settings?.providerInstances?.[instanceId];
+  if (instance && instance.enabled === false) return false;
+  if (configProvider?.status === "disabled") return false;
+  return true;
+}
+
+async function probeHermesHealth(hermesUrl, fetchImpl) {
   const hermesOrigin = requireLoopbackUrl(hermesUrl, "HERMES_URL");
   const hermesResponse = await fetchImpl(`${hermesOrigin}/health`, { redirect: "error", signal: AbortSignal.timeout(10_000) });
   if (!hermesResponse.ok) throw new Error(`Hermes health check failed (${hermesResponse.status})`);
@@ -853,18 +869,100 @@ export async function doctor(client, {
   if (!health || typeof health !== "object" || Array.isArray(health)) {
     throw new Error("Hermes health check returned an invalid payload");
   }
+  return { reachable: true, status: health.status || "ok", version: health.version || null };
+}
+
+function labRow({ instanceId, advertised, settings, configById }) {
+  const configProvider = configById.get(instanceId);
+  const instance = settings?.providerInstances?.[instanceId];
+  const enabled = providerEnabled(settings, instanceId, configProvider);
+  const installed = configProvider?.installed === true || Boolean(instance);
+  const ready = enabled && configProvider?.status === "ready";
+  const kind = labKind(instanceId);
+  const row = {
+    instanceId,
+    advertised,
+    kind,
+    enabled,
+    installed,
+    ready,
+    status: configProvider?.status || (instance ? "configured" : "absent"),
+    modelCount: Array.isArray(configProvider?.models) ? configProvider.models.length : 0,
+    models: modelSlugs(configProvider),
+    defaultModel: defaultModelForLab(instanceId),
+  };
+  if (typeof configProvider?.message === "string" && configProvider.message.trim()) {
+    row.message = configProvider.message.trim();
+  }
+  const install = labInstallHint(instanceId);
+  if (install && !ready) row.install = install;
+  return row;
+}
+
+export async function doctor(client, {
+  hermesUrl = process.env.HERMES_URL || DEFAULT_HERMES_URL,
+  instanceId = DEFAULT_INSTANCE_ID,
+  fetchImpl = globalThis.fetch,
+} = {}) {
+  const shell = await readOrchestrationSnapshot(client);
+  const settings = await client.getSettings();
+  const config = await client.rpc("server.getConfig", {});
+  const providers = Array.isArray(config?.providers) ? config.providers : [];
+  const configById = new Map(providers.map((entry) => [entry.instanceId, entry]));
+  const seen = new Set();
+  const labs = [];
+  for (const labId of ORIGINATE_LABS) {
+    labs.push(labRow({ instanceId: labId, advertised: true, settings, configById }));
+    seen.add(labId);
+  }
+  for (const entry of providers) {
+    if (!entry?.instanceId || seen.has(entry.instanceId)) continue;
+    labs.push(labRow({ instanceId: entry.instanceId, advertised: false, settings, configById }));
+    seen.add(entry.instanceId);
+  }
+  for (const extraId of Object.keys(settings?.providerInstances || {})) {
+    if (seen.has(extraId)) continue;
+    labs.push(labRow({ instanceId: extraId, advertised: ORIGINATE_LABS.includes(extraId), settings, configById }));
+  }
+
+  let hermes;
+  try {
+    hermes = await probeHermesHealth(hermesUrl, fetchImpl);
+  } catch (error) {
+    hermes = { reachable: false, errorType: error?.name || "Error", error: error?.message || "Hermes health check failed" };
+  }
+  const hermesLab = labs.find((lab) => lab.instanceId === "hermes");
+  if (hermesLab) {
+    hermesLab.health = hermes.reachable ? { status: hermes.status, version: hermes.version } : { reachable: false };
+  }
+
+  const provider = configById.get(instanceId);
   const nativeInstance = settings.providerInstances?.[NATIVE_GROK_INSTANCE_ID];
   const nativeConfig = nativeInstance && typeof nativeInstance.config === "object" && !Array.isArray(nativeInstance.config) ? nativeInstance.config : undefined;
   const nativeEnvelopeEnabled = nativeInstance ? nativeInstance.enabled ?? true : undefined;
   const nativeConfigEnabled = nativeConfig?.enabled;
   const nativeGrok = {
     instanceId: NATIVE_GROK_INSTANCE_ID,
-    present: Boolean(nativeInstance),
-    enabled: nativeEnvelopeEnabled ?? true,
+    present: Boolean(nativeInstance) || configById.has(NATIVE_GROK_INSTANCE_ID),
+    enabled: nativeEnvelopeEnabled ?? providerEnabled(settings, NATIVE_GROK_INSTANCE_ID, configById.get(NATIVE_GROK_INSTANCE_ID)),
     configEnabled: nativeConfigEnabled ?? true,
     disabled: nativeInstance !== undefined && (nativeEnvelopeEnabled === false || nativeConfigEnabled === false),
   };
   const projects = Array.isArray(shell?.projects) ? shell.projects.filter((entry) => entry?.deletedAt == null) : [];
   const threads = Array.isArray(shell?.threads) ? shell.threads.filter((entry) => entry?.deletedAt == null && entry?.archivedAt == null) : [];
-  return { t3: { reachable: true, projects: projects.length, threads: threads.length }, hermes: { reachable: true, status: health.status || "ok", version: health.version || null }, provider: { configured: Boolean(settings.providerInstances?.[instanceId]), instanceId, ready: provider?.status === "ready", installed: provider?.installed === true, status: provider?.status || null, modelCount: provider?.models?.length || 0 }, nativeGrok };
+  return {
+    product: "Tentacles",
+    t3: { reachable: true, projects: projects.length, threads: threads.length },
+    labs,
+    hermes,
+    provider: {
+      configured: Boolean(settings.providerInstances?.[instanceId]),
+      instanceId,
+      ready: provider?.status === "ready",
+      installed: provider?.installed === true,
+      status: provider?.status || null,
+      modelCount: provider?.models?.length || 0,
+    },
+    nativeGrok,
+  };
 }

@@ -11,3 +11,6 @@ media/**/snapshots*/
 media/**/.media/
 media/**/.hyperframes/frame-packets/
 media/**/CLAUDE.md
+
+# Local pulse/e2e scratch; never publish.
+.pulse-intents-*/

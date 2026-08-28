@@ -10,6 +10,49 @@ export const ORIGINATE_LABS = Object.freeze([
   "opencode",
 ]);
 
+export const ADAPTER_LABS = Object.freeze(["hermes", "pi", "deepseek", "kimi"]);
+export const EXPLICIT_LABS = Object.freeze(["cursor"]);
+
+export const LAB_DEFAULT_MODELS = Object.freeze({
+  hermes: process.env.T3_HERMES_MODEL || "openai-codex:gpt-5.6-sol",
+  pi: process.env.T3_PI_MODEL || "gpt-5.6-terra",
+  deepseek: process.env.T3_DEEPSEEK_MODEL || "deepseek-v4-flash",
+  kimi: process.env.T3_KIMI_MODEL || "kimi-code/k3",
+  grok: process.env.T3_GROK_MODEL || "grok-4.6",
+  codex: process.env.T3_CODEX_MODEL || "gpt-5.6-luna",
+  claudeAgent: process.env.T3_CLAUDE_MODEL || "claude-sonnet-5",
+  opencode: process.env.T3_OPENCODE_MODEL || "opencode/big-pickle",
+});
+
+export function labKind(instanceId) {
+  if (ADAPTER_LABS.includes(instanceId)) return "adapter";
+  if (EXPLICIT_LABS.includes(instanceId)) return "explicit";
+  return "native";
+}
+
+export function defaultModelForLab(instanceId) {
+  const id = requireNonEmptyString(instanceId, "instanceId");
+  if (Object.hasOwn(LAB_DEFAULT_MODELS, id)) return LAB_DEFAULT_MODELS[id];
+  return null;
+}
+
+export function labInstallHint(instanceId) {
+  switch (instanceId) {
+    case "hermes":
+      return "tentacles install-provider --instance hermes";
+    case "pi":
+      return "tentacles install-pi-provider --instance pi";
+    case "deepseek":
+      return "tentacles install-deepseek-provider --instance deepseek";
+    case "kimi":
+      return "tentacles install-kimi-provider --instance kimi";
+    case "cursor":
+      return "Enable the T3 Cursor instance, then originate with --instance cursor --model <advertised>";
+    default:
+      return null;
+  }
+}
+
 export const RUNTIME_MODES = Object.freeze([
   "approval-required",
   "auto-accept-edits",

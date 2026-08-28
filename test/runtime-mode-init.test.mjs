@@ -128,6 +128,10 @@ test("thread.create and thread.continue intents fail closed without an explicit 
     () => buildCommandFromIntent({ action: "thread.continue", threadId: "t1", text: "go" }, { commandId: "cd" }),
     /runtimeMode is required .*full-access/,
   );
+  assert.throws(
+    () => buildCommandFromIntent({ action: "thread.restart", threadId: "t1", text: "resume" }, { commandId: "restart" }),
+    /runtimeMode is required .*full-access/,
+  );
 
   const continued = buildCommandFromIntent({ action: "thread.continue", threadId: "t1", text: "go", runtimeMode: "full-access" }, { commandId: "ce" });
   assert.equal(continued.type, "thread.turn.start");

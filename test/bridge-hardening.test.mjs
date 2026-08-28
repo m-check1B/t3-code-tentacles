@@ -84,20 +84,68 @@ test("doctor bounds and validates the Hermes health response", async () => {
     getSettings: async () => ({ providerInstances: {} }),
     rpc: async () => ({ providers: [] }),
   };
-  await assert.rejects(
-    doctor(client, {
-      fetchImpl: async () => new Response(JSON.stringify({ status: "ok", padding: "x".repeat(65_536) })),
-    }),
-    /Hermes health response exceeds 65536 bytes/,
-  );
-  await assert.rejects(
-    doctor(client, { fetchImpl: async () => new Response("not-json") }),
-    /invalid JSON/,
-  );
+  const oversized = await doctor(client, {
+    fetchImpl: async () => new Response(JSON.stringify({ status: "ok", padding: "x".repeat(65_536) })),
+  });
+  assert.equal(oversized.hermes.reachable, false);
+  assert.match(oversized.hermes.error, /Hermes health response exceeds 65536 bytes/);
+  const invalid = await doctor(client, { fetchImpl: async () => new Response("not-json") });
+  assert.equal(invalid.hermes.reachable, false);
+  assert.match(invalid.hermes.error, /invalid JSON/);
   const result = await doctor(client, {
     fetchImpl: async () => new Response(JSON.stringify({ status: "ok", version: "test-version" })),
   });
   assert.equal(result.hermes.version, "test-version");
+  assert.equal(result.product, "Tentacles");
+  assert.equal(result.labs.length >= 9, true);
+  assert.deepEqual(result.labs.map((lab) => lab.instanceId).slice(0, 9), [
+    "hermes", "codex", "claudeAgent", "grok", "cursor", "deepseek", "kimi", "pi", "opencode",
+  ]);
+});
+
+test("doctor prints an advertised lab matrix without secrets and keeps Cursor explicit", async () => {
+  const client = {
+    snapshot: async () => ({ projects: [{ id: "p1" }], threads: [{ id: "t1" }] }),
+    getSettings: async () => ({
+      providers: {
+        grok: { enabled: true },
+        cursor: { enabled: false },
+        opencode: { enabled: true, serverPassword: "should-not-leak" },
+      },
+      providerInstances: {
+        grok: { driver: "grok", enabled: true, config: { binaryPath: "/tmp/grok" } },
+      },
+    }),
+    rpc: async () => ({
+      providers: [
+        { instanceId: "grok", driver: "grok", status: "ready", installed: true, models: [{ slug: "grok-4.6", name: "Grok 4.6" }] },
+        { instanceId: "codex", driver: "codex", status: "ready", installed: true, models: [{ slug: "gpt-5.6-luna" }] },
+        { instanceId: "claudeAgent", driver: "claudeAgent", status: "ready", installed: true, models: [{ slug: "claude-sonnet-5" }] },
+        { instanceId: "opencode", driver: "opencode", status: "ready", installed: true, models: [{ slug: "opencode/big-pickle" }] },
+        { instanceId: "cursor", driver: "cursor", status: "disabled", installed: false, models: [], message: "Cursor is disabled in T3 Code settings." },
+        { instanceId: "pi", driver: "grok", status: "error", installed: true, models: [{ slug: "gpt-5.6-terra" }], message: "Grok CLI is installed but ACP startup failed." },
+      ],
+    }),
+  };
+  const result = await doctor(client, {
+    fetchImpl: async () => { throw new Error("hermes down"); },
+  });
+  const byId = Object.fromEntries(result.labs.map((lab) => [lab.instanceId, lab]));
+  assert.equal(result.hermes.reachable, false);
+  assert.equal(byId.grok.ready, true);
+  assert.equal(byId.grok.kind, "native");
+  assert.equal(byId.codex.ready, true);
+  assert.equal(byId.claudeAgent.ready, true);
+  assert.equal(byId.opencode.ready, true);
+  assert.equal(byId.cursor.kind, "explicit");
+  assert.equal(byId.cursor.ready, false);
+  assert.equal(byId.hermes.kind, "adapter");
+  assert.equal(byId.hermes.ready, false);
+  assert.match(byId.hermes.install, /install-provider/);
+  assert.equal(byId.cursor.defaultModel, null);
+  assert.match(byId.cursor.message, /Cursor is disabled/);
+  assert.match(byId.pi.message, /ACP startup failed/);
+  assert.equal(JSON.stringify(result).includes("should-not-leak"), false);
 });
 
 test("missing or pruned cursor never replays an evicted historical mention", async () => {

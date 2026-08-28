@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping T3 Agent Bridge support more ACP harnesses safely.
+Thanks for helping Tentacles support more ACP harnesses safely.
 
 By participating, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 For setup help and security-reporting boundaries, see [SUPPORT.md](SUPPORT.md)

@@ -12,6 +12,8 @@ import {
 } from "../src/bridge.mjs";
 import {
   budgetOptionId,
+  defaultModelForLab,
+  labKind,
   ORIGINATE_LABS,
   parseModelOptionFlag,
   parseModelOptionFlags,
@@ -72,6 +74,17 @@ test("budgetOptionId maps only known lab effort knobs", () => {
   }
 });
 
+test("each advertised lab has a kind and only Cursor omits a default model", () => {
+  assert.equal(labKind("grok"), "native");
+  assert.equal(labKind("hermes"), "adapter");
+  assert.equal(labKind("cursor"), "explicit");
+  assert.equal(defaultModelForLab("grok"), "grok-4.6");
+  assert.equal(defaultModelForLab("codex"), "gpt-5.6-luna");
+  assert.equal(defaultModelForLab("claudeAgent"), "claude-sonnet-5");
+  assert.equal(defaultModelForLab("opencode"), "opencode/big-pickle");
+  assert.equal(defaultModelForLab("cursor"), null);
+});
+
 test("Cursor is an explicit non-default originate lab with no invented budget option", () => {
   assert.equal(ORIGINATE_LABS.includes("cursor"), true);
   assert.equal(DEFAULT_INSTANCE_ID, "hermes");
@@ -91,6 +104,18 @@ test("Cursor is an explicit non-default originate lab with no invented budget op
   ]);
   assert.equal(parsed.options.instance, "cursor");
   assert.equal(parsed.options["runtime-mode"], "full-access");
+
+  const missingModel = spawnSync(process.execPath, [
+    path.resolve("src/cli.mjs"),
+    "originate",
+    "--workspace", "/tmp/cursor-explicit",
+    "--title", "Cursor explicit",
+    "--message", "validate only",
+    "--instance", "cursor",
+    "--runtime-mode", "full-access",
+  ], { encoding: "utf8", env: { ...process.env, T3_URL: "http://127.0.0.1:9" } });
+  assert.equal(missingModel.status, 1);
+  assert.match(`${missingModel.stderr}`, /cursor is an explicit lab; pass --model/);
 });
 
 test("Cursor session-init commands preserve the explicit lab and full-access mode", async () => {

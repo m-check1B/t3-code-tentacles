@@ -2,13 +2,13 @@
 
 ## Supported versions
 
-Security fixes are applied to the latest released version. Version 0.2.0 is the
+Security fixes are applied to the latest released version. Version 0.3.0 is the
 currently supported line.
 
 ## Reporting a vulnerability
 
 Email private reports to `axis@verduona.com` with the subject
-`SECURITY: t3-agent-bridge`. Do not open a public issue containing a working
+`SECURITY: tentacles`. Do not open a public issue containing a working
 exploit, bearer token, private path, provider configuration, or user prompt.
 
 Include the affected version, impact, minimal reproduction, and any proposed

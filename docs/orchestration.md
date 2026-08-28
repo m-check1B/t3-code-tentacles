@@ -37,13 +37,17 @@ it through the bridge library, not a standalone verb.
 
 Each command carries an immutable `commandId` (for idempotent retry) and is
 projected back with the same exact-ID wait used by `originate`.
-`project.create` waits on the shell project snapshot; `thread.create` and
-`thread.continue` wait on thread/message projection. Caller-supplied
+`project.create` waits on the shell project snapshot; `thread.create` waits on
+thread projection. `thread.continue` and `thread.restart` wait until the exact
+user message reaches a live session or produces an assistant response; a
+projected user message followed by `session.status: error` fails with the
+session's real `lastError`. Caller-supplied
 `commandId` and `projectId` are preserved across verification polls so a
 timeout/retry cannot create a second project.
 
 ```bash
 t3-agent-bridge act --intent '{"action":"thread.continue","threadId":"...","text":"go","runtimeMode":"full-access"}'
+t3-agent-bridge act --intent '{"action":"thread.restart","threadId":"...","text":"resume","runtimeMode":"full-access"}'
 t3-agent-bridge act --intent-file intent.json
 t3-agent-bridge orchestrate --intent-file intents.json          # array of intents, in order
 t3-agent-bridge orchestrate --intent-file plan.json --no-wait   # fire-and-forget
@@ -61,6 +65,7 @@ An intent file is a JSON array of intents, or `{"intents": [...]}`.
 | `project.delete` | `projectId` | `project.delete` |
 | `thread.create` | `projectId`, `title`, `instanceId`, `model`, `runtimeMode` (`options` optional) | `thread.create` |
 | `thread.continue` | `threadId`, `text`, `runtimeMode` | `thread.turn.start` |
+| `thread.restart` | `threadId`, `text`, `runtimeMode` | ordered `thread.session.stop` + `thread.turn.start` |
 | `thread.interrupt` | `threadId` | `thread.turn.interrupt` |
 | `thread.stop` | `threadId` | `thread.session.stop` |
 | `thread.approval.respond` | `threadId`, `requestId`, `decision` | `thread.approval.respond` |
@@ -85,6 +90,12 @@ never a compliant operation. The bridge does not substitute any default.
 Optional `budget` (`low`/`medium`/`high`) fills the lab effort knob when that
 lab has a known id and no overlapping explicit option: `reasoningEffort` for
 `codex` and `hermes` (`openai-codex:*` models), `effort` for `claudeAgent`.
+
+`thread.continue` automatically performs the same ordered stop/start recovery
+when the projected session is already `error`. Use `thread.restart` explicitly
+when a provider transport is stale but T3 still projects the session as
+`ready` or `running`; healthy running Grok sessions continue normally and are
+not stopped by `thread.continue`.
 
 ## Orchestrator loop
 

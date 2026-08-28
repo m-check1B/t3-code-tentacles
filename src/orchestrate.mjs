@@ -246,6 +246,7 @@ const INTENT_ACTIONS = new Set([
   "project.delete",
   "thread.create",
   "thread.continue",
+  "thread.restart",
   "thread.interrupt",
   "thread.stop",
   "thread.approval.respond",
@@ -284,6 +285,7 @@ export function buildCommandFromIntent(intent, { commandId, createdAt } = {}) {
     case "thread.create":
       return threadCreate({ ...base, threadId: intent.threadId ?? randomUUID(), projectId: intent.projectId, title: intent.title, modelSelection: modelSelection(intent), runtimeMode: intent.runtimeMode });
     case "thread.continue":
+    case "thread.restart":
       return threadTurnStart({ ...base, threadId: intent.threadId, text: intent.text ?? "", runtimeMode: intent.runtimeMode, ...(intent.instanceId && intent.model ? { modelSelection: modelSelection(intent) } : {}), ...(intent.titleSeed !== undefined ? { titleSeed: intent.titleSeed } : {}) });
     case "thread.interrupt":
       return threadTurnInterrupt({ ...base, threadId: intent.threadId, ...(intent.turnId !== undefined ? { turnId: intent.turnId } : {}) });
@@ -349,6 +351,7 @@ function projectSession(session) {
     providerName: session.providerName ?? null,
     providerInstanceId: session.providerInstanceId ?? null,
     runtimeMode: session.runtimeMode ?? null,
+    lastError: session.lastError ?? null,
   };
 }
 
@@ -455,6 +458,50 @@ export async function waitForMessageProjection(client, threadId, messageId, { ti
   throw new Error(`Timed out waiting for message ${messageId} in thread ${threadId}`);
 }
 
+async function waitForStoppedSession(client, threadId, { timeoutMs = 15_000, intervalMs = 100 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const detail = await getThreadIfProjected(client, threadId);
+    if (detail && (detail.thread?.session == null || detail.thread.session.status === "stopped")) return detail;
+    await delay(intervalMs);
+  }
+  throw new Error(`Timed out waiting for T3 projection: stopped session in thread ${threadId}`);
+}
+
+export async function waitForTurnOutcome(client, threadId, messageId, {
+  baselineSession,
+  timeoutMs = 15_000,
+  intervalMs = 100,
+} = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const detail = await getThreadIfProjected(client, threadId);
+    const thread = detail?.thread;
+    const messages = recordArray(thread?.messages);
+    const messageIndex = messages.findIndex((message) => message.id === messageId);
+    if (messageIndex >= 0) {
+      const session = isRecord(thread?.session) ? thread.session : null;
+      if (session?.status === "error") {
+        throw new Error(`T3 thread ${threadId} entered error: ${session.lastError ?? "Unknown provider session error"}`);
+      }
+      const assistantProjected = messages
+        .slice(messageIndex + 1)
+        .some((message) => message.role === "assistant");
+      const activeSessionAdvanced = session !== null
+        && session.status === "running"
+        && (
+          baselineSession == null
+          || session.status !== baselineSession.status
+          || session.activeTurnId !== baselineSession.activeTurnId
+          || session.updatedAt !== baselineSession.updatedAt
+        );
+      if (assistantProjected || activeSessionAdvanced) return detail;
+    }
+    await delay(intervalMs);
+  }
+  throw new Error(`Timed out waiting for T3 turn outcome: message ${messageId} in thread ${threadId} never reached a live session or assistant response`);
+}
+
 export async function waitForProjectProjection(client, projectId, { timeoutMs = 15_000, intervalMs = 100 } = {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -471,11 +518,35 @@ export async function waitForProjectProjection(client, projectId, { timeoutMs = 
 // verification (off for fire-and-forget lifecycle commands).
 export async function applyIntent(client, intent, { wait = true, commandId, createdAt, timeoutMs, intervalMs } = {}) {
   const command = buildCommandFromIntent(intent, { commandId, createdAt });
+  let baseline = null;
+  let restartCommand = null;
+  let restartDispatchResult = null;
+  if (command.type === "thread.turn.start") {
+    baseline = await getThreadIfProjected(client, command.threadId);
+    const sessionStatus = baseline?.thread?.session?.status ?? null;
+    const shouldRestart = intent.action === "thread.restart"
+      || (intent.action === "thread.continue" && sessionStatus === "error");
+    if (shouldRestart && sessionStatus !== null && sessionStatus !== "stopped") {
+      restartCommand = threadSessionStop({
+        threadId: command.threadId,
+        commandId: `restart:${command.commandId}`,
+        createdAt: command.createdAt,
+      });
+      restartDispatchResult = await client.dispatch(restartCommand);
+      baseline = await waitForStoppedSession(client, command.threadId, { timeoutMs, intervalMs });
+    }
+  }
+  const baselineSession = isRecord(baseline?.thread?.session)
+    ? { ...baseline.thread.session }
+    : null;
   const dispatchResult = await client.dispatch(command);
   const waitOptions = { timeoutMs, intervalMs };
   let projection = null;
   if (wait && command.type === "thread.turn.start") {
-    projection = await waitForMessageProjection(client, command.threadId, command.message.messageId, waitOptions);
+    projection = await waitForTurnOutcome(client, command.threadId, command.message.messageId, {
+      ...waitOptions,
+      baselineSession,
+    });
   } else if (wait && command.type === "thread.create") {
     projection = await waitForThreadProjection(client, command.threadId, waitOptions);
   } else if (wait && command.type === "project.create") {
@@ -486,9 +557,18 @@ export async function applyIntent(client, intent, { wait = true, commandId, crea
     action: intent.action,
     commandId: command.commandId,
     dispatchResult,
+    ...(restartCommand !== null ? {
+      restartCommandId: restartCommand.commandId,
+      restartDispatchResult,
+    } : {}),
     threadId: command.threadId ?? intent.threadId ?? null,
     projectId: command.projectId ?? intent.projectId ?? null,
     projected: projection !== null,
+    ...(projection?.thread?.session ? {
+      sessionStatus: projection.thread.session.status ?? null,
+      activeTurnId: projection.thread.session.activeTurnId ?? null,
+      lastError: projection.thread.session.lastError ?? null,
+    } : {}),
   };
 }
 

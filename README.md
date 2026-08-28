@@ -3,38 +3,54 @@
 T3 Code tentacles — originate any ready lab (instance + model + budget).
 Hermes was the first tentacle, not the product.
 
-Repository documentation and integration authority boundaries start at
-[docs/README.md](docs/README.md). The GitHub repo and CLI binary remain
-`t3-agent-bridge`; `tentacles` is an exact command alias.
+The public GitHub repository is **Tentacles**. The public command is
+`tentacles`. `t3-agent-bridge` remains an exact compatibility alias.
 
-[![CI](https://github.com/m-check1B/t3-agent-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/m-check1B/t3-agent-bridge/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/m-check1B/t3-agent-bridge)](https://github.com/m-check1B/t3-agent-bridge/releases)
+Repository documentation and integration authority boundaries start at
+[docs/README.md](docs/README.md).
+
+[![CI](https://github.com/m-check1B/tentacles/actions/workflows/ci.yml/badge.svg)](https://github.com/m-check1B/tentacles/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/m-check1B/tentacles)](https://github.com/m-check1B/tentacles/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js 22+](https://img.shields.io/badge/node-%3E%3D22-43853d.svg)](package.json)
 
 Connect ACP agent harnesses to [T3 Code](https://github.com/pingdotgg/t3code)
-without forking either side. The included adapters support
-[Hermes Agent](https://github.com/NousResearch/hermes-agent) and
-[Pi Agent](https://github.com/Dicklesworthstone/pi_agent_rust); the repository
-name and command surface stay stable as more providers are added.
+without forking either side. T3 Code stays the polished multi-agent cockpit.
+Each lab keeps its own runtime, model, authentication, and tool configuration.
 
-This is a standalone, reversible bridge. T3 Code stays the polished multi-agent
-cockpit; Hermes and Pi stay independent ACP harnesses with their own runtime,
-model, authentication, and tool configuration.
+> **Project status:** early integration on macOS with Node.js 22 and T3 Code
+> 0.0.34. `tentacles doctor` prints the live lab matrix for *your* machine.
+> Do not treat this README as a claim that every lab is installed everywhere.
 
-> **Project status:** early integration, tested with T3 Code
-> 0.0.34-nightly.20260811.1064, Hermes Agent
-> 0.20.0, Pi Agent 0.1.23, and Node.js 22 on macOS. Other versions and platforms
-> are not yet verified—compatibility reports are welcome.
+## Lab matrix
+
+`tentacles doctor` is the source of truth. Advertised labs:
+
+| Lab | Kind | Default originate model | How it becomes ready |
+|---|---|---|---|
+| `grok` | T3 native | `grok-4.6` | Enable T3 Grok |
+| `codex` | T3 native | `gpt-5.6-luna` | Enable T3 Codex |
+| `claudeAgent` | T3 native | `claude-sonnet-5` | Enable T3 Claude Code |
+| `opencode` | T3 native | `opencode/big-pickle` | Enable T3 OpenCode |
+| `hermes` | Tentacles adapter | `openai-codex:gpt-5.6-sol` | `tentacles install-provider` |
+| `pi` | Tentacles adapter | `gpt-5.6-terra` | `tentacles install-pi-provider` |
+| `deepseek` | Tentacles adapter | `deepseek-v4-flash` | `tentacles install-deepseek-provider` |
+| `kimi` | Tentacles adapter | `kimi-code/k3` | `tentacles install-kimi-provider` |
+| `cursor` | Explicit, non-default | none — pass `--model` | Enable the T3 Cursor instance first |
+
+Every originate and every non-empty continue must pass
+`--runtime-mode full-access` / `"runtimeMode":"full-access"`. An omitted runtime
+mode fails closed.
 
 ## What works today
 
 | Flow | Result | Status |
 |---|---|---|
-| T3 Code → Hermes | Hermes appears as a normal T3 provider over ACP | Tested |
-| T3 Code → Pi | Pi appears as a parallel T3 provider; T3's picker switches Pi models over ACP | Tested |
-| Hermes → T3 Code | `t3-agent-bridge originate` creates a visible Hermes-backed T3 thread | Tested |
-| Any T3 thread → Hermes | A new `@hermes` message routes to one linked Hermes thread | Tested |
+| `tentacles doctor` | Lab matrix: advertised, enabled, installed, ready, models | Tested |
+| Ready lab → T3 thread | `tentacles originate --instance <lab>` creates a visible T3 thread | Tested per ready lab |
+| Continue that thread | `tentacles act` `thread.continue` with `runtimeMode: full-access` | Tested per ready lab |
+| T3 Code → Hermes / Pi / DeepSeek / Kimi | Adapter appears as a T3 provider over ACP when installed | Tested when installed |
+| Any T3 thread → Hermes | A new `@hermes` message routes to one linked Hermes thread | Tested when watcher is armed |
 | Existing T3 providers | Provider install/remove preserves unrelated instances | Tested |
 | Background routing | Reversible per-user macOS LaunchAgent or Linux systemd user unit | macOS tested; Linux unit-tested |
 | Inline Hermes reply in another provider's thread | Requires an upstream T3 extension point | Not available |
@@ -101,22 +117,33 @@ setting and refreshes the native provider. It is never run automatically by
 - Pi Agent 0.1.23+ for the optional Pi harness.
 - Node.js 22+.
 
-Clone the bridge and install the command shim:
+Clone Tentacles and install the command shims:
 
 ```bash
-git clone https://github.com/m-check1B/t3-agent-bridge.git
-cd t3-agent-bridge
+git clone https://github.com/m-check1B/tentacles.git
+cd tentacles
 mkdir -p ~/.local/bin
-t3_bridge_command="$HOME/.local/bin/t3-agent-bridge"
-if [ -e "$t3_bridge_command" ] || [ -L "$t3_bridge_command" ]; then
-  printf 'Refusing to replace existing path: %s\n' "$t3_bridge_command" >&2
-else
-  ln -s "$PWD/bin/t3-agent-bridge" "$t3_bridge_command"
-fi
-unset t3_bridge_command
+for cmd in tentacles t3-agent-bridge; do
+  dest="$HOME/.local/bin/$cmd"
+  if [ -e "$dest" ] || [ -L "$dest" ]; then
+    printf 'Refusing to replace existing path: %s\n' "$dest" >&2
+  else
+    ln -s "$PWD/bin/t3-agent-bridge" "$dest"
+  fi
+done
+unset cmd dest
 ```
 
-Ensure `~/.local/bin` is on your `PATH`.
+Ensure `~/.local/bin` is on your `PATH`. Then issue a local T3 token (next
+step) and run:
+
+```bash
+tentacles doctor
+```
+
+Doctor prints the advertised lab matrix for this machine. It does not print
+tokens, auth headers, or provider secrets. Originate a lab that doctor marks
+`ready`.
 
 The former `t3-hermes` command remains packaged as an exact compatibility
 alias. Existing ownership markers, LaunchAgent labels, and
@@ -148,10 +175,10 @@ Choose your Hermes profile and the T3 model identifier you want displayed. The
 defaults are `default` and the model used by the tested setup:
 
 ```bash
-t3-agent-bridge install-provider \
+tentacles install-provider \
   --profile default \
   --model openai-codex:gpt-5.6-sol
-t3-agent-bridge doctor
+tentacles doctor
 ```
 
 If your installation exposes a different model identifier, pass it with
@@ -228,14 +255,20 @@ as the Hermes and Pi providers.
 ### 4. Prove the reverse direction
 
 ```bash
-t3-agent-bridge originate \
+tentacles originate \
   --workspace "$PWD" \
-  --title "Hermes surfaced this" \
-  --message "This T3 thread originated through the standalone Hermes bridge." \
+  --title "Tentacles originated this" \
+  --message "This T3 thread originated through Tentacles." \
+  --instance grok \
   --runtime-mode full-access
 ```
 
-A new Hermes-backed thread should appear in T3 Code.
+Pass `--instance` for the ready lab you want (see the matrix). A new thread
+should appear in T3 Code. Continue it with:
+
+```bash
+tentacles act --intent '{"action":"thread.continue","threadId":"<id>","text":"continue","runtimeMode":"full-access"}'
+```
 
 Cursor is an explicit, non-default lab: pass `--instance cursor` together with
 the model T3 currently advertises for that instance. Tentacles does not install,
@@ -395,12 +428,14 @@ t3-agent-bridge remove-kimi-provider --instance kimi
 t3-agent-bridge remove-pi-provider --instance pi
 t3-agent-bridge remove-provider
 
-t3_bridge_command="$HOME/.local/bin/t3-agent-bridge"
-if [ "$(readlink "$t3_bridge_command" 2>/dev/null)" = "$PWD/bin/t3-agent-bridge" ]; then
-  rm -- "$t3_bridge_command"
-else
-  printf 'Refusing to remove unowned path: %s\n' "$t3_bridge_command" >&2
-fi
+for cmd in tentacles t3-agent-bridge; do
+  dest="$HOME/.local/bin/$cmd"
+  if [ "$(readlink "$dest" 2>/dev/null)" = "$PWD/bin/t3-agent-bridge" ]; then
+    rm -- "$dest"
+  else
+    printf 'Refusing to remove unowned path: %s\n' "$dest" >&2
+  fi
+done
 
 t3_bridge_skill="$HOME/.hermes/profiles/default/skills/t3-code-bridge"
 if [ -f "$t3_bridge_skill/.t3-hermes-bridge-owned" ] && \
@@ -412,7 +447,7 @@ else
   printf 'Refusing to remove unowned path: %s\n' "$t3_bridge_skill" >&2
 fi
 
-unset t3_bridge_command t3_bridge_skill
+unset cmd dest t3_bridge_skill
 ```
 
 Then revoke the issued T3 session. Provider removal is ownership-marked and

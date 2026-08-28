@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.0] - 2026-08-28
+
+### Public identity
+
+- Publish the product as **Tentacles**. The GitHub repository is `tentacles`.
+  The public command is `tentacles`; `t3-agent-bridge` remains an exact alias.
+- `doctor` prints an advertised lab matrix (ready / installed / explicit) and
+  no longer fails the whole command when Hermes health is down.
+- Originate picks a per-lab default model. Cursor stays explicit and requires
+  `--model`.
+- Continue recovers an errored session via ordered stop/start (`thread.restart`
+  and `thread.continue` on `session.status: error`).
+
+### Documentation
+
+- README install, doctor, and lab matrix match Tentacles. No secrets. GitHub
+  clone URL is `https://github.com/m-check1B/tentacles.git`.
+
 ## [0.2.1] - 2026-08-11
 
 ### Security and reliability
@@ -103,3 +121,4 @@ All notable changes to this project are documented here.
 [0.1.1]: https://github.com/m-check1B/t3-agent-bridge/releases/tag/v0.1.1
 [0.2.0]: https://github.com/m-check1B/t3-agent-bridge/releases/tag/v0.2.0
 [0.2.1]: https://github.com/m-check1B/t3-agent-bridge/releases/tag/v0.2.1
+[0.3.0]: https://github.com/m-check1B/tentacles/releases/tag/v0.3.0

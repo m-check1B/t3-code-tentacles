@@ -34,6 +34,7 @@ import {
   resolveExecutable,
 } from "./config.mjs";
 import {
+  defaultModelForLab,
   ORIGINATE_LABS,
   parseModelOptionFlags,
   requireExplicitRuntimeMode,
@@ -141,10 +142,10 @@ function resolveKimiExecutable(option) {
 
 export function usage() {
   return `Tentacles — T3 Code tentacles — originate any ready lab (instance + model + budget).
-Hermes was the first tentacle. The CLI binary remains t3-agent-bridge.
+Hermes was the first tentacle. The public command is tentacles; t3-agent-bridge is an exact alias.
 
 Usage:
-  t3-agent-bridge doctor
+  tentacles doctor
   t3-agent-bridge install-provider [--instance hermes] [--profile default] [--model MODEL]
   t3-agent-bridge remove-provider [--instance hermes]
   t3-agent-bridge install-pi-provider [--instance pi] [--model gpt-5.6-terra] [--pi-provider openai-codex]
@@ -166,8 +167,9 @@ Usage:
   t3-agent-bridge restart-service --profile PROFILE --instance INSTANCE
   t3-agent-bridge uninstall-service --profile PROFILE --instance INSTANCE
 
-The tentacles command is an exact alias of t3-agent-bridge.
+The tentacles command is the public CLI. t3-agent-bridge is an exact alias.
 The legacy t3-hermes command remains an exact compatibility alias.
+Run doctor to print the advertised lab matrix (ready / installed / explicit).
 
 Runtime mode invariant (POL-036 / POL-GB-016):
   Every originate and every non-empty continue runs full-access, for every lab
@@ -233,6 +235,20 @@ async function main() {
   }
   const instanceId = options.instance || DEFAULT_INSTANCE_ID;
   const model = options.model || DEFAULT_MODEL;
+  let originateSelection = null;
+  if (command === "originate") {
+    const labInstanceId = options.instance || DEFAULT_INSTANCE_ID;
+    const labModel = options.model || defaultModelForLab(labInstanceId);
+    if (!labModel) {
+      throw new Error(`${labInstanceId} is an explicit lab; pass --model with a model T3 currently advertises`);
+    }
+    originateSelection = resolveModelSelection({
+      instanceId: labInstanceId,
+      model: labModel,
+      options: parseModelOptionFlags(options.option),
+      budget: options.budget,
+    });
+  }
 
   if (command === "install-service") {
     console.log(JSON.stringify(installService({ cliPath: fileURLToPath(import.meta.url), ...serviceOptions(options) }), null, 2));
@@ -347,19 +363,13 @@ async function main() {
     return;
   }
   if (command === "originate") {
-    const modelSelection = resolveModelSelection({
-      instanceId,
-      model,
-      options: parseModelOptionFlags(options.option),
-      budget: options.budget,
-    });
     const result = await originate(client, {
       workspace: path.resolve(required(options, "workspace")),
       title: required(options, "title"),
       message: required(options, "message"),
-      instanceId: modelSelection.instanceId,
-      model: modelSelection.model,
-      options: modelSelection.options,
+      instanceId: originateSelection.instanceId,
+      model: originateSelection.model,
+      options: originateSelection.options,
       runtimeMode: requireExplicitRuntimeMode(options["runtime-mode"], "--runtime-mode"),
       idempotencyKey: options["idempotency-key"],
       stateFile: options["state-file"],

@@ -1,6 +1,11 @@
 # Launch Kit
 
-Use these public-safe messages when sharing T3 Agent Bridge. Keep real tokens,
+Historical drafts. The public GitHub repository is now **Tentacles**
+(`https://github.com/m-check1B/tentacles`). Social posts are tracked on
+KRA-5563 and require Matej approval before any post. Do not treat this file as
+permission to publish.
+
+Use these public-safe messages only after that approval. Keep real tokens,
 local paths, private threads, and unrelated work off-screen.
 
 ## One-line positioning

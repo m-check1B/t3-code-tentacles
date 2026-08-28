@@ -64,6 +64,7 @@ test("buildCommandFromIntent maps the full intent vocabulary", () => {
     [{ action: "project.delete", projectId: "p1" }, "project.delete"],
     [{ action: "thread.create", projectId: "p1", title: "T", instanceId: "codex", model: "gpt-5.6-sol", runtimeMode: "full-access" }, "thread.create"],
     [{ action: "thread.continue", threadId: "t1", text: "go", runtimeMode: "full-access" }, "thread.turn.start"],
+    [{ action: "thread.restart", threadId: "t1", text: "resume", runtimeMode: "full-access" }, "thread.turn.start"],
     [{ action: "thread.interrupt", threadId: "t1" }, "thread.turn.interrupt"],
     [{ action: "thread.stop", threadId: "t1" }, "thread.session.stop"],
     [{ action: "thread.approval.respond", threadId: "t1", requestId: "r1", decision: "decline" }, "thread.approval.respond"],
@@ -137,14 +138,110 @@ test("applyIntent dispatches, projects, and returns evidence", async () => {
   const commands = [];
   const client = {
     dispatch: async (command) => { commands.push(command); return { sequence: commands.length }; },
-    thread: async () => ({ thread: { id: "t1", messages: [{ id: commands[0].message.messageId }] } }),
+    thread: async () => ({ thread: {
+      id: "t1",
+      messages: commands[0]?.message ? [{ id: commands[0].message.messageId, role: "user" }] : [],
+      session: commands.length === 0
+        ? { status: "ready", activeTurnId: null, updatedAt: "before", lastError: null }
+        : { status: "running", activeTurnId: "turn-1", updatedAt: "after", lastError: null },
+    } }),
   };
   const result = await applyIntent(client, { action: "thread.continue", threadId: "t1", text: "go", runtimeMode: "full-access" }, { commandId: "cc" });
   assert.equal(result.action, "thread.continue");
   assert.equal(result.commandId, "cc");
   assert.equal(result.projected, true);
+  assert.equal(result.sessionStatus, "running");
+  assert.equal(result.lastError, null);
   assert.equal(commands[0].type, "thread.turn.start");
   assert.equal(commands[0].message.text, "go");
+});
+
+test("thread.continue restarts an errored session before dispatching the turn", async () => {
+  const commands = [];
+  const thread = {
+    id: "t1",
+    messages: [],
+    session: { status: "error", activeTurnId: null, updatedAt: "failed", lastError: "native grok transport failed" },
+  };
+  const client = {
+    thread: async () => ({ thread }),
+    dispatch: async (command) => {
+      commands.push(command);
+      if (command.type === "thread.session.stop") {
+        thread.session = { ...thread.session, status: "stopped" };
+      } else if (command.type === "thread.turn.start") {
+        thread.messages.push({ id: command.message.messageId, role: "user" });
+        thread.session = { status: "running", activeTurnId: "restarted-turn", updatedAt: "restarted", lastError: null };
+      }
+      return { sequence: commands.length };
+    },
+  };
+  const result = await applyIntent(client, {
+    action: "thread.continue",
+    threadId: "t1",
+    text: "recover",
+    runtimeMode: "full-access",
+  }, { commandId: "continue-1", intervalMs: 0, timeoutMs: 1_000 });
+  assert.deepEqual(commands.map((command) => command.type), ["thread.session.stop", "thread.turn.start"]);
+  assert.equal(commands[0].commandId, "restart:continue-1");
+  assert.equal(result.restartCommandId, "restart:continue-1");
+  assert.equal(result.sessionStatus, "running");
+});
+
+test("thread.restart explicitly replaces a stale running session", async () => {
+  const commands = [];
+  const thread = {
+    id: "t1",
+    messages: [],
+    session: { status: "running", activeTurnId: "stale", updatedAt: "stale", lastError: null },
+  };
+  const client = {
+    thread: async () => ({ thread }),
+    dispatch: async (command) => {
+      commands.push(command);
+      if (command.type === "thread.session.stop") thread.session = { ...thread.session, status: "stopped", activeTurnId: null };
+      if (command.type === "thread.turn.start") {
+        thread.messages.push({ id: command.message.messageId, role: "user" });
+        thread.session = { status: "running", activeTurnId: "fresh", updatedAt: "fresh", lastError: null };
+      }
+      return { sequence: commands.length };
+    },
+  };
+  await applyIntent(client, {
+    action: "thread.restart",
+    threadId: "t1",
+    text: "restart",
+    runtimeMode: "full-access",
+  }, { commandId: "explicit-1", intervalMs: 0, timeoutMs: 1_000 });
+  assert.deepEqual(commands.map((command) => command.type), ["thread.session.stop", "thread.turn.start"]);
+});
+
+test("turn projection reports the real provider error instead of projected true", async () => {
+  const commands = [];
+  const thread = {
+    id: "t1",
+    messages: [],
+    session: { status: "ready", activeTurnId: null, updatedAt: "before", lastError: null },
+  };
+  const client = {
+    thread: async () => ({ thread }),
+    dispatch: async (command) => {
+      commands.push(command);
+      thread.messages.push({ id: command.message.messageId, role: "user" });
+      thread.session = { status: "error", activeTurnId: null, updatedAt: "failed", lastError: "native grok session/prompt failed" };
+      return { sequence: 1 };
+    },
+  };
+  await assert.rejects(
+    applyIntent(client, {
+      action: "thread.continue",
+      threadId: "t1",
+      text: "fail",
+      runtimeMode: "full-access",
+    }, { intervalMs: 0, timeoutMs: 1_000 }),
+    /native grok session\/prompt failed/,
+  );
+  assert.equal(commands.length, 1);
 });
 
 test("applyIntent skips projection when wait is false", async () => {
@@ -207,7 +304,7 @@ test("observe surfaces pending work, active turns, and archived threads", async 
       projects: [{ id: "p1", title: "P", workspaceRoot: "/w" }],
       threads: [
         { id: "t1", projectId: "p1", title: "Approval", messages: [{ role: "user", text: "must not escape observe" }], activities: [{ kind: "approval.requested", payload: { requestId: "approval-1", detail: "must not escape observe" } }], modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" }, session: { status: "ready", activeTurnId: "turn1", providerName: "Codex" } },
-        { id: "t2", projectId: "p1", title: "Idle", hasPendingApprovals: false, hasPendingUserInput: false, session: { status: "idle", activeTurnId: null } },
+        { id: "t2", projectId: "p1", title: "Idle", hasPendingApprovals: false, hasPendingUserInput: false, session: { status: "idle", activeTurnId: null, lastError: "native grok transport closed" } },
       ],
     }),
     shell: async () => { throw new Error("hanging shell endpoint must not be called"); },
@@ -222,6 +319,7 @@ test("observe surfaces pending work, active turns, and archived threads", async 
   assert.equal(state.pendingWork[0].threadId, "t1");
   assert.equal(state.pendingWork[0].approvals, true);
   assert.equal(state.activeTurns[0].activeTurnId, "turn1");
+  assert.equal(state.threads[1].session.lastError, "native grok transport closed");
   assert.equal(Object.hasOwn(state.threads[0], "messages"), false);
   assert.equal(Object.hasOwn(state.threads[0], "activities"), false);
 });
