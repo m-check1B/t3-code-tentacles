@@ -18,7 +18,7 @@ All notable changes to this project are documented here.
 ### Documentation
 
 - README install, doctor, and lab matrix match Tentacles. No secrets. GitHub
-  clone URL is `https://github.com/m-check1B/tentacles.git`.
+  clone URL is `https://github.com/m-check1B/t3-code-tentacles.git`.
 - `tentacles doctor` prints a human-readable lab matrix for this machine;
   `--json` keeps the machine-readable document. Advertised is not proved.
 - README separates advertised labs from e2e proof: Grok, Codex, OpenCode, and
@@ -135,4 +135,4 @@ All notable changes to this project are documented here.
 [0.1.1]: https://github.com/m-check1B/t3-agent-bridge/releases/tag/v0.1.1
 [0.2.0]: https://github.com/m-check1B/t3-agent-bridge/releases/tag/v0.2.0
 [0.2.1]: https://github.com/m-check1B/t3-agent-bridge/releases/tag/v0.2.1
-[0.3.0]: https://github.com/m-check1B/tentacles/releases/tag/v0.3.0
+[0.3.0]: https://github.com/m-check1B/t3-code-tentacles/releases/tag/v0.3.0

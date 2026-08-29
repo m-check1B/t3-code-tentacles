@@ -10,8 +10,8 @@ commercial support contract or guaranteed response time.
 2. Confirm the tested baseline or record your exact versions: Node.js, T3 Code,
    Hermes Agent, operating system, and architecture. Include the doctor row for
    the lab that failed (`ready` / `status` / redacted `message`).
-3. Search [existing issues](https://github.com/m-check1B/tentacles/issues)
-   and the [Discussions](https://github.com/m-check1B/tentacles/discussions).
+3. Search [existing issues](https://github.com/m-check1B/t3-code-tentacles/issues)
+   and the [Discussions](https://github.com/m-check1B/t3-code-tentacles/discussions).
 4. Remove bearer tokens, authorization headers, usernames, local paths, prompts,
    private project names, and complete state files from all output.
 

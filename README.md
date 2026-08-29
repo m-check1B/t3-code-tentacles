@@ -1,4 +1,4 @@
-# Tentacles
+# T3 Code Tentacles and Labs
 
 Originate a [T3 Code](https://github.com/pingdotgg/t3code) lab from the command
 line — instance, model, and budget — without forking T3 or the agent harness.
@@ -13,8 +13,8 @@ The public product name is **Tentacles**. The public command is `tentacles`.
 `t3-agent-bridge` is an exact compatibility alias. GitHub is the public face of
 this repository; it is not a claim that every advertised lab is green.
 
-[![CI](https://github.com/m-check1B/tentacles/actions/workflows/ci.yml/badge.svg)](https://github.com/m-check1B/tentacles/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/m-check1B/tentacles)](https://github.com/m-check1B/tentacles/releases)
+[![CI](https://github.com/m-check1B/t3-code-tentacles/actions/workflows/ci.yml/badge.svg)](https://github.com/m-check1B/t3-code-tentacles/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/m-check1B/t3-code-tentacles)](https://github.com/m-check1B/t3-code-tentacles/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js 22+](https://img.shields.io/badge/node-%3E%3D22-43853d.svg)](package.json)
 
@@ -100,8 +100,8 @@ It does not impersonate the assistant inside another provider's existing thread.
 Clone Tentacles and install the command shims:
 
 ```bash
-git clone https://github.com/m-check1B/tentacles.git
-cd tentacles
+git clone https://github.com/m-check1B/t3-code-tentacles.git
+cd t3-code-tentacles
 mkdir -p ~/.local/bin
 for cmd in tentacles t3-agent-bridge; do
   dest="$HOME/.local/bin/$cmd"

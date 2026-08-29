@@ -1,7 +1,7 @@
 # Launch Kit
 
 Historical drafts. The public product name is **Tentacles**
-(`https://github.com/m-check1B/tentacles`). Social posts are tracked on
+(`https://github.com/m-check1B/t3-code-tentacles`). Social posts are tracked on
 KRA-5563 and require Matej approval before any post. Do not treat this file as
 permission to publish. Do not invent SKUs. Do not sell Orbit.
 
