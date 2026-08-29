@@ -129,7 +129,7 @@ test("pair state refuses broad custom directories and serializes pairer ownershi
 
   fs.writeFileSync(`${stateFile}.lock`, JSON.stringify({
     version: 1,
-    owner: "11111111-1111-4111-8111-111111111111",
+    owner: "deadbeef-dead-4eef-8ead-deadbeefdead",
     pid: 999_999_999,
   }), { mode: 0o600 });
   const recovered = acquirePairStateLock(stateFile);
@@ -145,8 +145,8 @@ test("pair state refuses broad custom directories and serializes pairer ownershi
 test("loopback adapter keeps the relay surface honest about full-access", async () => {
   const calls = [];
   const adapter = new LoopbackRuntimeAdapter({
-    client: { local: true },
-    observeImpl: async (client) => ({ seats: [client.local] }),
+    client: { isLoopback: true },
+    observeImpl: async (client) => ({ seats: [client.isLoopback] }),
     originateImpl: async (client, params) => { calls.push(["originate", client, params]); return { threadId: "t1" }; },
     continueImpl: async (client, params) => { calls.push(["continue", client, params]); return { threadId: params.threadId }; },
     doctorImpl: async (_client, params) => ({ pairing: params.pairStateFile }),
@@ -300,6 +300,26 @@ test("bind acknowledgement refuses to consume a replaced offer path", async () =
   assert.equal(fs.existsSync(pairFile), true);
   assert.equal(fs.existsSync(originalFile), true);
   assert.equal(outcome.error.message.includes(PAIR_TOKEN), false);
+});
+
+test("abort before socket open never sends the one-shot pair offer", async () => {
+  FakeWebSocket.instances = [];
+  const directory = temporaryDirectory("pair-abort-before-open");
+  const pairFile = writeOffer(directory);
+  const stateFile = path.join(directory, "presence.json");
+  const controller = new AbortController();
+  const runtime = { seats: async () => null, originate: async () => null, continue: async () => null, doctorStatus: async () => null };
+  const pairer = new OutboundPairer({ runtime, WebSocketImpl: FakeWebSocket, pairStateFile: stateFile });
+  const runResult = pairer.run({ pairFile, machineId: "sphere-machine-1", signal: controller.signal });
+  const socket = await waitFor(() => FakeWebSocket.instances[0], "aborted outbound socket");
+
+  controller.abort();
+  assert.deepEqual(await runResult, { status: "unpaired" });
+  socket.emit("open");
+
+  assert.deepEqual(socket.sent, []);
+  assert.equal(fs.existsSync(pairFile), true);
+  assert.deepEqual(readPairPresence(stateFile), { status: "unpaired" });
 });
 
 test("expired pair offers fail closed without exposing pair tokens", async () => {
