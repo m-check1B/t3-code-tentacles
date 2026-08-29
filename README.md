@@ -185,7 +185,7 @@ Tentacles lab proof.
 | Kimi CLI | Proved | Fresh Kimi CLI originate + non-empty continue answered through OpenRouter on `moonshotai/kimi-k3` |
 | DeepSeek CLI | Proved | Fresh DeepSeek CLI originate + non-empty continue answered through OpenRouter on `deepseek/deepseek-v4-flash`; no official DeepSeek key was used |
 | Hermes lab | Blocked | Live `openai-codex:gpt-5.6-sol` originate fell through to DeepSeek and returned HTTP 402; fail-closed behavior is not proved live |
-| Pi CLI | Blocked | ACP `initialize` reports invalidated OpenAI-Codex OAuth refresh (HTTP 401); interactive Pi re-login is required |
+| Pi CLI | Proved | Human-approved OpenAI-Codex OAuth re-login, then fresh Pi originate + non-empty continue answered on `gpt-5.6-terra` |
 
 Every originate and every non-empty continue must pass
 `--runtime-mode full-access` / `"runtimeMode":"full-access"`. An omitted runtime
@@ -358,9 +358,11 @@ quit T3, move `~/.t3/caches/pi.json` to a private backup, reopen T3, and rerun
 models across refreshes, so changing the relay alone cannot prune that stale
 cache in place. Fresh v0.2 installations do not populate it.
 
-On this machine Pi is blocked at ACP `initialize`: its OpenAI-Codex OAuth
-refresh token was invalidated and the provider returned HTTP 401. Interactive
-Pi re-login is required before expecting an assistant.
+On this machine Pi 0.1.23 was re-authenticated through its human-approved
+OpenAI-Codex OAuth flow on 2026-08-29. Tentacles doctor then reported Pi ready,
+and a fresh `gpt-5.6-terra` originate plus non-empty continue both answered with
+`runtimeMode: full-access`. A future invalidated refresh still requires a human
+to run Pi's `/login openai-codex` flow; Tentacles never handles those credentials.
 
 ### OpenRouter: Claude, Kimi, and DeepSeek
 
