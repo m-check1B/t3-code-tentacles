@@ -9,9 +9,15 @@
   config:
     thinking: enabled
     reasoningEffort: max
+    # dsh defaults to 256k output tokens, which exceeds the entire context
+    # window of some OpenRouter models (including Claude 3 Haiku). Adapter
+    # instances can select a smaller fail-closed cap without putting provider
+    # credentials or request content in argv.
+    maxTokens: !!js "Number(process.env.DSH_MAX_TOKENS ?? 256000)"
     models:
       - id: deepseek/deepseek-v4-flash
       - id: deepseek/deepseek-v4-pro
+      - id: anthropic/claude-3-haiku
 
 - id: sandbox
   name: '@deepseek-ai/dsh-sandbox-local'

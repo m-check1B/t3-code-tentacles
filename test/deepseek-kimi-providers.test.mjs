@@ -25,6 +25,7 @@ import {
 
 const WRAPPER_DEEPSEEK = path.resolve("bin", "t3-deepseek-acp");
 const WRAPPER_KIMI = path.resolve("bin", "t3-kimi-acp");
+const DSH_CONFIG = path.resolve("config", "dsh-acp.cordis.yml");
 
 function settingsClient(instances = {}) {
   let current = instances;
@@ -143,18 +144,35 @@ test("removeKimiProvider refuses foreign instances, reports absent, removes owne
   assert.equal("kimi" in owned.instances(), false);
 });
 
-test("Claude OpenRouter is a distinct Kimi-backed provider and ownership boundary", async () => {
+test("Claude OpenRouter is a distinct DSH-backed provider with a bounded output budget", async () => {
   const client = settingsClient();
-  const result = await installClaudeOpenRouterProvider(client, { wrapperPath: WRAPPER_KIMI, kimiBin: "/opt/kimi/bin/kimi" });
+  const result = await installClaudeOpenRouterProvider(client, { wrapperPath: WRAPPER_DEEPSEEK, dshAcpBin: "/opt/dsh/bin/dsh-acp" });
   assert.equal(result.provider.instanceId, "claude-openrouter");
   const instance = client.instances()["claude-openrouter"];
   assert.equal(instance.displayName, "Claude via OpenRouter");
+  assert.equal(instance.config.binaryPath, WRAPPER_DEEPSEEK);
   assert.deepEqual(instance.config.customModels, ["anthropic/claude-3-haiku"]);
   const env = envMap(instance);
   assert.equal(env.get("T3_HERMES_BRIDGE_HARNESS"), "claude-openrouter");
-  assert.equal(env.get("KIMI_MODEL"), "anthropic/claude-3-haiku");
+  assert.equal(env.get("DSH_ACP_BIN"), "/opt/dsh/bin/dsh-acp");
+  assert.equal(env.get("DEEPSEEK_MODEL"), "anthropic/claude-3-haiku");
+  assert.equal(env.get("DSH_MAX_TOKENS"), "8192");
+  assert.equal(env.has("KIMI_BIN"), false);
   assert.deepEqual(await removeClaudeOpenRouterProvider(client), { removed: true });
   assert.equal("claude-openrouter" in client.instances(), false);
+});
+
+test("Claude OpenRouter requires an absolute dsh-acp path and refuses foreign instances", async () => {
+  const client = settingsClient();
+  await assert.rejects(
+    installClaudeOpenRouterProvider(client, { wrapperPath: WRAPPER_DEEPSEEK, dshAcpBin: "dsh-acp" }),
+    /absolute dsh-acp executable path/,
+  );
+  const foreign = settingsClient({ "claude-openrouter": { driver: "grok", environment: [] } });
+  await assert.rejects(
+    installClaudeOpenRouterProvider(foreign, { wrapperPath: WRAPPER_DEEPSEEK }),
+    /not owned by the Claude via OpenRouter harness/,
+  );
 });
 
 test("providerHarness classification stays stable for legacy hermes and pi instances", () => {
@@ -240,4 +258,10 @@ test("buildLaunchPlan keeps the key out of argv and prepares a private sessions 
   });
   assert.equal(overridden.env.DEEPSEEK_MODEL, "deepseek-v4-pro");
   assert.equal(overridden.env.DSH_PERMISSION_MODE, "danger-full-access");
+});
+
+test("bridge DSH config bounds Claude output below its OpenRouter context window", () => {
+  const config = fs.readFileSync(DSH_CONFIG, "utf8");
+  assert.match(config, /maxTokens: !!js "Number\(process\.env\.DSH_MAX_TOKENS \?\? 256000\)"/);
+  assert.match(config, /- id: anthropic\/claude-3-haiku/);
 });

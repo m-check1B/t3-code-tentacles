@@ -160,7 +160,7 @@ Usage:
   tentacles remove-deepseek-provider [--instance deepseek]
   tentacles install-kimi-provider [--instance kimi] [--model moonshotai/kimi-k3] [--kimi-bin PATH]
   tentacles remove-kimi-provider [--instance kimi]
-  tentacles install-claude-openrouter-provider [--instance claude-openrouter] [--model anthropic/claude-3-haiku] [--kimi-bin PATH]
+  tentacles install-claude-openrouter-provider [--instance claude-openrouter] [--model anthropic/claude-3-haiku] [--dsh-acp-bin PATH]
   tentacles remove-claude-openrouter-provider [--instance claude-openrouter]
   tentacles restore-native-grok
   tentacles use-native-grok-cached-auth
@@ -353,10 +353,10 @@ async function main() {
     const claudeInstanceId = options.instance || DEFAULT_CLAUDE_OPENROUTER_INSTANCE_ID;
     const claudeModel = options.model || DEFAULT_CLAUDE_OPENROUTER_MODEL;
     const result = await installClaudeOpenRouterProvider(client, {
-      wrapperPath: path.join(repoRoot, "bin", "t3-kimi-acp"),
+      wrapperPath: path.join(repoRoot, "bin", "t3-deepseek-acp"),
       instanceId: claudeInstanceId,
       model: claudeModel,
-      kimiBin: resolveKimiExecutable(options["kimi-bin"]),
+      dshAcpBin: resolveDshAcpExecutable(options["dsh-acp-bin"]),
     });
     console.log(JSON.stringify({ installed: true, instanceId: claudeInstanceId, provider: result.provider?.instanceId || claudeInstanceId }, null, 2));
     return;

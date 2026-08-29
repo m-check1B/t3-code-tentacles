@@ -386,17 +386,40 @@ export async function installClaudeOpenRouterProvider(client, {
   wrapperPath,
   instanceId = DEFAULT_CLAUDE_OPENROUTER_INSTANCE_ID,
   model = DEFAULT_CLAUDE_OPENROUTER_MODEL,
-  kimiBin,
+  dshAcpBin,
 } = {}) {
-  return installKimiBackedOpenRouterProvider(client, {
-    wrapperPath,
-    instanceId,
-    model,
-    kimiBin,
-    harness: CLAUDE_OPENROUTER_HARNESS_VALUE,
-    displayName: "Claude via OpenRouter",
-    accentColor: "#D97706",
-  });
+  if (!wrapperPath || !path.isAbsolute(wrapperPath)) throw new Error("install-claude-openrouter-provider requires an absolute ACP wrapper path");
+  if (dshAcpBin !== undefined && (!dshAcpBin || !path.isAbsolute(dshAcpBin))) throw new Error("install-claude-openrouter-provider requires an absolute dsh-acp executable path");
+  const settings = await client.getSettings();
+  const current = settings.providerInstances || {};
+  if (hasRedactedSecrets(current)) {
+    throw new Error("Refusing provider map replacement because T3 returned redacted provider secrets; use the T3 settings UI or remove those secrets first");
+  }
+  if (current[instanceId] && providerHarness(current[instanceId]) !== CLAUDE_OPENROUTER_HARNESS_VALUE) {
+    throw new Error(`Refusing to replace provider instance '${instanceId}' because it is not owned by the Claude via OpenRouter harness`);
+  }
+  const environment = [
+    { name: BRIDGE_OWNER_VARIABLE, value: BRIDGE_OWNER_VALUE, sensitive: false },
+    { name: BRIDGE_HARNESS_VARIABLE, value: CLAUDE_OPENROUTER_HARNESS_VALUE, sensitive: false },
+  ];
+  if (dshAcpBin) environment.push({ name: "DSH_ACP_BIN", value: dshAcpBin, sensitive: false });
+  environment.push(
+    { name: "DEEPSEEK_MODEL", value: model, sensitive: false },
+    { name: "DSH_MAX_TOKENS", value: "8192", sensitive: false },
+  );
+  const providerInstances = {
+    ...current,
+    [instanceId]: {
+      driver: "grok",
+      displayName: "Claude via OpenRouter",
+      accentColor: "#D97706",
+      enabled: true,
+      environment,
+      config: { binaryPath: wrapperPath, customModels: [model] },
+    },
+  };
+  await client.updateSettings({ providerInstances });
+  return await client.refreshProvider(instanceId);
 }
 
 export async function removeKimiProvider(client, { instanceId = DEFAULT_KIMI_INSTANCE_ID } = {}) {

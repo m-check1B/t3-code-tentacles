@@ -181,9 +181,9 @@ Tentacles lab proof.
 | Additive path | E2E | Notes |
 |---|---|---|
 | Chair CLI | Proved from Grok Bot | Originate + continue without the T3 GUI; the selected Grok CLI lab remains T3-native |
-| Claude via OpenRouter | Blocked | Distinct `claude-openrouter` route is implemented; the owner-only OpenRouter token file is absent, so no authenticated originate proof exists. T3-native Claude Code is not counted |
-| Kimi CLI | Blocked | OpenRouter base/model/token wiring is implemented and fails closed when the token file is absent; no authenticated originate proof exists |
-| DeepSeek CLI | Blocked | OpenRouter base/model/token wiring is implemented and the official DeepSeek credential grave is no longer used by the launcher; no authenticated originate proof exists |
+| Claude via OpenRouter | Proved | Fresh `claude-openrouter` originate + non-empty continue answered on `anthropic/claude-3-haiku`; T3-native Claude Code is not counted |
+| Kimi CLI | Proved | Fresh Kimi CLI originate + non-empty continue answered through OpenRouter on `moonshotai/kimi-k3` |
+| DeepSeek CLI | Proved | Fresh DeepSeek CLI originate + non-empty continue answered through OpenRouter on `deepseek/deepseek-v4-flash`; no official DeepSeek key was used |
 | Hermes lab | Blocked | Live `openai-codex:gpt-5.6-sol` originate fell through to DeepSeek and returned HTTP 402; fail-closed behavior is not proved live |
 | Pi CLI | Blocked | ACP `initialize` reports invalidated OpenAI-Codex OAuth refresh (HTTP 401); interactive Pi re-login is required |
 
@@ -394,15 +394,21 @@ while parallel T3 threads in different workspaces each get their own store.
 An explicit `DSH_SESSIONS_ROOT` replaces this default entirely and must then
 be unique per concurrent lane.
 
-**Kimi CLI and Claude via OpenRouter.** Both adapters start Kimi's native ACP
-mode, which supports an OpenAI-compatible base URL and arbitrary model slug.
-They use separate T3 instances and model identities:
+**Kimi CLI.** The Kimi adapter starts Kimi's native ACP mode against
+OpenRouter's OpenAI-compatible endpoint:
 
 ```bash
 tentacles install-kimi-provider \
   --instance kimi \
   --model moonshotai/kimi-k3
+```
 
+**Claude via OpenRouter.** This is a separate Tentacles adapter, not T3's
+native Claude Code CLI and not a Claude Code subscription. It uses the
+bridge-owned `dsh-acp` compatibility transport with an 8,192-token output cap,
+which stays below Claude 3 Haiku's OpenRouter context window:
+
+```bash
 tentacles install-claude-openrouter-provider \
   --instance claude-openrouter \
   --model anthropic/claude-3-haiku
@@ -411,9 +417,8 @@ tentacles install-claude-openrouter-provider \
 Remove registrations with the matching `remove-deepseek-provider`,
 `remove-kimi-provider`, or `remove-claude-openrouter-provider` command. Each
 instance carries its own ownership marker and the same foreign-instance refusal
-rules as the Hermes and Pi providers. The route implementation does not turn an
-unproved row green: authenticated originate + continue evidence is still
-required.
+rules as the Hermes and Pi providers. A doctor `ready` row still does not replace
+an authenticated originate + continue proof.
 
 ## Optional: `@hermes` mention routing
 
