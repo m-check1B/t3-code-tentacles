@@ -7,9 +7,14 @@ import { once } from "node:events";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import {
+  answeringModelMatchesRequested,
   CODEX_AUTH_MISSING,
+  currentModelIdFromSessionResult,
+  GROK_BUILD_MODEL,
   hasOpenAiCodexAuth,
   inspectHermesOpenaiCodexAuth,
+  PROVIDER_IDENTITY_MISMATCH,
+  providerIdentityMismatchResponse,
   providerNotConstructableMessage,
   requestedProviderFromModel,
   requireRequestedProviderConstructable,
@@ -36,6 +41,43 @@ test("requestedProviderFromModel parses provider:model and ignores bare ids", ()
   });
   assert.equal(requestedProviderFromModel("gpt-5.6-sol"), null);
   assert.equal(requestedProviderFromModel(""), null);
+});
+
+test("provider identity comparison requires the exact qualified model or grok-build alias", () => {
+  assert.equal(
+    answeringModelMatchesRequested("openai-codex:gpt-5.6-sol", "openai-codex:gpt-5.6-sol"),
+    true,
+  );
+  assert.equal(
+    answeringModelMatchesRequested("openai-codex:gpt-5.6-sol", "deepseek:deepseek-v4-flash"),
+    false,
+  );
+  assert.equal(answeringModelMatchesRequested("gpt-5.6-sol", "openai-codex:gpt-5.6-sol"), false);
+  assert.equal(answeringModelMatchesRequested("openai-codex:gpt-5.6-sol", null), false);
+  assert.equal(answeringModelMatchesRequested(GROK_BUILD_MODEL, GROK_BUILD_MODEL), true);
+  assert.equal(answeringModelMatchesRequested(GROK_BUILD_MODEL, "deepseek:deepseek-v4-flash"), false);
+  assert.equal(
+    currentModelIdFromSessionResult({ models: { currentModelId: "openai-codex:gpt-5.6-sol" } }),
+    "openai-codex:gpt-5.6-sol",
+  );
+
+  const mismatch = providerIdentityMismatchResponse(
+    { jsonrpc: "2.0", id: "set-1" },
+    {
+      requestedModelId: "openai-codex:gpt-5.6-sol",
+      answeringModelId: "deepseek:deepseek-v4-flash",
+    },
+  );
+  assert.equal(mismatch.id, "set-1");
+  assert.equal(mismatch.error.data.code, PROVIDER_IDENTITY_MISMATCH);
+  assert.deepEqual(mismatch.error.data, {
+    code: PROVIDER_IDENTITY_MISMATCH,
+    requestedProvider: "openai-codex",
+    requestedModel: "gpt-5.6-sol",
+    answeringProvider: "deepseek",
+    answeringModel: "deepseek-v4-flash",
+  });
+  assert.match(mismatch.error.message, /^provider_identity_mismatch:/);
 });
 
 test("missing Codex auth fails closed with a named error and never returns token material", () => {
@@ -204,6 +246,162 @@ setInterval(() => {}, 1000);
     assert.equal(blocked.result, undefined);
     assert.equal(JSON.stringify(blocked).includes("deepseek-fallback"), false);
     assert.equal(JSON.stringify(blocked).includes(providerNotConstructableMessage()), true);
+  } finally {
+    child.kill("SIGTERM");
+    await once(child, "exit");
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("the proxy fails closed when Hermes binds a constructable request to DeepSeek", async () => {
+  const home = tempHome();
+  writeJson(path.join(home, ".hermes", "auth.json"), {
+    providers: {
+      "openai-codex": { tokens: { access_token: "synthetic-access", refresh_token: "synthetic-refresh" } },
+    },
+  });
+  const fallbackSentinel = "deepseek-fallback-must-not-reach-client";
+  const fakeHermes = `
+import readline from "node:readline";
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "session/new") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { sessionId: "s1", models: { currentModelId: "deepseek:deepseek-v4-flash" } } }) + "\\n");
+  } else if (message.method === "session/set_model") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: {} }) + "\\n");
+  } else if (message.method === "session/load") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "${fallbackSentinel}" } } } }) + "\\n");
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { models: { currentModelId: "deepseek:deepseek-v4-flash" } } }) + "\\n");
+  } else if (message.method === "session/prompt") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { answeredBy: "${fallbackSentinel}" } }) + "\\n");
+  }
+});
+setInterval(() => {}, 1000);
+`;
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const child = startHermesAcpProxy({
+    hermesBin: process.execPath,
+    authOptions: { home },
+    spawnImpl: (_binary, _args, options) => spawn(process.execPath, ["--input-type=module", "-e", fakeHermes], options),
+    stdin,
+    stdout,
+    exitImpl: () => {},
+  });
+  const messages = [];
+  let pending = "";
+  stdout.on("data", (chunk) => {
+    pending += chunk.toString("utf8");
+    const split = pending.split("\n");
+    pending = split.pop();
+    messages.push(...split.filter(Boolean).map((line) => JSON.parse(line)));
+  });
+  const nextMessage = async (count) => {
+    while (messages.length < count) await new Promise((resolve) => setTimeout(resolve, 10));
+    return messages[count - 1];
+  };
+  try {
+    stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "session/new", params: { cwd: "/repo" } }) + "\n");
+    assert.equal((await nextMessage(1)).result.sessionId, "s1");
+    stdin.write(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "session/set_model",
+      params: { sessionId: "s1", modelId: "openai-codex:gpt-5.6-sol" },
+    }) + "\n");
+    const mismatch = await nextMessage(2);
+    assert.equal(mismatch.id, 2);
+    assert.equal(mismatch.result, undefined);
+    assert.equal(mismatch.error.data.code, PROVIDER_IDENTITY_MISMATCH);
+    assert.equal(mismatch.error.data.requestedProvider, "openai-codex");
+    assert.equal(mismatch.error.data.answeringProvider, "deepseek");
+    assert.equal(JSON.stringify(messages).includes(fallbackSentinel), false);
+
+    stdin.write(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "session/set_model",
+      params: { sessionId: "s1", modelId: GROK_BUILD_MODEL },
+    }) + "\n");
+    const grokMismatch = await nextMessage(3);
+    assert.equal(grokMismatch.id, 3);
+    assert.equal(grokMismatch.error.data.code, PROVIDER_IDENTITY_MISMATCH);
+    assert.equal(grokMismatch.error.data.requestedProvider, null);
+    assert.equal(grokMismatch.error.data.requestedModel, GROK_BUILD_MODEL);
+    assert.equal(grokMismatch.error.data.answeringProvider, "deepseek");
+    assert.equal(JSON.stringify(messages).includes(fallbackSentinel), false);
+
+    stdin.write(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 4,
+      method: "session/prompt",
+      params: { sessionId: "s1", prompt: [{ type: "text", text: "do not answer through DeepSeek" }] },
+    }) + "\n");
+    const blockedPrompt = await nextMessage(4);
+    assert.equal(blockedPrompt.id, 4);
+    assert.equal(blockedPrompt.error.data.code, PROVIDER_IDENTITY_MISMATCH);
+    assert.equal(JSON.stringify(messages).includes(fallbackSentinel), false);
+  } finally {
+    child.kill("SIGTERM");
+    await once(child, "exit");
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("the proxy releases set_model only after Hermes reports the requested runtime identity", async () => {
+  const home = tempHome();
+  writeJson(path.join(home, ".hermes", "auth.json"), {
+    providers: {
+      "openai-codex": { tokens: { access_token: "synthetic-access", refresh_token: "synthetic-refresh" } },
+    },
+  });
+  const fakeHermes = `
+import readline from "node:readline";
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "session/new") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { sessionId: "s1", models: { currentModelId: "deepseek:deepseek-v4-flash" } } }) + "\\n");
+  } else if (message.method === "session/set_model") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: {} }) + "\\n");
+  } else if (message.method === "session/load") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { models: { currentModelId: "openai-codex:gpt-5.6-sol" } } }) + "\\n");
+  } else if (message.method === "session/prompt") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } }) + "\\n");
+  }
+});
+setInterval(() => {}, 1000);
+`;
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const child = startHermesAcpProxy({
+    hermesBin: process.execPath,
+    authOptions: { home },
+    spawnImpl: (_binary, _args, options) => spawn(process.execPath, ["--input-type=module", "-e", fakeHermes], options),
+    stdin,
+    stdout,
+    exitImpl: () => {},
+  });
+  const messages = [];
+  let pending = "";
+  stdout.on("data", (chunk) => {
+    pending += chunk.toString("utf8");
+    const split = pending.split("\n");
+    pending = split.pop();
+    messages.push(...split.filter(Boolean).map((line) => JSON.parse(line)));
+  });
+  const nextMessage = async (count) => {
+    while (messages.length < count) await new Promise((resolve) => setTimeout(resolve, 10));
+    return messages[count - 1];
+  };
+  try {
+    stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "session/new", params: { cwd: "/repo" } }) + "\n");
+    await nextMessage(1);
+    stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "session/set_model", params: { sessionId: "s1", modelId: "openai-codex:gpt-5.6-sol" } }) + "\n");
+    assert.deepEqual(await nextMessage(2), { jsonrpc: "2.0", id: 2, result: {} });
+    stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "session/prompt", params: { sessionId: "s1", prompt: [] } }) + "\n");
+    assert.deepEqual(await nextMessage(3), { jsonrpc: "2.0", id: 3, result: { stopReason: "end_turn" } });
   } finally {
     child.kill("SIGTERM");
     await once(child, "exit");
