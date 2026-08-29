@@ -20,6 +20,41 @@ Repository documentation and integration authority boundaries start at
 [docs/README.md](docs/README.md).
 This project is released under the permissive [MIT License](LICENSE).
 
+## Use Tentacles
+
+Clone the public repository and link the command:
+
+```bash
+git clone https://github.com/m-check1B/t3-code-tentacles.git
+cd t3-code-tentacles
+npm link
+```
+
+Give your chair the copyable Operate Tentacles skill at
+[`integrations/tentacles-operate-skill/SKILL.md`](integrations/tentacles-operate-skill/SKILL.md),
+then ask it to operate Tentacles. The skill tells the chair to run doctor,
+choose an advertised instance and model, set a thought budget, originate with
+`--runtime-mode full-access`, continue with `runtimeMode: full-access`, observe,
+and stop the thread safely.
+
+If the chair loads skills from a filesystem directory, link the whole
+`integrations/tentacles-operate-skill` folder into that configured directory as
+`tentacles-operate`. Do not replace an existing skill path without inspecting
+it first.
+
+```bash
+tentacles doctor
+tentacles originate \
+  --workspace "$PWD" \
+  --title "Tentacles quick start" \
+  --message "Start this work and report the result." \
+  --instance grok \
+  --model grok-4.6 \
+  --budget high \
+  --runtime-mode full-access
+tentacles act --intent '{"action":"thread.continue","threadId":"<thread-id>","text":"Continue with the next concrete step.","runtimeMode":"full-access"}'
+```
+
 ## Start here: what T3 ships and what Tentacles adds
 
 A **chair** operates T3 Code through the Tentacles chair CLI. Grok Bot already
@@ -168,8 +203,8 @@ Tentacles-additive rows:
 | Additive path | Default originate model | Setup |
 |---|---|---|
 | Claude via OpenRouter | `anthropic/claude-3-haiku` | Extra path through a distinct `claude-openrouter` adapter so a chair can talk to Claude without driving Claude Code CLI |
-| Kimi CLI | `moonshotai/kimi-k3` | OpenRouter-backed Kimi CLI adapter |
-| DeepSeek CLI | `deepseek/deepseek-v4-flash` | OpenRouter-backed DeepSeek CLI adapter |
+| Kimi CLI | `moonshotai/kimi-k3` | Kimi CLI; its settings may use OpenRouter, a Kimi plan, or another configured route |
+| DeepSeek CLI | `deepseek/deepseek-v4-flash` | DeepSeek CLI; its settings may use OpenRouter, a DeepSeek plan, or another configured route |
 | Hermes lab | `openai-codex:gpt-5.6-sol` | `tentacles install-provider` |
 | Pi CLI | `gpt-5.6-terra` | `tentacles install-pi-provider` |
 
@@ -371,7 +406,7 @@ and a fresh `gpt-5.6-terra` originate plus non-empty continue both answered with
 `runtimeMode: full-access`. A future invalidated refresh still requires a human
 to run Pi's `/login openai-codex` flow; Tentacles never handles those credentials.
 
-### OpenRouter: Claude, Kimi, and DeepSeek
+### Adapter settings: Claude route, Kimi CLI, and DeepSeek CLI
 
 **OpenRouter credential.** Claude, Kimi, and DeepSeek share one owner-controlled
 runtime credential at
@@ -381,9 +416,9 @@ reads it only at adapter startup and passes it only through the child
 environment; it is never stored in T3 settings, argv, doctor output, or this
 repository.
 
-**DeepSeek (dsh-acp).** The launcher routes the DeepSeek CLI adapter through
-OpenRouter's OpenAI-compatible endpoint and fails closed if the owner-only
-token file is absent:
+**DeepSeek CLI.** This checkout's default settings route uses OpenRouter's
+OpenAI-compatible endpoint and fails closed if the owner-only token file is
+absent:
 
 ```bash
 npm i -g dsh-acp
@@ -403,8 +438,8 @@ while parallel T3 threads in different workspaces each get their own store.
 An explicit `DSH_SESSIONS_ROOT` replaces this default entirely and must then
 be unique per concurrent lane.
 
-**Kimi CLI.** The Kimi adapter starts Kimi's native ACP mode against
-OpenRouter's OpenAI-compatible endpoint:
+**Kimi CLI.** This checkout's default settings route starts Kimi's native ACP
+mode against OpenRouter's OpenAI-compatible endpoint:
 
 ```bash
 tentacles install-kimi-provider \
@@ -445,8 +480,8 @@ or continues one linked `[Hermes]` thread. The first pass never backfills old
 messages.
 
 On macOS, keep the watcher running as a per-user service. Service operations
-require both a filesystem-safe Hermes profile and a bridge instance; this avoids
-accidentally replacing a different watcher:
+require both a filesystem-safe Hermes profile and a bridge instance so the
+command cannot accidentally replace a different watcher:
 
 ```bash
 tentacles install-service \
