@@ -6,13 +6,13 @@ first tentacle, not the product. T3 Code tentacles — originate any ready lab
 
 This document describes the read (`observe`) and write (`act` / `orchestrate`)
 surfaces any system — TOP-G, a cron job, another agent — can drive over the
-bridge's existing loopback-authenticated HTTP/RPC client. The CLI binary remains
-`t3-agent-bridge`.
+bridge's existing loopback-authenticated HTTP/RPC client. The public command is
+`tentacles`; `t3-agent-bridge` is an exact alias.
 
 ## Read: observe
 
 ```bash
-t3-agent-bridge observe
+tentacles observe
 ```
 
 Returns one JSON document:
@@ -46,11 +46,11 @@ session's real `lastError`. Caller-supplied
 timeout/retry cannot create a second project.
 
 ```bash
-t3-agent-bridge act --intent '{"action":"thread.continue","threadId":"...","text":"go","runtimeMode":"full-access"}'
-t3-agent-bridge act --intent '{"action":"thread.restart","threadId":"...","text":"resume","runtimeMode":"full-access"}'
-t3-agent-bridge act --intent-file intent.json
-t3-agent-bridge orchestrate --intent-file intents.json          # array of intents, in order
-t3-agent-bridge orchestrate --intent-file plan.json --no-wait   # fire-and-forget
+tentacles act --intent '{"action":"thread.continue","threadId":"...","text":"go","runtimeMode":"full-access"}'
+tentacles act --intent '{"action":"thread.restart","threadId":"...","text":"resume","runtimeMode":"full-access"}'
+tentacles act --intent-file intent.json
+tentacles orchestrate --intent-file intents.json          # array of intents, in order
+tentacles orchestrate --intent-file plan.json --no-wait   # fire-and-forget
 ```
 
 An intent file is a JSON array of intents, or `{"intents": [...]}`.

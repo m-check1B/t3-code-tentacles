@@ -1,17 +1,18 @@
 # Launch Kit
 
-Historical drafts. The public GitHub repository is now **Tentacles**
+Historical drafts. The public product name is **Tentacles**
 (`https://github.com/m-check1B/tentacles`). Social posts are tracked on
 KRA-5563 and require Matej approval before any post. Do not treat this file as
-permission to publish.
+permission to publish. Do not invent SKUs. Do not sell Orbit.
 
 Use these public-safe messages only after that approval. Keep real tokens,
 local paths, private threads, and unrelated work off-screen.
 
 ## One-line positioning
 
-T3 Agent Bridge is a provider-neutral, source-independent bridge that connects
-ACP harnesses such as Hermes and Pi Agent to T3 Code without forking either side.
+Tentacles is a provider-neutral, source-independent bridge that connects ACP
+harnesses such as Hermes and Pi Agent to T3 Code without forking either side.
+Hermes was the first tentacle, not the product.
 
 ## X profile
 

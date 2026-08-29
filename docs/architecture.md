@@ -7,14 +7,14 @@ T3 Code UI
   └──▶ t3-pi-acp ──relay─────▶ pi --acp --provider <provider> --model <initial>
 
 Hermes / automation
-  │ t3-agent-bridge originate, authenticated HTTP dispatch
+  │ tentacles originate, authenticated HTTP dispatch
   ▼
 T3 orchestration API ──▶ visible project/thread/turn
 
 Any non-Hermes T3 thread
   │ new user message containing @hermes, read-only polling
   ▼
-t3-agent-bridge watch ──▶ linked Hermes-backed T3 thread
+tentacles watch ──▶ linked Hermes-backed T3 thread
 ```
 
 The functional bridge changes neither upstream. It reuses the ACP contract
