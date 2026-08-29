@@ -486,9 +486,15 @@ test("CLI parseArgs collects repeatable --option and usage documents originate f
     },
   );
 
+  const jsonDoctor = parseArgs(["doctor", "--json"]);
+  assert.equal(jsonDoctor.command, "doctor");
+  assert.equal(jsonDoctor.options.json, true);
+
   const help = usage();
   assert.match(help, /^Tentacles — T3 Code tentacles — originate any ready lab/m);
   assert.match(help, /Hermes was the first tentacle/);
+  assert.match(help, /tentacles doctor \[--json\]/);
+  assert.match(help, /Advertised is not proved/);
   assert.match(help, /originate --workspace PATH --title TITLE --message TEXT --runtime-mode approval-required\|auto-accept-edits\|auto\|full-access/);
   assert.match(help, /--instance hermes\|codex\|claudeAgent\|grok\|cursor\|deepseek\|kimi\|pi\|opencode/);
   assert.match(help, /--model MODEL/);

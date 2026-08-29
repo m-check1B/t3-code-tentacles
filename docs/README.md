@@ -4,16 +4,21 @@ Status: active
 
 Owner: TBA-One integration engineering
 
-Last reviewed: 2026-08-28
+Last reviewed: 2026-08-29
 
-The public product name is **Tentacles**. This repository owns the standalone provider-neutral ACP bridge,
+The public product name is **Tentacles**. The public command is `tentacles`.
+This repository owns the standalone provider-neutral ACP bridge,
 its adapter contracts, packaging, compatibility evidence, component security,
 and repository history. It connects independent systems without becoming their
 product or control-plane authority.
 
+Start here: clone, issue a local T3 token, run `tentacles doctor`, then originate
+a lab doctor marks `ready`. Doctor is this-machine truth. Advertised is not
+proved. The README lab matrix records which labs have a fresh e2e proof.
+
 ## Repository-owned documentation
 
-- Purpose, compatibility, setup, operations, and uninstall: [README.md](../README.md)
+- Purpose, lab matrix, setup, operations, and uninstall: [README.md](../README.md)
 - Agent contribution and live-runtime boundary: [AGENTS.md](../AGENTS.md)
 - Component architecture: [architecture.md](architecture.md)
 - Security policy: [SECURITY.md](../SECURITY.md)

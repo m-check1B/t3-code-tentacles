@@ -19,6 +19,11 @@ All notable changes to this project are documented here.
 
 - README install, doctor, and lab matrix match Tentacles. No secrets. GitHub
   clone URL is `https://github.com/m-check1B/tentacles.git`.
+- `tentacles doctor` prints a human-readable lab matrix for this machine;
+  `--json` keeps the machine-readable document. Advertised is not proved.
+- README separates advertised labs from e2e proof: Grok, Codex, OpenCode, and
+  Cursor are proved; Claude, Kimi, DeepSeek (OpenRouter 401), Hermes fallback,
+  and Pi OAuth remain blocked. Install docs lead with a ready native lab.
 
 ## [0.2.1] - 2026-08-11
 
