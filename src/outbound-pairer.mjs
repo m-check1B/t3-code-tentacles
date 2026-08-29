@@ -314,6 +314,7 @@ export class OutboundPairer {
       }
 
       socket.addEventListener("open", () => {
+        if (settled) return;
         const pairToken = offerSecrets.get(offer);
         if (!pairToken) { protocolFailure(); return; }
         try {
