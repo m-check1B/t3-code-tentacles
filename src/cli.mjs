@@ -48,6 +48,8 @@ import {
   RUNTIME_MODES,
 } from "./model-selection.mjs";
 import { applyIntents, observe } from "./orchestrate.mjs";
+import { LoopbackRuntimeAdapter, OutboundPairer } from "./outbound-pairer.mjs";
+import { DEFAULT_PAIR_STATE_FILE } from "./pair-state.mjs";
 import {
   installService,
   restartService,
@@ -152,6 +154,7 @@ Hermes was the first tentacle. The public command is tentacles; t3-agent-bridge 
 
 Usage:
   tentacles doctor [--json]
+  tentacles pair --pair-file OWNER_ONLY_JSON --machine-id SPHERE_MACHINE_ID [--pair-state-file PATH]
   tentacles install-provider [--instance hermes] [--profile default] [--model MODEL]
   tentacles remove-provider [--instance hermes]
   tentacles install-pi-provider [--instance pi] [--model gpt-5.6-terra] [--pi-provider openai-codex]
@@ -180,6 +183,11 @@ The legacy t3-hermes command remains an exact compatibility alias.
 Run doctor to print the advertised lab matrix for this machine
 (ready / installed / explicit). Advertised is not proved. Use --json for the
 machine-readable document. Doctor never prints tokens or secrets.
+
+Remote pairing is opt-in. The pair command opens one outbound WSS connection;
+T3 remains on loopback. The one-shot pair offer is read from a 0600 file and
+removed only after the relay acknowledges the bind. Never pass a token on the
+command line.
 
 Runtime mode invariant (POL-036 / POL-GB-016):
   Every originate and every non-empty continue runs full-access, for every lab
@@ -280,8 +288,35 @@ async function main() {
   const client = new T3Client();
 
   if (command === "doctor") {
-    const result = await doctor(client, { instanceId });
+    const result = await doctor(client, {
+      instanceId,
+      pairStateFile: options["pair-state-file"] || DEFAULT_PAIR_STATE_FILE,
+    });
     console.log(options.json ? JSON.stringify(result, null, 2) : formatDoctor(result));
+    return;
+  }
+  if (command === "pair") {
+    const pairStateFile = options["pair-state-file"] || DEFAULT_PAIR_STATE_FILE;
+    const runtime = new LoopbackRuntimeAdapter({ client, pairStateFile });
+    const pairer = new OutboundPairer({
+      runtime,
+      pairStateFile,
+      onEvent: (event) => console.error(JSON.stringify(event)),
+    });
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    process.once("SIGTERM", stop);
+    process.once("SIGINT", stop);
+    try {
+      await pairer.run({
+        pairFile: path.resolve(required(options, "pair-file")),
+        machineId: required(options, "machine-id"),
+        signal: controller.signal,
+      });
+    } finally {
+      process.removeListener("SIGTERM", stop);
+      process.removeListener("SIGINT", stop);
+    }
     return;
   }
   if (command === "install-provider") {
