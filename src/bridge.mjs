@@ -26,6 +26,7 @@ import {
   requireExplicitRuntimeMode,
   resolveModelSelection,
 } from "./model-selection.mjs";
+import { DEFAULT_PAIR_STATE_FILE, readPairPresence } from "./pair-state.mjs";
 import { inspectHermesOpenaiCodexAuth } from "./hermes-acp-launch.mjs";
 import { readBoundedResponseText, readOrchestrationSnapshot, T3HttpError } from "./t3-client.mjs";
 
@@ -905,6 +906,7 @@ export async function doctor(client, {
   instanceId = DEFAULT_INSTANCE_ID,
   fetchImpl = globalThis.fetch,
   hermesHome,
+  pairStateFile = DEFAULT_PAIR_STATE_FILE,
 } = {}) {
   const shell = await readOrchestrationSnapshot(client);
   const settings = await client.getSettings();
@@ -963,6 +965,7 @@ export async function doctor(client, {
   return {
     product: "Tentacles",
     t3: { reachable: true, projects: projects.length, threads: threads.length },
+    pairing: readPairPresence(pairStateFile),
     labs,
     hermes,
     provider: {
@@ -997,12 +1000,14 @@ export function formatDoctor(result = {}) {
   const t3 = result.t3 && typeof result.t3 === "object" ? result.t3 : {};
   const hermes = result.hermes && typeof result.hermes === "object" ? result.hermes : {};
   const nativeGrok = result.nativeGrok && typeof result.nativeGrok === "object" ? result.nativeGrok : {};
+  const pairing = result.pairing && typeof result.pairing === "object" ? result.pairing : { status: "unpaired" };
   const lines = [
     "Tentacles doctor — lab matrix for this machine",
     "Live local state only. Advertised is not proved. Ready is not a global compatibility claim.",
     "",
     `Product: ${result.product || "Tentacles"}`,
     `T3: ${t3.reachable === false ? "unreachable" : "reachable"}  projects: ${t3.projects ?? 0}  threads: ${t3.threads ?? 0}`,
+    `Remote pair: ${["paired", "unpaired", "expired"].includes(pairing.status) ? pairing.status : "unpaired"}`,
   ];
   if (hermes.reachable) {
     lines.push(`Hermes health: reachable  status: ${hermes.status || "ok"}  version: ${hermes.version || "unknown"}`);

@@ -31,13 +31,13 @@ export async function readBoundedResponseText(response, maxBytes, label = "T3 re
   return Buffer.concat(chunks, total).toString("utf8");
 }
 
-async function readBoundedWebSocketData(data, maxBytes) {
+export async function readBoundedWebSocketData(data, maxBytes, label = "T3 websocket frame") {
   if (typeof data === "string") {
-    if (Buffer.byteLength(data, "utf8") > maxBytes) throw new Error("T3 websocket frame is too large");
+    if (Buffer.byteLength(data, "utf8") > maxBytes) throw new Error(`${label} is too large`);
     return data;
   }
   if (data instanceof Blob) {
-    if (data.size > maxBytes) throw new Error("T3 websocket frame is too large");
+    if (data.size > maxBytes) throw new Error(`${label} is too large`);
     return await data.text();
   }
   const buffer = Buffer.isBuffer(data)
@@ -47,8 +47,8 @@ async function readBoundedWebSocketData(data, maxBytes) {
       : ArrayBuffer.isView(data)
         ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
         : null;
-  if (!buffer) throw new Error("Unsupported T3 websocket frame type");
-  if (buffer.byteLength > maxBytes) throw new Error("T3 websocket frame is too large");
+  if (!buffer) throw new Error(`Unsupported ${label} type`);
+  if (buffer.byteLength > maxBytes) throw new Error(`${label} is too large`);
   return buffer.toString("utf8");
 }
 

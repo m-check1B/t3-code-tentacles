@@ -16,6 +16,7 @@ import {
   writeBridgeState,
 } from "../src/bridge.mjs";
 import { T3Client, T3HttpError } from "../src/t3-client.mjs";
+import { writePairPresence } from "../src/pair-state.mjs";
 
 function fixtureState(file, patch = {}) {
   const state = readBridgeState(file);
@@ -79,6 +80,9 @@ test("mention routing rejects invalid work bounds before touching state", async 
 });
 
 test("doctor bounds and validates the Hermes health response", async () => {
+  const pairDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles-doctor-pair-"));
+  const pairStateFile = path.join(pairDirectory, "presence.json");
+  writePairPresence("paired", { file: pairStateFile });
   const client = {
     snapshot: async () => ({ projects: [], threads: [] }),
     shell: async () => { throw new Error("hanging shell endpoint must not be called"); },
@@ -95,9 +99,12 @@ test("doctor bounds and validates the Hermes health response", async () => {
   assert.match(invalid.hermes.error, /invalid JSON/);
   const result = await doctor(client, {
     fetchImpl: async () => new Response(JSON.stringify({ status: "ok", version: "test-version" })),
+    pairStateFile,
   });
   assert.equal(result.hermes.version, "test-version");
   assert.equal(result.product, "Tentacles");
+  assert.deepEqual(result.pairing, { status: "paired" });
+  assert.match(formatDoctor(result), /Remote pair: paired/);
   assert.equal(result.labs.length >= 9, true);
   assert.deepEqual(result.labs.map((lab) => lab.instanceId).slice(0, 9), [
     "hermes", "codex", "claudeAgent", "grok", "cursor", "deepseek", "kimi", "pi", "opencode",
