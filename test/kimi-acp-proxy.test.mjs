@@ -8,6 +8,7 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 import {
   buildKimiLaunchPlan,
+  KIMI_MODEL_MISMATCH,
   resolveKimiBinary,
   startKimiAcpProxy,
   transformClientToAgentLine,
@@ -62,6 +63,33 @@ test("transformClientToAgentLine passes non-authenticate messages and invalid JS
   const initialize = JSON.stringify({ jsonrpc: "2.0", id: 0, method: "initialize", params: { protocolVersion: 1 } });
   assert.deepEqual(transformClientToAgentLine(initialize), { line: initialize });
   assert.deepEqual(transformClientToAgentLine("definitely not json"), { line: "definitely not json" });
+});
+
+test("transformClientToAgentLine acknowledges only the environment-selected Kimi model", () => {
+  const configuredModel = "anthropic/claude-3-haiku";
+  const selected = transformClientToAgentLine(JSON.stringify({
+    jsonrpc: "2.0",
+    id: "model-1",
+    method: "session/set_model",
+    params: { sessionId: "s1", modelId: configuredModel },
+  }), { configuredModel });
+  assert.deepEqual(selected, { respond: { jsonrpc: "2.0", id: "model-1", result: {} } });
+
+  const mismatch = transformClientToAgentLine(JSON.stringify({
+    jsonrpc: "2.0",
+    id: "model-2",
+    method: "session/set_model",
+    params: { sessionId: "s1", modelId: "moonshotai/kimi-k3" },
+  }), { configuredModel });
+  assert.equal(mismatch.respond.error.data.code, KIMI_MODEL_MISMATCH);
+  assert.equal(mismatch.respond.error.message.includes(configuredModel), false);
+
+  const notification = transformClientToAgentLine(JSON.stringify({
+    jsonrpc: "2.0",
+    method: "session/set_model",
+    params: { sessionId: "s1", modelId: configuredModel },
+  }), { configuredModel });
+  assert.deepEqual(notification, { drop: true });
 });
 
 test("resolveKimiBinary rejects relative KIMI_BIN and fails loud when kimi is missing", () => {

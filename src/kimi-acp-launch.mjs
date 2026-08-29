@@ -18,6 +18,7 @@ import {
 
 const SHUTDOWN_GRACE_MS = 1_000;
 const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
+export const KIMI_MODEL_MISMATCH = "kimi_model_mismatch";
 
 export function resolveKimiBinary(env = process.env) {
   const configured = env.KIMI_BIN;
@@ -70,12 +71,37 @@ function parseJsonObject(text) {
  * Returns { respond } for an intercepted authenticate, { drop } for an
  * authenticate notification, or { line } for pass-through.
  */
-export function transformClientToAgentLine(line) {
+export function transformClientToAgentLine(line, { configuredModel } = {}) {
   const text = Buffer.isBuffer(line) ? line.toString("utf8") : String(line);
   const message = parseJsonObject(text);
-  if (!message || !isAuthenticateRequest(message)) return { line: text };
+  if (!message) return { line: text };
+  if (isAuthenticateRequest(message)) {
+    if (!Object.hasOwn(message, "id") || message.id === null || message.id === undefined) return { drop: true };
+    return { respond: authenticateResponse(message) };
+  }
+  if (message.method !== "session/set_model" || typeof configuredModel !== "string" || !configuredModel) {
+    return { line: text };
+  }
   if (!Object.hasOwn(message, "id") || message.id === null || message.id === undefined) return { drop: true };
-  return { respond: authenticateResponse(message) };
+  const requestedModel = message.params?.modelId ?? message.params?.model;
+  if (requestedModel === configuredModel) {
+    // Kimi's ACP server is already constructed with KIMI_MODEL_NAME, but its
+    // session/set_model handler returns -32603 even for that exact model. T3
+    // sends set_model during every selected-provider session startup, so
+    // acknowledge the already-applied selection without forwarding it.
+    return { respond: { jsonrpc: message.jsonrpc || "2.0", id: message.id, result: {} } };
+  }
+  return {
+    respond: {
+      jsonrpc: message.jsonrpc || "2.0",
+      id: message.id,
+      error: {
+        code: -32003,
+        message: `${KIMI_MODEL_MISMATCH}: requested model does not match the model configured for this adapter`,
+        data: { code: KIMI_MODEL_MISMATCH },
+      },
+    },
+  };
 }
 
 /**
@@ -145,7 +171,9 @@ export function startKimiAcpProxy({
   };
 
   stdinRelay = consumeJsonLines(stdin, (line) => {
-    const transformed = transformClientToAgentLine(line);
+    const transformed = transformClientToAgentLine(line, {
+      configuredModel: env.KIMI_MODEL || DEFAULT_KIMI_MODEL,
+    });
     if (transformed.drop) return null;
     if (transformed.respond) return forwardLine(stdout, JSON.stringify(transformed.respond));
     return forwardLine(child.stdin, transformed.line);
