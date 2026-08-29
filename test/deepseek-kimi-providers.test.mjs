@@ -47,7 +47,7 @@ test("installDeepSeekProvider registers a grok-driver instance with harness mark
   assert.equal(result.provider.instanceId, "deepseek");
   const instance = client.instances().deepseek;
   assert.equal(instance.driver, "grok");
-  assert.equal(instance.displayName, "DeepSeek");
+  assert.equal(instance.displayName, "DeepSeek CLI");
   assert.equal(instance.enabled, true);
   assert.deepEqual(instance.config, { binaryPath: WRAPPER_DEEPSEEK, customModels: ["deepseek/deepseek-v4-flash"] });
   const env = envMap(instance);
@@ -114,7 +114,7 @@ test("installKimiProvider registers a grok-driver instance with KIMI_BIN and cus
   assert.equal(result.provider.instanceId, "kimi");
   const instance = client.instances().kimi;
   assert.equal(instance.driver, "grok");
-  assert.equal(instance.displayName, "Kimi via OpenRouter");
+  assert.equal(instance.displayName, "Kimi CLI");
   assert.deepEqual(instance.config, { binaryPath: WRAPPER_KIMI, customModels: ["moonshotai/kimi-k3"] });
   const env = envMap(instance);
   assert.equal(env.get("T3_HERMES_BRIDGE_HARNESS"), "kimi");
@@ -126,7 +126,7 @@ test("installKimiProvider requires an absolute kimiBin and refuses foreign insta
   const client = settingsClient();
   await assert.rejects(installKimiProvider(client, { wrapperPath: WRAPPER_KIMI, kimiBin: "kimi" }), /absolute Kimi executable path/);
   const foreign = settingsClient({ kimi: { driver: "grok", environment: [] } });
-  await assert.rejects(installKimiProvider(foreign, { wrapperPath: WRAPPER_KIMI, kimiBin: "/opt/kimi/bin/kimi" }), /not owned by the Kimi via OpenRouter harness/);
+  await assert.rejects(installKimiProvider(foreign, { wrapperPath: WRAPPER_KIMI, kimiBin: "/opt/kimi/bin/kimi" }), /not owned by the Kimi CLI harness/);
   const redacted = settingsClient({
     other: { driver: "grok", environment: [{ name: "KEY", sensitive: true, valueRedacted: true }] },
   });

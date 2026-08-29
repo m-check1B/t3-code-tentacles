@@ -30,6 +30,11 @@ Choose a ready instance from `codex`, `grok`, `claudeAgent`, `pi`, `kimi`,
 advertised models. Cursor must already be enabled in T3 and always needs an
 explicit model.
 
+Keep lab identity separate from credential routing: `kimi` is Kimi CLI and
+`deepseek` is DeepSeek CLI. OpenRouter may be one route configured in their
+settings; it is not either lab's name. `claude-openrouter` is the distinct
+Claude-via-OpenRouter extra path.
+
 ## 2. Originate
 
 ```bash

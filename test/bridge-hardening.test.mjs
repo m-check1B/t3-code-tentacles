@@ -165,6 +165,8 @@ test("doctor prints an advertised lab matrix without secrets and keeps Cursor ex
   assert.match(matrix, /Cursor is disabled/);
   assert.match(matrix, /ACP startup failed/);
   assert.match(matrix, /Hermes openai-codex: fail-closed \(codex_auth_missing; no provider fallback\)/);
+  assert.match(matrix, /OpenRouter credential route: (?:constructable|fail-closed)/);
+  assert.doesNotMatch(matrix, /OpenRouter adapters/);
   assert.match(matrix, /tentacles doctor --json/);
   assert.equal(matrix.includes("should-not-leak"), false);
   } finally {

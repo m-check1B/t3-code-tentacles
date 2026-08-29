@@ -18,6 +18,11 @@ Choose a ready instance from `codex`, `grok`, `claudeAgent`, `pi`, `kimi`,
 `deepseek`, `hermes`, `opencode`, or `cursor`, plus one of its advertised
 models. Then originate with every selection explicit:
 
+Keep lab identity separate from credential routing: `kimi` is Kimi CLI and
+`deepseek` is DeepSeek CLI. OpenRouter may be one route configured in their
+settings; it is not either lab's name. `claude-openrouter` is the distinct
+Claude-via-OpenRouter extra path.
+
 ```bash
 tentacles originate \
   --workspace /absolute/workspace/path \

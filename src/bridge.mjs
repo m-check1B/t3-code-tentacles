@@ -301,7 +301,7 @@ export async function installDeepSeekProvider(client, {
     ...current,
     [instanceId]: {
       driver: "grok",
-      displayName: "DeepSeek",
+      displayName: "DeepSeek CLI",
       accentColor: "#0EA5E9",
       enabled: true,
       environment,
@@ -326,7 +326,7 @@ export async function removeDeepSeekProvider(client, { instanceId = DEFAULT_DEEP
   return { removed: true };
 }
 
-async function installKimiBackedOpenRouterProvider(client, {
+async function installKimiCliProvider(client, {
   wrapperPath,
   instanceId,
   model,
@@ -335,8 +335,8 @@ async function installKimiBackedOpenRouterProvider(client, {
   displayName,
   accentColor,
 } = {}) {
-  if (!wrapperPath || !path.isAbsolute(wrapperPath)) throw new Error("OpenRouter provider install requires an absolute ACP wrapper path");
-  if (!kimiBin || !path.isAbsolute(kimiBin)) throw new Error("OpenRouter provider install requires an absolute Kimi executable path");
+  if (!wrapperPath || !path.isAbsolute(wrapperPath)) throw new Error("Kimi CLI provider install requires an absolute ACP wrapper path");
+  if (!kimiBin || !path.isAbsolute(kimiBin)) throw new Error("Kimi CLI provider install requires an absolute Kimi executable path");
   const settings = await client.getSettings();
   const current = settings.providerInstances || {};
   if (hasRedactedSecrets(current)) {
@@ -371,13 +371,13 @@ export async function installKimiProvider(client, {
   model = DEFAULT_KIMI_MODEL,
   kimiBin,
 } = {}) {
-  return installKimiBackedOpenRouterProvider(client, {
+  return installKimiCliProvider(client, {
     wrapperPath,
     instanceId,
     model,
     kimiBin,
     harness: KIMI_HARNESS_VALUE,
-    displayName: "Kimi via OpenRouter",
+    displayName: "Kimi CLI",
     accentColor: "#10B981",
   });
 }
@@ -1132,8 +1132,8 @@ export function formatDoctor(result = {}) {
   const openrouter = result.openrouter && typeof result.openrouter === "object" ? result.openrouter : null;
   if (openrouter) {
     lines.push(openrouter.constructable
-      ? "OpenRouter adapters: credential constructable"
-      : `OpenRouter adapters: fail-closed (${openrouter.code || "openrouter_auth_unavailable"})`);
+      ? "OpenRouter credential route: constructable"
+      : `OpenRouter credential route: fail-closed (${openrouter.code || "openrouter_auth_unavailable"})`);
   }
   if (nativeGrok.present || nativeGrok.disabled) {
     lines.push(`Native Grok: present=${yesNo(nativeGrok.present)}  enabled=${yesNo(nativeGrok.enabled)}  disabled=${yesNo(nativeGrok.disabled)}`);
