@@ -4,13 +4,13 @@
   "description": "Tentacles — T3 Code tentacles: originate any ready lab (instance + model + budget).",
   "type": "module",
   "author": "Matej Havlin (m-check1B)",
-  "homepage": "https://github.com/m-check1B/tentacles#readme",
+  "homepage": "https://github.com/m-check1B/t3-code-tentacles#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/m-check1B/tentacles.git"
+    "url": "git+https://github.com/m-check1B/t3-code-tentacles.git"
   },
   "bugs": {
-    "url": "https://github.com/m-check1B/tentacles/issues"
+    "url": "https://github.com/m-check1B/t3-code-tentacles/issues"
   },
   "keywords": [
     "tentacles",
