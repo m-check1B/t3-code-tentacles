@@ -174,9 +174,9 @@ instance as ready on this host. It is not a compatibility certificate.
 
 ### Tentacles-additive proof status (this machine, 2026-08-29)
 
-Originate + continue with `runtimeMode: full-access`. Do not treat the remaining
-rows as green. T3-native CLI availability is intentionally not counted as a
-Tentacles lab proof.
+Originate + continue with `runtimeMode: full-access`. A fail-closed result proves
+the safety boundary, not a working assistant. T3-native CLI availability is
+intentionally not counted as a Tentacles lab proof.
 
 | Additive path | E2E | Notes |
 |---|---|---|
@@ -184,7 +184,7 @@ Tentacles lab proof.
 | Claude via OpenRouter | Proved | Fresh `claude-openrouter` originate + non-empty continue answered on `anthropic/claude-3-haiku`; T3-native Claude Code is not counted |
 | Kimi CLI | Proved | Fresh Kimi CLI originate + non-empty continue answered through OpenRouter on `moonshotai/kimi-k3` |
 | DeepSeek CLI | Proved | Fresh DeepSeek CLI originate + non-empty continue answered through OpenRouter on `deepseek/deepseek-v4-flash`; no official DeepSeek key was used |
-| Hermes lab | Blocked | Live `openai-codex:gpt-5.6-sol` originate fell through to DeepSeek and returned HTTP 402; fail-closed behavior is not proved live |
+| Hermes lab | Fail-closed proved; assistant blocked | Live `openai-codex:gpt-5.6-sol` returned the named `provider_identity_mismatch` error instead of falling through to DeepSeek; no assistant answer is claimed |
 | Pi CLI | Proved | Human-approved OpenAI-Codex OAuth re-login, then fresh Pi originate + non-empty continue answered on `gpt-5.6-terra` |
 
 Every originate and every non-empty continue must pass
@@ -326,11 +326,14 @@ If your installation exposes a different model identifier, pass it with
 `--model` or set `T3_HERMES_MODEL`.
 
 Open T3 Code, select the **Hermes** provider, and send a message. A real Hermes
-assistant reply is the first-direction proof. The proxy rejects a missing
-Codex credential with `codex_auth_missing`, but the 2026-08-29 live check found
-a second failure: Hermes accepted `openai-codex:gpt-5.6-sol` and still returned
-a DeepSeek HTTP 402 fallback. Until that runtime mismatch is fixed and retested,
-do not treat install or the unit guard as a working assistant.
+assistant reply is the first-direction proof. The proxy rejects a missing Codex
+credential with `codex_auth_missing`. It also pins the requested provider
+identity across ACP initialization, model selection, prompt dispatch, and
+continue. The 2026-08-29 live fail-closed check returned
+`provider_identity_mismatch` for `openai-codex:gpt-5.6-sol` instead of emitting
+DeepSeek fallback text. That proves the safety boundary; it does not prove an
+answering Hermes assistant, so keep the assistant path blocked until the named
+provider can answer originate and continue.
 
 ### Pi
 
@@ -424,7 +427,8 @@ an authenticated originate + continue proof.
 
 ## Optional: `@hermes` mention routing
 
-Requires an answering Hermes lab. Skip it while Hermes is blocked.
+Requires an answering Hermes lab. Skip it while the Hermes assistant path is
+blocked.
 
 ```bash
 tentacles watch --once --allow-all-projects   # arms the initial watermark
