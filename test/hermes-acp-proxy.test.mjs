@@ -10,6 +10,7 @@ import {
   answeringModelMatchesRequested,
   CODEX_AUTH_MISSING,
   currentModelIdFromSessionResult,
+  GROK_BUILD_MODEL,
   hasOpenAiCodexAuth,
   inspectHermesOpenaiCodexAuth,
   PROVIDER_IDENTITY_MISMATCH,
@@ -42,7 +43,7 @@ test("requestedProviderFromModel parses provider:model and ignores bare ids", ()
   assert.equal(requestedProviderFromModel(""), null);
 });
 
-test("provider identity comparison requires the exact provider-qualified model", () => {
+test("provider identity comparison requires the exact qualified model or grok-build alias", () => {
   assert.equal(
     answeringModelMatchesRequested("openai-codex:gpt-5.6-sol", "openai-codex:gpt-5.6-sol"),
     true,
@@ -53,6 +54,8 @@ test("provider identity comparison requires the exact provider-qualified model",
   );
   assert.equal(answeringModelMatchesRequested("gpt-5.6-sol", "openai-codex:gpt-5.6-sol"), false);
   assert.equal(answeringModelMatchesRequested("openai-codex:gpt-5.6-sol", null), false);
+  assert.equal(answeringModelMatchesRequested(GROK_BUILD_MODEL, GROK_BUILD_MODEL), true);
+  assert.equal(answeringModelMatchesRequested(GROK_BUILD_MODEL, "deepseek:deepseek-v4-flash"), false);
   assert.equal(
     currentModelIdFromSessionResult({ models: { currentModelId: "openai-codex:gpt-5.6-sol" } }),
     "openai-codex:gpt-5.6-sol",
@@ -318,11 +321,25 @@ setInterval(() => {}, 1000);
     stdin.write(JSON.stringify({
       jsonrpc: "2.0",
       id: 3,
+      method: "session/set_model",
+      params: { sessionId: "s1", modelId: GROK_BUILD_MODEL },
+    }) + "\n");
+    const grokMismatch = await nextMessage(3);
+    assert.equal(grokMismatch.id, 3);
+    assert.equal(grokMismatch.error.data.code, PROVIDER_IDENTITY_MISMATCH);
+    assert.equal(grokMismatch.error.data.requestedProvider, null);
+    assert.equal(grokMismatch.error.data.requestedModel, GROK_BUILD_MODEL);
+    assert.equal(grokMismatch.error.data.answeringProvider, "deepseek");
+    assert.equal(JSON.stringify(messages).includes(fallbackSentinel), false);
+
+    stdin.write(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 4,
       method: "session/prompt",
       params: { sessionId: "s1", prompt: [{ type: "text", text: "do not answer through DeepSeek" }] },
     }) + "\n");
-    const blockedPrompt = await nextMessage(3);
-    assert.equal(blockedPrompt.id, 3);
+    const blockedPrompt = await nextMessage(4);
+    assert.equal(blockedPrompt.id, 4);
     assert.equal(blockedPrompt.error.data.code, PROVIDER_IDENTITY_MISMATCH);
     assert.equal(JSON.stringify(messages).includes(fallbackSentinel), false);
   } finally {
