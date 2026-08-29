@@ -1,9 +1,9 @@
 {
   "name": "tentacles",
   "version": "0.3.0",
-  "description": "Tentacles — T3 Code tentacles: originate any ready lab (instance + model + budget).",
+  "description": "Tentacles — chair CLI and additive ACP adapters for T3 Code.",
   "type": "module",
-  "author": "Matej Havlin (m-check1B)",
+  "author": "m-check1B",
   "homepage": "https://github.com/m-check1B/t3-code-tentacles#readme",
   "repository": {
     "type": "git",

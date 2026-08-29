@@ -491,7 +491,7 @@ test("CLI parseArgs collects repeatable --option and usage documents originate f
   assert.equal(jsonDoctor.options.json, true);
 
   const help = usage();
-  assert.match(help, /^Tentacles — T3 Code tentacles — originate any ready lab/m);
+  assert.match(help, /^Tentacles — chair CLI and additive ACP adapters for T3 Code/m);
   assert.match(help, /Hermes was the first tentacle/);
   assert.match(help, /tentacles doctor \[--json\]/);
   assert.match(help, /Advertised is not proved/);
@@ -502,7 +502,7 @@ test("CLI parseArgs collects repeatable --option and usage documents originate f
   assert.doesNotMatch(help, /\[--runtime-mode/);
   assert.match(help, /Runtime mode invariant \(POL-036 \/ POL-GB-016\)/);
   assert.match(help, /Every originate and every non-empty continue runs full-access/);
-  assert.match(help, /Grok Code CLI grok, Codex xhigh, Codex high/);
+  assert.match(help, /T3-native selections and every Tentacles-additive adapter/);
   assert.match(help, /Omitting the runtime mode fails closed/);
   assert.match(help, /"runtimeMode":"full-access"/);
   assert.match(help, /--budget low\|medium\|high/);

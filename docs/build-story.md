@@ -2,7 +2,7 @@
 
 ## The idea
 
-Matej Havlin proposed using T3 Code as the polished multi-agent UI for an
+m-check1B proposed using T3 Code as the polished multi-agent UI for an
 already-installed Hermes Agent: one app with multiple CLIs and mobile access,
 Hermes orchestrating behind the scenes, `@hermes` callable from any thread, and
 Hermes able to originate threads when work needs attention.

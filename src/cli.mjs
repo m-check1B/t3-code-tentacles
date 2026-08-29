@@ -143,7 +143,7 @@ function resolveKimiExecutable(option) {
 }
 
 export function usage() {
-  return `Tentacles — T3 Code tentacles — originate any ready lab (instance + model + budget).
+  return `Tentacles — chair CLI and additive ACP adapters for T3 Code.
 Hermes was the first tentacle. The public command is tentacles; t3-agent-bridge is an exact alias.
 
 Usage:
@@ -177,7 +177,7 @@ machine-readable document. Doctor never prints tokens or secrets.
 
 Runtime mode invariant (POL-036 / POL-GB-016):
   Every originate and every non-empty continue runs full-access, for every lab
-  (Grok Code CLI grok, Codex xhigh, Codex high, and the rest). Pass
+  (T3-native selections and every Tentacles-additive adapter). Pass
   --runtime-mode full-access on originate and "runtimeMode":"full-access" on
   thread.continue intents. Omitting the runtime mode fails closed; it is never
   a compliant operation, and no approval popup is part of the validated path.
