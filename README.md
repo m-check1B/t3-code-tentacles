@@ -12,109 +12,72 @@ command is `tentacles`; `t3-agent-bridge` is an exact compatibility alias.
 Repository documentation and integration authority boundaries start at
 [docs/README.md](docs/README.md).
 
-## Start here: chairs and labs are different arrows
+## Start here: one vertical path, two roles
 
-Tentacles has two easy-to-confuse uses:
-
-- A **chair** operates T3 Code through Tentacles.
-- T3 Code originates a **lab** through Tentacles.
-
-The same product name can appear on either side. For example, Hermes can be a
-chair controlling T3, or Hermes can be a lab originated inside T3. Those are
-separate roles, separate arrows, and separate proof claims.
-
-### 1. A chair operates T3 Code
-
-Grok Bot, Hermes, or Agent Jack can occupy the chair side of the bridge. The
-Grok Bot chair path works today. Hermes as a chair is expected to use the same
-path; that expectation does not make the separate Hermes-as-a-lab path proved.
+A **chair** operates T3 Code through Tentacles. T3 Code then originates a
+**lab** through that same bridge. The same product name can occupy either role,
+but the arrows and proof claims are separate: Hermes as a chair follows the
+same Tentacles path as Grok Bot, while Hermes as a lab inside T3 is the weaker,
+currently blocked adapter path recorded in the proof table.
 
 ```text
-Grok Bot  ----\
-Hermes    -----+--> Tentacles --> T3 Code
-Agent Jack ----/
+                              CHAIRS
+
+             [Grok Bot]     [Hermes]     [Agent Jack 1]
+                   \            |            /
+                    +------ [Tentacles] -----+
+                                |
+                            [T3 Code]
+                    /       /       |       \        \
+              [Codex]  [Grok]  [Hermes lab]  [OpenCode]  [Cursor]  [...]
+
+                               LABS
 ```
 
 ```mermaid
-flowchart LR
-    GrokBot["Grok Bot<br/>chair — works today"] --> Tentacles
-    HermesChair["Hermes<br/>chair — same bridge path"] --> Tentacles
-    Jack["Agent Jack<br/>chair"] --> Tentacles
+flowchart TB
+    subgraph Chairs["Chairs"]
+        direction LR
+        GrokBot["Grok Bot<br/>works today"]
+        HermesChair["Hermes<br/>chair"]
+        Jack["Agent Jack¹<br/>chair"]
+    end
+
+    GrokBot --> Tentacles
+    HermesChair --> Tentacles
+    Jack --> Tentacles
     Tentacles --> T3["T3 Code"]
-```
 
-![Grok Bot, Hermes, or Agent Jack uses Tentacles to operate T3 Code](docs/chair-uses-tentacles.png)
-
-### 2. T3 Code originates labs
-
-A **lab** is one T3 instance you can start and continue: native T3 providers
-such as Codex, Grok, OpenCode, and Cursor, plus optional adapters such as Hermes,
-Pi, DeepSeek, and Kimi. T3 Code stays the cockpit. Each lab keeps its own
-runtime, model, authentication, and tools.
-
-Hermes as a lab is the weaker, underdog adapter path. It is not the Hermes chair
-shown above, and its current blocked status remains explicit in the proof table.
-
-```text
-                         +--> Codex
-                         +--> Grok
-T3 Code --> Tentacles ---+--> Hermes (lab; underdog adapter)
-                         +--> OpenCode
-                         +--> Cursor
-                         +--> ...
-```
-
-```mermaid
-flowchart LR
-    T3["T3 Code"] --> Tentacles
-    Tentacles --> Codex
-    Tentacles --> Grok
-    Tentacles --> HermesLab["Hermes<br/>lab — underdog adapter"]
-    Tentacles --> OpenCode
-    Tentacles --> Cursor
-    Tentacles --> More["other advertised labs"]
-```
-
-![T3 Code uses Tentacles to originate Codex, Grok, Hermes, OpenCode, Cursor, and other labs](docs/t3-originates-labs.png)
-
-### 3. Agent Jack: local PWA or cloud chair
-
-Local Jack is an installable web app (PWA) in the user's browser. It uses
-Tentacles to reach T3 on that machine. This path does not require Electron or a
-Jack 1 Device Bridge dashboard.
-
-Cloud Jack runs on Blaxel or another VM while the user works in a browser. It
-uses the same Tentacles bridge to reach the user's T3 on one or more computers;
-it is not a second bridge product. A cloud route still requires its remote
-connection and pairing to be installed and configured—the topology below is not
-a claim that a public relay is active for every clone.
-
-```text
-LOCAL JACK
-[Jack PWA in browser] --> [Tentacles] --> [T3 Code on this computer]
-
-CLOUD JACK
-[User browser] --> [Cloud Jack: Blaxel / VM] --> [same Tentacles bridge]
-                                                   |--> [T3 on computer A]
-                                                   `--> [T3 on computer B]
-```
-
-```mermaid
-flowchart LR
-    subgraph Local["Local Jack"]
-        JackPWA["Jack PWA<br/>installed in browser"] --> LocalTentacles["Tentacles"]
-        LocalTentacles --> LocalT3["T3 Code<br/>on this computer"]
+    subgraph Labs["Labs originated by T3 Code"]
+        direction LR
+        Codex
+        Grok
+        HermesLab["Hermes<br/>lab — weaker adapter"]
+        OpenCode
+        Cursor
+        More["..."]
     end
 
-    subgraph Cloud["Cloud Jack"]
-        Browser["User browser"] --> CloudJack["Cloud Jack<br/>Blaxel or VM"]
-        CloudJack --> RemoteTentacles["same Tentacles bridge<br/>remote connection"]
-        RemoteTentacles --> T3A["T3 Code<br/>computer A"]
-        RemoteTentacles --> T3B["T3 Code<br/>computer B"]
-    end
+    T3 --> Codex
+    T3 --> Grok
+    T3 --> HermesLab
+    T3 --> OpenCode
+    T3 --> Cursor
+    T3 --> More
 ```
 
-![Local Jack PWA and cloud Jack both use Tentacles to reach T3 on user computers](docs/local-vs-cloud-jack.png)
+![Chairs use Tentacles to operate T3 Code, which originates labs](docs/tentacles-vertical.png)
+
+<sup>1</sup> **Jack local/cloud footnote.** Local Jack is an installable web app
+(PWA) in the user's browser and uses Tentacles to reach T3 on that machine—no
+Electron and no Jack 1 Device Bridge dashboard. Cloud Jack runs on Blaxel or
+another VM while the user works in a browser; it uses the same Tentacles bridge
+to reach the user's T3 on one or more computers. A cloud route still requires
+its remote connection and pairing to be installed and configured.
+
+A lab is one T3 instance you can start and continue. Native labs include Codex,
+Grok, OpenCode, and Cursor; optional adapters include Hermes, Pi, DeepSeek, and
+Kimi. Each lab keeps its own runtime, model, authentication, and tools.
 
 ## Quick start
 
