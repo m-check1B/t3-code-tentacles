@@ -5,11 +5,14 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  CLAUDE_OPENROUTER_HARNESS_VALUE,
   DEEPSEEK_HARNESS_VALUE,
+  installClaudeOpenRouterProvider,
   installDeepSeekProvider,
   installKimiProvider,
   KIMI_HARNESS_VALUE,
   providerHarness,
+  removeClaudeOpenRouterProvider,
   removeDeepSeekProvider,
   removeKimiProvider,
 } from "../src/bridge.mjs";
@@ -45,11 +48,11 @@ test("installDeepSeekProvider registers a grok-driver instance with harness mark
   assert.equal(instance.driver, "grok");
   assert.equal(instance.displayName, "DeepSeek");
   assert.equal(instance.enabled, true);
-  assert.deepEqual(instance.config, { binaryPath: WRAPPER_DEEPSEEK, customModels: ["deepseek-v4-flash"] });
+  assert.deepEqual(instance.config, { binaryPath: WRAPPER_DEEPSEEK, customModels: ["deepseek/deepseek-v4-flash"] });
   const env = envMap(instance);
   assert.equal(env.get("T3_HERMES_BRIDGE_OWNER"), "t3-hermes-bridge/v1");
   assert.equal(env.get("T3_HERMES_BRIDGE_HARNESS"), "deepseek");
-  assert.equal(env.get("DEEPSEEK_MODEL"), "deepseek-v4-flash");
+  assert.equal(env.get("DEEPSEEK_MODEL"), "deepseek/deepseek-v4-flash");
   assert.equal(env.has("DSH_ACP_BIN"), false);
 });
 
@@ -110,19 +113,19 @@ test("installKimiProvider registers a grok-driver instance with KIMI_BIN and cus
   assert.equal(result.provider.instanceId, "kimi");
   const instance = client.instances().kimi;
   assert.equal(instance.driver, "grok");
-  assert.equal(instance.displayName, "Kimi");
-  assert.deepEqual(instance.config, { binaryPath: WRAPPER_KIMI, customModels: ["kimi-code/k3"] });
+  assert.equal(instance.displayName, "Kimi via OpenRouter");
+  assert.deepEqual(instance.config, { binaryPath: WRAPPER_KIMI, customModels: ["moonshotai/kimi-k3"] });
   const env = envMap(instance);
   assert.equal(env.get("T3_HERMES_BRIDGE_HARNESS"), "kimi");
   assert.equal(env.get("KIMI_BIN"), "/opt/kimi/bin/kimi");
-  assert.equal(env.get("KIMI_MODEL"), "kimi-code/k3");
+  assert.equal(env.get("KIMI_MODEL"), "moonshotai/kimi-k3");
 });
 
 test("installKimiProvider requires an absolute kimiBin and refuses foreign instances", async () => {
   const client = settingsClient();
   await assert.rejects(installKimiProvider(client, { wrapperPath: WRAPPER_KIMI, kimiBin: "kimi" }), /absolute Kimi executable path/);
   const foreign = settingsClient({ kimi: { driver: "grok", environment: [] } });
-  await assert.rejects(installKimiProvider(foreign, { wrapperPath: WRAPPER_KIMI, kimiBin: "/opt/kimi/bin/kimi" }), /not owned by the Kimi harness/);
+  await assert.rejects(installKimiProvider(foreign, { wrapperPath: WRAPPER_KIMI, kimiBin: "/opt/kimi/bin/kimi" }), /not owned by the Kimi via OpenRouter harness/);
   const redacted = settingsClient({
     other: { driver: "grok", environment: [{ name: "KEY", sensitive: true, valueRedacted: true }] },
   });
@@ -140,6 +143,20 @@ test("removeKimiProvider refuses foreign instances, reports absent, removes owne
   assert.equal("kimi" in owned.instances(), false);
 });
 
+test("Claude OpenRouter is a distinct Kimi-backed provider and ownership boundary", async () => {
+  const client = settingsClient();
+  const result = await installClaudeOpenRouterProvider(client, { wrapperPath: WRAPPER_KIMI, kimiBin: "/opt/kimi/bin/kimi" });
+  assert.equal(result.provider.instanceId, "claude-openrouter");
+  const instance = client.instances()["claude-openrouter"];
+  assert.equal(instance.displayName, "Claude via OpenRouter");
+  assert.deepEqual(instance.config.customModels, ["anthropic/claude-3-haiku"]);
+  const env = envMap(instance);
+  assert.equal(env.get("T3_HERMES_BRIDGE_HARNESS"), "claude-openrouter");
+  assert.equal(env.get("KIMI_MODEL"), "anthropic/claude-3-haiku");
+  assert.deepEqual(await removeClaudeOpenRouterProvider(client), { removed: true });
+  assert.equal("claude-openrouter" in client.instances(), false);
+});
+
 test("providerHarness classification stays stable for legacy hermes and pi instances", () => {
   const owned = (environment) => ({ driver: "grok", environment });
   const ownerMarker = { name: "T3_HERMES_BRIDGE_OWNER", value: "t3-hermes-bridge/v1", sensitive: false };
@@ -147,10 +164,12 @@ test("providerHarness classification stays stable for legacy hermes and pi insta
   assert.equal(providerHarness(owned([ownerMarker, { name: "T3_HERMES_BRIDGE_HARNESS", value: "pi", sensitive: false }])), "pi");
   assert.equal(providerHarness(owned([ownerMarker, { name: "T3_HERMES_BRIDGE_HARNESS", value: "deepseek", sensitive: false }])), "deepseek");
   assert.equal(providerHarness(owned([ownerMarker, { name: "T3_HERMES_BRIDGE_HARNESS", value: "kimi", sensitive: false }])), "kimi");
+  assert.equal(providerHarness(owned([ownerMarker, { name: "T3_HERMES_BRIDGE_HARNESS", value: "claude-openrouter", sensitive: false }])), "claude-openrouter");
   assert.equal(providerHarness(owned([ownerMarker, { name: "T3_HERMES_BRIDGE_HARNESS", value: "unknown", sensitive: false }])), null);
   assert.equal(providerHarness({ driver: "grok", environment: [] }), null);
   assert.equal(DEEPSEEK_HARNESS_VALUE, "deepseek");
   assert.equal(KIMI_HARNESS_VALUE, "kimi");
+  assert.equal(CLAUDE_OPENROUTER_HARNESS_VALUE, "claude-openrouter");
 });
 
 test("readDeepSeekApiKey fails loud without leaking material", () => {
@@ -185,15 +204,16 @@ test("resolveDshAcpBinary rejects relative paths and hints at npm i -g dsh-acp",
 
 test("buildLaunchPlan keeps the key out of argv and prepares a private sessions root", () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "t3-bridge-dsh-home-"));
-  const authFile = openCodeAuthFile(home);
-  fs.mkdirSync(path.dirname(authFile), { recursive: true });
-  fs.writeFileSync(authFile, JSON.stringify({ deepseek: { key: "sk-plan-key-material" } }));
+  const tokenFile = path.join(home, ".local", "state", "t3-hermes-bridge", "openrouter.token");
+  fs.mkdirSync(path.dirname(tokenFile), { recursive: true });
+  fs.writeFileSync(tokenFile, "sk-plan-key-material", { mode: 0o600 });
   const plan = buildLaunchPlan({ env: { DSH_ACP_BIN: process.execPath, PATH: "" }, home, cwd: "/repo/alpha" });
   assert.equal(plan.binary, process.execPath);
   assert.deepEqual(plan.args, ["--config", path.resolve("config", "dsh-acp.cordis.yml")]);
   assert.equal(plan.args.some((argument) => argument.includes("sk-plan-key-material")), false);
   assert.equal(plan.env.DEEPSEEK_API_KEY, "sk-plan-key-material");
-  assert.equal(plan.env.DEEPSEEK_MODEL, "deepseek-v4-flash");
+  assert.equal(plan.env.DEEPSEEK_BASE_URL, "https://openrouter.ai/api/v1");
+  assert.equal(plan.env.DEEPSEEK_MODEL, "deepseek/deepseek-v4-flash");
   assert.equal(plan.env.DSH_PERMISSION_MODE, "workspace-write");
   const sessionsRoot = plan.env.DSH_SESSIONS_ROOT;
   const suffix = path.basename(sessionsRoot);

@@ -496,7 +496,7 @@ test("CLI parseArgs collects repeatable --option and usage documents originate f
   assert.match(help, /tentacles doctor \[--json\]/);
   assert.match(help, /Advertised is not proved/);
   assert.match(help, /originate --workspace PATH --title TITLE --message TEXT --runtime-mode approval-required\|auto-accept-edits\|auto\|full-access/);
-  assert.match(help, /--instance hermes\|codex\|claudeAgent\|grok\|cursor\|deepseek\|kimi\|pi\|opencode/);
+  assert.match(help, /--instance hermes\|codex\|claudeAgent\|claude-openrouter\|grok\|cursor\|deepseek\|kimi\|pi\|opencode/);
   assert.match(help, /--model MODEL/);
   assert.match(help, /--runtime-mode approval-required\|auto-accept-edits\|auto\|full-access/);
   assert.doesNotMatch(help, /\[--runtime-mode/);

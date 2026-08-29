@@ -20,7 +20,7 @@ import {
   useNativeGrokCachedAuth,
   writeBridgeState,
 } from "../src/bridge.mjs";
-import { readToken, requireLoopbackUrl, resolveExecutable } from "../src/config.mjs";
+import { readOpenRouterToken, readToken, requireLoopbackUrl, resolveExecutable } from "../src/config.mjs";
 import {
   LAUNCH_AGENT_LABEL,
   assertBridgeOwnedLaunchAgentFile,
@@ -76,6 +76,16 @@ test("token, origin, and executable validation fail closed at their boundaries",
   fs.writeFileSync(executable, "#!/bin/sh\n", { mode: 0o700 });
   assert.equal(resolveExecutable("bridge-bin", `${directory}${path.delimiter}/missing`), fs.realpathSync(executable));
   assert.throws(() => resolveExecutable("missing-bin", directory), /Executable not found/);
+});
+
+test("OpenRouter token uses the same owner-only file contract without leaking material", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "t3-openrouter-token-test-"));
+  const tokenFile = path.join(directory, "openrouter.token");
+  fs.writeFileSync(tokenFile, "sk-openrouter-test-material", { mode: 0o600 });
+  assert.equal(readOpenRouterToken(tokenFile), "sk-openrouter-test-material");
+  fs.chmodSync(tokenFile, 0o644);
+  assert.throws(() => readOpenRouterToken(tokenFile), /permissions are too broad/);
+  assert.throws(() => readOpenRouterToken(path.join(directory, "missing")), /OpenRouter API token file is missing/);
 });
 
 test("HTTP response bodies are size-bounded", async () => {

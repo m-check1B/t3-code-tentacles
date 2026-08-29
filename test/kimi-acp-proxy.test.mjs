@@ -7,10 +7,38 @@ import { once } from "node:events";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import {
+  buildKimiLaunchPlan,
   resolveKimiBinary,
   startKimiAcpProxy,
   transformClientToAgentLine,
 } from "../src/kimi-acp-launch.mjs";
+
+test("buildKimiLaunchPlan injects OpenRouter without putting the token in argv", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "t3-kimi-openrouter-"));
+  const tokenFile = path.join(directory, "openrouter.token");
+  fs.writeFileSync(tokenFile, "sk-openrouter-test-material", { mode: 0o600 });
+  const plan = buildKimiLaunchPlan({
+    env: {
+      KIMI_BIN: process.execPath,
+      KIMI_MODEL: "anthropic/claude-3-haiku",
+      OPENROUTER_TOKEN_FILE: tokenFile,
+      PATH: "",
+    },
+  });
+  assert.equal(plan.binary, process.execPath);
+  assert.equal(plan.env.KIMI_BASE_URL, "https://openrouter.ai/api/v1");
+  assert.equal(plan.env.KIMI_API_KEY, "sk-openrouter-test-material");
+  assert.equal(plan.env.KIMI_MODEL_NAME, "anthropic/claude-3-haiku");
+  assert.equal(Object.hasOwn(plan, "args"), false);
+  assert.equal(plan.binary.includes("sk-openrouter-test-material"), false);
+});
+
+test("buildKimiLaunchPlan fails closed when the OpenRouter token is absent", () => {
+  assert.throws(
+    () => buildKimiLaunchPlan({ env: { KIMI_BIN: process.execPath, OPENROUTER_TOKEN_FILE: "/definitely/missing/openrouter.token" } }),
+    /OpenRouter API token file is missing/,
+  );
+});
 
 test("transformClientToAgentLine intercepts authenticate with a synthesized success response", () => {
   const numeric = transformClientToAgentLine(

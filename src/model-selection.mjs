@@ -2,6 +2,7 @@ export const ORIGINATE_LABS = Object.freeze([
   "hermes",
   "codex",
   "claudeAgent",
+  "claude-openrouter",
   "grok",
   "cursor",
   "deepseek",
@@ -10,14 +11,15 @@ export const ORIGINATE_LABS = Object.freeze([
   "opencode",
 ]);
 
-export const ADAPTER_LABS = Object.freeze(["hermes", "pi", "deepseek", "kimi"]);
+export const ADAPTER_LABS = Object.freeze(["hermes", "pi", "deepseek", "kimi", "claude-openrouter"]);
 export const EXPLICIT_LABS = Object.freeze(["cursor"]);
 
 export const LAB_DEFAULT_MODELS = Object.freeze({
   hermes: process.env.T3_HERMES_MODEL || "openai-codex:gpt-5.6-sol",
   pi: process.env.T3_PI_MODEL || "gpt-5.6-terra",
-  deepseek: process.env.T3_DEEPSEEK_MODEL || "deepseek-v4-flash",
-  kimi: process.env.T3_KIMI_MODEL || "kimi-code/k3",
+  deepseek: process.env.T3_DEEPSEEK_MODEL || "deepseek/deepseek-v4-flash",
+  kimi: process.env.T3_KIMI_MODEL || "moonshotai/kimi-k3",
+  "claude-openrouter": process.env.T3_CLAUDE_OPENROUTER_MODEL || "anthropic/claude-3-haiku",
   grok: process.env.T3_GROK_MODEL || "grok-4.6",
   codex: process.env.T3_CODEX_MODEL || "gpt-5.6-luna",
   claudeAgent: process.env.T3_CLAUDE_MODEL || "claude-sonnet-5",
@@ -46,6 +48,8 @@ export function labInstallHint(instanceId) {
       return "tentacles install-deepseek-provider --instance deepseek";
     case "kimi":
       return "tentacles install-kimi-provider --instance kimi";
+    case "claude-openrouter":
+      return "tentacles install-claude-openrouter-provider --instance claude-openrouter";
     case "cursor":
       return "Enable the T3 Cursor instance, then originate with --instance cursor --model <advertised>";
     default:

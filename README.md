@@ -163,9 +163,9 @@ Tentacles-additive rows:
 
 | Additive path | Default originate model | Setup |
 |---|---|---|
-| Claude via OpenRouter | cheapest working Anthropic model | OpenRouter; no Claude Code subscription |
-| Kimi CLI | `kimi-code/k3` | Target: OpenRouter-backed Kimi CLI adapter |
-| DeepSeek CLI | `deepseek-v4-flash` | Target: OpenRouter-backed DeepSeek CLI adapter |
+| Claude via OpenRouter | `anthropic/claude-3-haiku` | OpenRouter through a distinct `claude-openrouter` adapter; no Claude Code subscription |
+| Kimi CLI | `moonshotai/kimi-k3` | OpenRouter-backed Kimi CLI adapter |
+| DeepSeek CLI | `deepseek/deepseek-v4-flash` | OpenRouter-backed DeepSeek CLI adapter |
 | Hermes lab | `openai-codex:gpt-5.6-sol` | `tentacles install-provider` |
 | Pi CLI | `gpt-5.6-terra` | `tentacles install-pi-provider` |
 
@@ -181,9 +181,9 @@ Tentacles lab proof.
 | Additive path | E2E | Notes |
 |---|---|---|
 | Chair CLI | Proved from Grok Bot | Originate + continue without the T3 GUI; the selected Grok CLI lab remains T3-native |
-| Claude via OpenRouter | Blocked | No distinct Tentacles OpenRouter instance or usable Tentacles-owned OpenRouter credential is configured; T3-native Claude Code is not counted |
-| Kimi CLI | Blocked | Required OpenRouter route is not implemented; the existing Kimi-managed adapter remained running without an assistant answer |
-| DeepSeek CLI | Blocked | Current adapter still reads an official DeepSeek key instead of OpenRouter; live originate ended with `Grok prompt request failed` |
+| Claude via OpenRouter | Blocked | Distinct `claude-openrouter` route is implemented; the owner-only OpenRouter token file is absent, so no authenticated originate proof exists. T3-native Claude Code is not counted |
+| Kimi CLI | Blocked | OpenRouter base/model/token wiring is implemented and fails closed when the token file is absent; no authenticated originate proof exists |
+| DeepSeek CLI | Blocked | OpenRouter base/model/token wiring is implemented and the official DeepSeek credential grave is no longer used by the launcher; no authenticated originate proof exists |
 | Hermes lab | Blocked | Live `openai-codex:gpt-5.6-sol` originate fell through to DeepSeek and returned HTTP 402; fail-closed behavior is not proved live |
 | Pi CLI | Blocked | ACP `initialize` reports invalidated OpenAI-Codex OAuth refresh (HTTP 401); interactive Pi re-login is required |
 
@@ -362,20 +362,28 @@ On this machine Pi is blocked at ACP `initialize`: its OpenAI-Codex OAuth
 refresh token was invalidated and the provider returned HTTP 401. Interactive
 Pi re-login is required before expecting an assistant.
 
-### DeepSeek or Kimi
+### OpenRouter: Claude, Kimi, and DeepSeek
 
-**DeepSeek (dsh-acp).** The current launcher reads the official DeepSeek key
-from the OpenCode auth store and passes it only through the child environment,
-never the command line:
+**OpenRouter credential.** Claude, Kimi, and DeepSeek share one owner-controlled
+runtime credential at
+`~/.local/state/t3-hermes-bridge/openrouter.token`. The file must be owned by
+the current user, mode `0600`, a regular file, and not a symlink. Tentacles
+reads it only at adapter startup and passes it only through the child
+environment; it is never stored in T3 settings, argv, doctor output, or this
+repository.
+
+**DeepSeek (dsh-acp).** The launcher routes the DeepSeek CLI adapter through
+OpenRouter's OpenAI-compatible endpoint and fails closed if the owner-only
+token file is absent:
 
 ```bash
 npm i -g dsh-acp
 tentacles install-deepseek-provider \
   --instance deepseek \
-  --model deepseek-v4-flash
+  --model deepseek/deepseek-v4-flash
 ```
 
-The default model is `deepseek-v4-flash`; override it with `--model` or
+The default model is `deepseek/deepseek-v4-flash`; override it with `--model` or
 `T3_DEEPSEEK_MODEL`. The wrapper launches `dsh-acp` from `PATH` (or an absolute
 `--dsh-acp-bin`/`DSH_ACP_BIN` override) with a bridge-owned Cordis config and
 `workspace-write` permissions. Sessions persist under
@@ -386,24 +394,26 @@ while parallel T3 threads in different workspaces each get their own store.
 An explicit `DSH_SESSIONS_ROOT` replaces this default entirely and must then
 be unique per concurrent lane.
 
-**Kimi CLI.** The current adapter starts Kimi's native ACP mode using its own
-configured authentication (or an absolute `--kimi-bin`/`KIMI_BIN` override):
+**Kimi CLI and Claude via OpenRouter.** Both adapters start Kimi's native ACP
+mode, which supports an OpenAI-compatible base URL and arbitrary model slug.
+They use separate T3 instances and model identities:
 
 ```bash
 tentacles install-kimi-provider \
   --instance kimi \
-  --model kimi-code/k3
+  --model moonshotai/kimi-k3
+
+tentacles install-claude-openrouter-provider \
+  --instance claude-openrouter \
+  --model anthropic/claude-3-haiku
 ```
 
-Remove either registration with `remove-deepseek-provider` or
-`remove-kimi-provider`. Both carry the same ownership markers and refusal rules
-as the Hermes and Pi providers.
-
-Those existing routes do not satisfy the product requirement here: both must
-run through the paid OpenRouter account, without requiring an official
-DeepSeek balance or paid Kimi plan. The OpenRouter credential and route are not
-implemented in the current adapters; live DeepSeek errored and Kimi produced no
-assistant answer. Install is not a working-assistant claim.
+Remove registrations with the matching `remove-deepseek-provider`,
+`remove-kimi-provider`, or `remove-claude-openrouter-provider` command. Each
+instance carries its own ownership marker and the same foreign-instance refusal
+rules as the Hermes and Pi providers. The route implementation does not turn an
+unproved row green: authenticated originate + continue evidence is still
+required.
 
 ## Optional: `@hermes` mention routing
 

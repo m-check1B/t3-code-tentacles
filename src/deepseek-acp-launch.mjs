@@ -4,7 +4,11 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { resolveExecutable } from "./config.mjs";
+import {
+  DEFAULT_OPENROUTER_BASE_URL,
+  readOpenRouterToken,
+  resolveExecutable,
+} from "./config.mjs";
 import {
   consumeJsonLines,
   forwardLine,
@@ -13,7 +17,7 @@ import {
   requestKey,
 } from "./pi-acp.mjs";
 
-export const DEFAULT_LAUNCH_DEEPSEEK_MODEL = "deepseek-v4-flash";
+export const DEFAULT_LAUNCH_DEEPSEEK_MODEL = "deepseek/deepseek-v4-flash";
 export const DEFAULT_DSH_PERMISSION_MODE = "workspace-write";
 export const BRIDGE_DSH_CONFIG_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "config", "dsh-acp.cordis.yml");
 export const MAX_TRANSLATED_SET_MODEL_IDS = MAX_PENDING_ACP_REQUESTS;
@@ -82,7 +86,7 @@ export function workspaceSessionsSlug(cwd) {
 }
 
 export function buildLaunchPlan({ env = process.env, home = os.homedir(), configPath = BRIDGE_DSH_CONFIG_PATH, cwd = process.cwd() } = {}) {
-  const apiKey = readDeepSeekApiKey(openCodeAuthFile(home));
+  const apiKey = readOpenRouterToken(env.OPENROUTER_TOKEN_FILE || path.join(home, ".local", "state", "t3-hermes-bridge", "openrouter.token"));
   const binary = resolveDshAcpBinary(env);
   const sessionsRoot = env.DSH_SESSIONS_ROOT || path.join(home, ".dsh", "acp-sessions", workspaceSessionsSlug(cwd));
   fs.mkdirSync(sessionsRoot, { recursive: true, mode: 0o700 });
@@ -93,6 +97,7 @@ export function buildLaunchPlan({ env = process.env, home = os.homedir(), config
     env: {
       ...env,
       DEEPSEEK_API_KEY: apiKey,
+      DEEPSEEK_BASE_URL: DEFAULT_OPENROUTER_BASE_URL,
       DEEPSEEK_MODEL: env.DEEPSEEK_MODEL || DEFAULT_LAUNCH_DEEPSEEK_MODEL,
       DSH_PERMISSION_MODE: env.DSH_PERMISSION_MODE || DEFAULT_DSH_PERMISSION_MODE,
       DSH_SESSIONS_ROOT: sessionsRoot,

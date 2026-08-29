@@ -1,6 +1,6 @@
 # Bridge-owned Cordis configuration for the dsh-acp ACP server.
 # Mirrors the bundled assets/cordis.default.yml from the dsh-acp package, with
-# the acp-agent model resolved from DEEPSEEK_MODEL (default deepseek-v4-flash)
+# the acp-agent model resolved from DEEPSEEK_MODEL (default OpenRouter slug)
 # instead of the upstream hardcoded deepseek-v4-pro. dsh-acp has no model env
 # var of its own; this file is loaded via `dsh-acp --config <path>`.
 
@@ -10,8 +10,8 @@
     thinking: enabled
     reasoningEffort: max
     models:
-      - id: deepseek-v4-flash
-      - id: deepseek-v4-pro
+      - id: deepseek/deepseek-v4-flash
+      - id: deepseek/deepseek-v4-pro
 
 - id: sandbox
   name: '@deepseek-ai/dsh-sandbox-local'
@@ -39,7 +39,7 @@
   name: '@deepseek-ai/dsh-acp-demo'
   config:
     provider: deepseek-official
-    model: !!js "process.env.DEEPSEEK_MODEL ?? 'deepseek-v4-flash'"
+    model: !!js "process.env.DEEPSEEK_MODEL ?? 'deepseek/deepseek-v4-flash'"
     persistenceRoot: !!js "process.env.DSH_SESSIONS_ROOT ?? './.sessions'"
     persistenceCompression: 'none'
     workspaceContext:

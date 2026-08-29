@@ -98,9 +98,9 @@ test("doctor bounds and validates the Hermes health response", async () => {
   });
   assert.equal(result.hermes.version, "test-version");
   assert.equal(result.product, "Tentacles");
-  assert.equal(result.labs.length >= 9, true);
-  assert.deepEqual(result.labs.map((lab) => lab.instanceId).slice(0, 9), [
-    "hermes", "codex", "claudeAgent", "grok", "cursor", "deepseek", "kimi", "pi", "opencode",
+  assert.equal(result.labs.length >= 10, true);
+  assert.deepEqual(result.labs.map((lab) => lab.instanceId).slice(0, 10), [
+    "hermes", "codex", "claudeAgent", "claude-openrouter", "grok", "cursor", "deepseek", "kimi", "pi", "opencode",
   ]);
 });
 

@@ -10,16 +10,26 @@ export const DEFAULT_PI_INSTANCE_ID = "pi";
 export const DEFAULT_PI_PROVIDER = process.env.T3_PI_PROVIDER || "openai-codex";
 export const DEFAULT_PI_MODEL = process.env.T3_PI_MODEL || "gpt-5.6-terra";
 export const DEFAULT_DEEPSEEK_INSTANCE_ID = "deepseek";
-export const DEFAULT_DEEPSEEK_MODEL = process.env.T3_DEEPSEEK_MODEL || "deepseek-v4-flash";
+export const DEFAULT_DEEPSEEK_MODEL = process.env.T3_DEEPSEEK_MODEL || "deepseek/deepseek-v4-flash";
 export const DEFAULT_KIMI_INSTANCE_ID = "kimi";
-export const DEFAULT_KIMI_MODEL = process.env.T3_KIMI_MODEL || "kimi-code/k3";
+export const DEFAULT_KIMI_MODEL = process.env.T3_KIMI_MODEL || "moonshotai/kimi-k3";
+export const DEFAULT_CLAUDE_OPENROUTER_INSTANCE_ID = "claude-openrouter";
+export const DEFAULT_CLAUDE_OPENROUTER_MODEL = process.env.T3_CLAUDE_OPENROUTER_MODEL || "anthropic/claude-3-haiku";
 export const DEFAULT_HERMES_PROFILE = process.env.HERMES_PROFILE || "default";
 export const DEFAULT_STATE_DIR = path.join(os.homedir(), ".local", "state", "t3-hermes-bridge");
 export const DEFAULT_TOKEN_FILE = path.join(DEFAULT_STATE_DIR, "t3.token");
+export const DEFAULT_OPENROUTER_TOKEN_FILE = path.join(DEFAULT_STATE_DIR, "openrouter.token");
+export const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 export const DEFAULT_BRIDGE_STATE_FILE = path.join(DEFAULT_STATE_DIR, "bridge-state.json");
 
-export function readToken(tokenFile = process.env.T3_HERMES_TOKEN_FILE || DEFAULT_TOKEN_FILE) {
-  const linkStat = fs.lstatSync(tokenFile);
+function readPrivateTokenFile(tokenFile, label) {
+  let linkStat;
+  try {
+    linkStat = fs.lstatSync(tokenFile);
+  } catch (error) {
+    if (error.code === "ENOENT") throw new Error(`${label} file is missing: ${tokenFile}`);
+    throw error;
+  }
   if (linkStat.isSymbolicLink()) throw new Error(`Token file must not be a symlink: ${tokenFile}`);
   const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0);
   const descriptor = fs.openSync(tokenFile, flags);
@@ -37,12 +47,20 @@ export function readToken(tokenFile = process.env.T3_HERMES_TOKEN_FILE || DEFAUL
     }
     const token = fs.readFileSync(descriptor, "utf8").trim();
     if (!/^[^\s\u0000-\u001f\u007f]{16,16384}$/.test(token)) {
-      throw new Error(`T3 bearer token has an invalid format: ${tokenFile}`);
+      throw new Error(`${label} has an invalid format: ${tokenFile}`);
     }
     return token;
   } finally {
     fs.closeSync(descriptor);
   }
+}
+
+export function readToken(tokenFile = process.env.T3_HERMES_TOKEN_FILE || DEFAULT_TOKEN_FILE) {
+  return readPrivateTokenFile(tokenFile, "T3 bearer token");
+}
+
+export function readOpenRouterToken(tokenFile = process.env.OPENROUTER_TOKEN_FILE || DEFAULT_OPENROUTER_TOKEN_FILE) {
+  return readPrivateTokenFile(tokenFile, "OpenRouter API token");
 }
 
 export function ensurePrivateDirectory(directory = DEFAULT_STATE_DIR) {

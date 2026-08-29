@@ -4,6 +4,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   DEFAULT_BRIDGE_STATE_FILE,
+  DEFAULT_CLAUDE_OPENROUTER_INSTANCE_ID,
+  DEFAULT_CLAUDE_OPENROUTER_MODEL,
   DEFAULT_DEEPSEEK_INSTANCE_ID,
   DEFAULT_DEEPSEEK_MODEL,
   DEFAULT_HERMES_PROFILE,
@@ -16,6 +18,7 @@ import {
   DEFAULT_PI_MODEL,
   DEFAULT_PI_PROVIDER,
   ensurePrivateDirectory,
+  readOpenRouterToken,
   requireLoopbackUrl,
 } from "./config.mjs";
 import {
@@ -36,7 +39,13 @@ const BRIDGE_HARNESS_VARIABLE = "T3_HERMES_BRIDGE_HARNESS";
 const PI_HARNESS_VALUE = "pi";
 export const DEEPSEEK_HARNESS_VALUE = "deepseek";
 export const KIMI_HARNESS_VALUE = "kimi";
-const KNOWN_HARNESS_VALUES = new Set([PI_HARNESS_VALUE, DEEPSEEK_HARNESS_VALUE, KIMI_HARNESS_VALUE]);
+export const CLAUDE_OPENROUTER_HARNESS_VALUE = "claude-openrouter";
+const KNOWN_HARNESS_VALUES = new Set([
+  PI_HARNESS_VALUE,
+  DEEPSEEK_HARNESS_VALUE,
+  KIMI_HARNESS_VALUE,
+  CLAUDE_OPENROUTER_HARNESS_VALUE,
+]);
 const STATE_VERSION = 2;
 const PROCESSED_FALLBACK_LIMIT = 1_000;
 const PENDING_LIMIT = 1_000;
@@ -317,32 +326,35 @@ export async function removeDeepSeekProvider(client, { instanceId = DEFAULT_DEEP
   return { removed: true };
 }
 
-export async function installKimiProvider(client, {
+async function installKimiBackedOpenRouterProvider(client, {
   wrapperPath,
-  instanceId = DEFAULT_KIMI_INSTANCE_ID,
-  model = DEFAULT_KIMI_MODEL,
+  instanceId,
+  model,
   kimiBin,
+  harness,
+  displayName,
+  accentColor,
 } = {}) {
-  if (!wrapperPath || !path.isAbsolute(wrapperPath)) throw new Error("install-kimi-provider requires an absolute ACP wrapper path");
-  if (!kimiBin || !path.isAbsolute(kimiBin)) throw new Error("install-kimi-provider requires an absolute Kimi executable path");
+  if (!wrapperPath || !path.isAbsolute(wrapperPath)) throw new Error("OpenRouter provider install requires an absolute ACP wrapper path");
+  if (!kimiBin || !path.isAbsolute(kimiBin)) throw new Error("OpenRouter provider install requires an absolute Kimi executable path");
   const settings = await client.getSettings();
   const current = settings.providerInstances || {};
   if (hasRedactedSecrets(current)) {
     throw new Error("Refusing provider map replacement because T3 returned redacted provider secrets; use the T3 settings UI or remove those secrets first");
   }
-  if (current[instanceId] && providerHarness(current[instanceId]) !== KIMI_HARNESS_VALUE) {
-    throw new Error(`Refusing to replace provider instance '${instanceId}' because it is not owned by the Kimi harness`);
+  if (current[instanceId] && providerHarness(current[instanceId]) !== harness) {
+    throw new Error(`Refusing to replace provider instance '${instanceId}' because it is not owned by the ${displayName} harness`);
   }
   const providerInstances = {
     ...current,
     [instanceId]: {
       driver: "grok",
-      displayName: "Kimi",
-      accentColor: "#10B981",
+      displayName,
+      accentColor,
       enabled: true,
       environment: [
         { name: BRIDGE_OWNER_VARIABLE, value: BRIDGE_OWNER_VALUE, sensitive: false },
-        { name: BRIDGE_HARNESS_VARIABLE, value: KIMI_HARNESS_VALUE, sensitive: false },
+        { name: BRIDGE_HARNESS_VARIABLE, value: harness, sensitive: false },
         { name: "KIMI_BIN", value: kimiBin, sensitive: false },
         { name: "KIMI_MODEL", value: model, sensitive: false },
       ],
@@ -353,6 +365,40 @@ export async function installKimiProvider(client, {
   return await client.refreshProvider(instanceId);
 }
 
+export async function installKimiProvider(client, {
+  wrapperPath,
+  instanceId = DEFAULT_KIMI_INSTANCE_ID,
+  model = DEFAULT_KIMI_MODEL,
+  kimiBin,
+} = {}) {
+  return installKimiBackedOpenRouterProvider(client, {
+    wrapperPath,
+    instanceId,
+    model,
+    kimiBin,
+    harness: KIMI_HARNESS_VALUE,
+    displayName: "Kimi via OpenRouter",
+    accentColor: "#10B981",
+  });
+}
+
+export async function installClaudeOpenRouterProvider(client, {
+  wrapperPath,
+  instanceId = DEFAULT_CLAUDE_OPENROUTER_INSTANCE_ID,
+  model = DEFAULT_CLAUDE_OPENROUTER_MODEL,
+  kimiBin,
+} = {}) {
+  return installKimiBackedOpenRouterProvider(client, {
+    wrapperPath,
+    instanceId,
+    model,
+    kimiBin,
+    harness: CLAUDE_OPENROUTER_HARNESS_VALUE,
+    displayName: "Claude via OpenRouter",
+    accentColor: "#D97706",
+  });
+}
+
 export async function removeKimiProvider(client, { instanceId = DEFAULT_KIMI_INSTANCE_ID } = {}) {
   const settings = await client.getSettings();
   const current = settings.providerInstances || {};
@@ -360,6 +406,20 @@ export async function removeKimiProvider(client, { instanceId = DEFAULT_KIMI_INS
   if (!(instanceId in current)) return { removed: false };
   if (providerHarness(current[instanceId]) !== KIMI_HARNESS_VALUE) {
     throw new Error(`Refusing to remove provider instance '${instanceId}' because it is not owned by the Kimi harness`);
+  }
+  const providerInstances = { ...current };
+  delete providerInstances[instanceId];
+  await client.updateSettings({ providerInstances });
+  return { removed: true };
+}
+
+export async function removeClaudeOpenRouterProvider(client, { instanceId = DEFAULT_CLAUDE_OPENROUTER_INSTANCE_ID } = {}) {
+  const settings = await client.getSettings();
+  const current = settings.providerInstances || {};
+  if (hasRedactedSecrets(current)) throw new Error("Refusing provider map replacement because T3 returned redacted provider secrets");
+  if (!(instanceId in current)) return { removed: false };
+  if (providerHarness(current[instanceId]) !== CLAUDE_OPENROUTER_HARNESS_VALUE) {
+    throw new Error(`Refusing to remove provider instance '${instanceId}' because it is not owned by the Claude OpenRouter harness`);
   }
   const providerInstances = { ...current };
   delete providerInstances[instanceId];
@@ -900,11 +960,25 @@ function labRow({ instanceId, advertised, settings, configById }) {
   return row;
 }
 
+function inspectOpenRouterAuth(tokenFile) {
+  try {
+    readOpenRouterToken(tokenFile);
+    return { constructable: true };
+  } catch (error) {
+    return {
+      constructable: false,
+      code: "openrouter_auth_unavailable",
+      message: error?.message || "OpenRouter API token is unavailable",
+    };
+  }
+}
+
 export async function doctor(client, {
   hermesUrl = process.env.HERMES_URL || DEFAULT_HERMES_URL,
   instanceId = DEFAULT_INSTANCE_ID,
   fetchImpl = globalThis.fetch,
   hermesHome,
+  openrouterTokenFile,
 } = {}) {
   const shell = await readOrchestrationSnapshot(client);
   const settings = await client.getSettings();
@@ -925,6 +999,19 @@ export async function doctor(client, {
   for (const extraId of Object.keys(settings?.providerInstances || {})) {
     if (seen.has(extraId)) continue;
     labs.push(labRow({ instanceId: extraId, advertised: ORIGINATE_LABS.includes(extraId), settings, configById }));
+  }
+
+  const openrouter = inspectOpenRouterAuth(openrouterTokenFile);
+  for (const labId of ["claude-openrouter", "kimi", "deepseek"]) {
+    const lab = labs.find((entry) => entry.instanceId === labId);
+    if (!lab) continue;
+    lab.openrouter = openrouter;
+    if (!openrouter.constructable) {
+      lab.ready = false;
+      lab.message = [lab.message, "OpenRouter fail-closed: owner-only token file unavailable"]
+        .filter(Boolean)
+        .join("; ");
+    }
   }
 
   let hermes;
@@ -964,6 +1051,7 @@ export async function doctor(client, {
     product: "Tentacles",
     t3: { reachable: true, projects: projects.length, threads: threads.length },
     labs,
+    openrouter,
     hermes,
     provider: {
       configured: Boolean(settings.providerInstances?.[instanceId]),
@@ -1017,6 +1105,12 @@ export function formatDoctor(result = {}) {
     } else {
       lines.push(`Hermes openai-codex: fail-closed (${openaiCodex.code || "codex_auth_missing"}; no provider fallback)`);
     }
+  }
+  const openrouter = result.openrouter && typeof result.openrouter === "object" ? result.openrouter : null;
+  if (openrouter) {
+    lines.push(openrouter.constructable
+      ? "OpenRouter adapters: credential constructable"
+      : `OpenRouter adapters: fail-closed (${openrouter.code || "openrouter_auth_unavailable"})`);
   }
   if (nativeGrok.present || nativeGrok.disabled) {
     lines.push(`Native Grok: present=${yesNo(nativeGrok.present)}  enabled=${yesNo(nativeGrok.enabled)}  disabled=${yesNo(nativeGrok.disabled)}`);

@@ -8,12 +8,14 @@ import {
   ALLOW_ALL_MENTION_POLICY,
   doctor,
   formatDoctor,
+  installClaudeOpenRouterProvider,
   installDeepSeekProvider,
   installKimiProvider,
   installProvider,
   installPiProvider,
   originate,
   removeDeepSeekProvider,
+  removeClaudeOpenRouterProvider,
   removeKimiProvider,
   removeProvider,
   removePiProvider,
@@ -24,6 +26,8 @@ import {
 import {
   DEFAULT_DEEPSEEK_INSTANCE_ID,
   DEFAULT_DEEPSEEK_MODEL,
+  DEFAULT_CLAUDE_OPENROUTER_INSTANCE_ID,
+  DEFAULT_CLAUDE_OPENROUTER_MODEL,
   DEFAULT_HERMES_PROFILE,
   DEFAULT_INSTANCE_ID,
   DEFAULT_KIMI_INSTANCE_ID,
@@ -152,10 +156,12 @@ Usage:
   tentacles remove-provider [--instance hermes]
   tentacles install-pi-provider [--instance pi] [--model gpt-5.6-terra] [--pi-provider openai-codex]
   tentacles remove-pi-provider [--instance pi]
-  tentacles install-deepseek-provider [--instance deepseek] [--model deepseek-v4-flash] [--dsh-acp-bin PATH]
+  tentacles install-deepseek-provider [--instance deepseek] [--model deepseek/deepseek-v4-flash] [--dsh-acp-bin PATH]
   tentacles remove-deepseek-provider [--instance deepseek]
-  tentacles install-kimi-provider [--instance kimi] [--model kimi-code/k3] [--kimi-bin PATH]
+  tentacles install-kimi-provider [--instance kimi] [--model moonshotai/kimi-k3] [--kimi-bin PATH]
   tentacles remove-kimi-provider [--instance kimi]
+  tentacles install-claude-openrouter-provider [--instance claude-openrouter] [--model anthropic/claude-3-haiku] [--kimi-bin PATH]
+  tentacles remove-claude-openrouter-provider [--instance claude-openrouter]
   tentacles restore-native-grok
   tentacles use-native-grok-cached-auth
   tentacles observe
@@ -341,6 +347,22 @@ async function main() {
   }
   if (command === "remove-kimi-provider") {
     console.log(JSON.stringify(await removeKimiProvider(client, { instanceId: options.instance || DEFAULT_KIMI_INSTANCE_ID }), null, 2));
+    return;
+  }
+  if (command === "install-claude-openrouter-provider") {
+    const claudeInstanceId = options.instance || DEFAULT_CLAUDE_OPENROUTER_INSTANCE_ID;
+    const claudeModel = options.model || DEFAULT_CLAUDE_OPENROUTER_MODEL;
+    const result = await installClaudeOpenRouterProvider(client, {
+      wrapperPath: path.join(repoRoot, "bin", "t3-kimi-acp"),
+      instanceId: claudeInstanceId,
+      model: claudeModel,
+      kimiBin: resolveKimiExecutable(options["kimi-bin"]),
+    });
+    console.log(JSON.stringify({ installed: true, instanceId: claudeInstanceId, provider: result.provider?.instanceId || claudeInstanceId }, null, 2));
+    return;
+  }
+  if (command === "remove-claude-openrouter-provider") {
+    console.log(JSON.stringify(await removeClaudeOpenRouterProvider(client, { instanceId: options.instance || DEFAULT_CLAUDE_OPENROUTER_INSTANCE_ID }), null, 2));
     return;
   }
   if (command === "restore-native-grok") {

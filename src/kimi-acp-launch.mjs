@@ -2,7 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { resolveExecutable } from "./config.mjs";
+import {
+  DEFAULT_KIMI_MODEL,
+  DEFAULT_OPENROUTER_BASE_URL,
+  readOpenRouterToken,
+  resolveExecutable,
+} from "./config.mjs";
 import {
   authenticateResponse,
   consumeJsonLines,
@@ -29,6 +34,19 @@ export function resolveKimiBinary(env = process.env) {
   } catch {
     throw new Error("kimi executable not found on PATH; install the Kimi CLI or set KIMI_BIN to an absolute path");
   }
+}
+
+export function buildKimiLaunchPlan({ env = process.env } = {}) {
+  const apiKey = readOpenRouterToken(env.OPENROUTER_TOKEN_FILE);
+  return {
+    binary: resolveKimiBinary(env),
+    env: {
+      ...env,
+      KIMI_BASE_URL: DEFAULT_OPENROUTER_BASE_URL,
+      KIMI_API_KEY: apiKey,
+      KIMI_MODEL_NAME: env.KIMI_MODEL || DEFAULT_KIMI_MODEL,
+    },
+  };
 }
 
 function parseJsonObject(text) {
@@ -163,14 +181,14 @@ function defaultExit(code) {
 }
 
 export function main() {
-  let binary;
+  let plan;
   try {
-    binary = resolveKimiBinary();
+    plan = buildKimiLaunchPlan();
   } catch (error) {
     console.error(`t3-kimi-acp: ${error.message}`);
     process.exit(1);
   }
-  startKimiAcpProxy({ kimiBin: binary });
+  startKimiAcpProxy({ kimiBin: plan.binary, env: plan.env });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
