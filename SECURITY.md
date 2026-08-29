@@ -21,6 +21,17 @@ T3/Hermes origins, reads a private T3 bearer from an owner-controlled `0600`
 regular file, rejects redirects, and refuses to replace or remove a provider it
 does not own. It does not make T3 Code or Hermes remotely accessible.
 
+Optional Cloud Jack pairing preserves that boundary: Tentacles opens one
+outbound WSS connection and executes a four-method runtime shim locally; it
+never opens an inbound port or forwards T3 transport. Pair offers are
+current-user-owned `0600` regular files, are sent outside the URL, expire, and
+are consumed only after a successful bind. The bind carries the existing Sphere
+`agentjack-desktop` / `desktop.use` identity and existing machine activation
+contract. The Jack
+endpoint remains responsible for Sphere session, entitlement, one-host token
+use, and revoke enforcement. Disconnect, expiry, revoke, replay, malformed
+frames, or local runtime failure returns no computer data.
+
 The macOS service is namespaced by explicit filesystem-safe `--profile` and
 `--instance` values. It fails closed on foreign files, symlinks, ownership
 changes, oversized plists, and missing identity instead of selecting a profile
@@ -36,6 +47,10 @@ Status inspects token metadata only; it never reads or prints the token. Per-
 service directories and status/config files are private (`0700`/`0600`), and the
 watcher uses a bounded structured-status contract instead of public unbounded
 log files.
+
+Remote pair presence follows the same rule. Doctor exposes only `paired`,
+`unpaired`, or `expired`; the lease file contains no pair token, relay endpoint,
+machine identity, prompts, or RPC payloads.
 
 Treat Hermes profiles and Pi Agent as privileged local processes: the bridge
 does not reduce or expand the filesystem, shell, network, or tool permissions

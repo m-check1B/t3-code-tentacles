@@ -15,12 +15,27 @@ Any non-Hermes T3 thread
   │ new user message containing @hermes, read-only polling
   ▼
 tentacles watch ──▶ linked Hermes-backed T3 thread
+
+Cloud Jack (Sphere session + existing Jack 1 entitlement)
+  │ authenticated pair endpoint
+  ▼
+outbound WSS pair ◀── Tentacles host ──loopback──▶ T3 Code
+  │ seats / originate / continue / doctor-status
+  └── no inbound host port; colocated Jack skips this path
 ```
 
 The functional bridge changes neither upstream. It reuses the ACP contract
 implemented by T3 Code's Grok-compatible driver, Hermes, and Pi, then uses T3
 Code's local orchestration HTTP and WebSocket RPC surfaces for settings and
 Hermes reverse dispatch.
+
+Remote pairing is an additive client-side transport. A current-user-owned
+one-shot offer lets Tentacles bind one existing Sphere `machine_id` to an
+authenticated Jack endpoint over outbound WSS. The four-method shim executes on
+the host against the same loopback client. The pair endpoint, not Tentacles,
+owns Sphere login and enforcement of `agentjack-desktop` / `desktop.use`; revoke,
+expiry, disconnect, malformed frames, and replay all fail closed. See
+[remote-pairing.md](remote-pairing.md).
 
 Pi 0.1.x uses local authentication and an older ACP model/mode response shape.
 The Pi relay answers T3's transport-level `authenticate` request locally,
@@ -96,6 +111,8 @@ remove this cosmetic coupling entirely.
 
 - T3 and Hermes origins must resolve to loopback hosts and may not include
   credentials, paths, queries, or fragments.
+- Remote pairing never changes those origins. Its separate endpoint must be
+  credential-free WSS; the one-shot secret is sent only in the first bind frame.
 - HTTP redirects are rejected so the T3 bearer cannot cross origins.
 - Token files must be non-symlink, owner-controlled regular files with mode
   `0600` and bounded content.

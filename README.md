@@ -207,6 +207,7 @@ mode fails closed.
 | Flow | Result | Status |
 |---|---|---|
 | `tentacles doctor` | Human-readable lab matrix for this machine; `--json` for the document | Tested |
+| Cloud Jack → paired computer | Outbound WSS shim for seats / originate / continue / doctor-status; T3 stays loopback | Synthetic protocol proof; no live endpoint claim |
 | Chair CLI → T3 thread | Grok Bot uses `tentacles originate` without the T3 GUI | Proved; the selected Grok CLI remains T3-native |
 | Chair CLI continues thread | `tentacles act` `thread.continue` with `runtimeMode: full-access` | Proved from Grok Bot |
 | T3 Code → Hermes / Pi / DeepSeek / Kimi | Adapter appears as a T3 provider over ACP when installed | Install path exists; live assistant proof is blocked where the table says blocked |
@@ -217,6 +218,11 @@ mode fails closed.
 
 The mention bridge deliberately creates a clearly labeled linked Hermes thread.
 It does not impersonate the assistant inside another provider's existing thread.
+
+Cloud Jack pairing is optional and does not replace the colocated path. A local
+Jack continues to call Tentacles over loopback without a pair token. For the
+owner-only one-shot offer format, Sphere entitlement contract, and fail-closed
+wire surface, see [outbound remote pairing](docs/remote-pairing.md).
 
 ## Five-minute setup
 
