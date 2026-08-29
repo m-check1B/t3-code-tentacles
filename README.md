@@ -64,7 +64,7 @@ rows as green.
 | `claudeAgent` | Blocked | OpenRouter 401; no Claude Code subscription is required for this product |
 | `kimi` | Blocked | OpenRouter 401 |
 | `deepseek` | Blocked | OpenRouter 401 |
-| `hermes` | Blocked | Adapter can install; live assistant blocked on profile fallback |
+| `hermes` | Blocked | Adapter can install; `openai-codex` without Codex auth fails closed (`codex_auth_missing`, no DeepSeek fallback) |
 | `pi` | Blocked | Pi OAuth / ACP `initialize` failure |
 
 Every originate and every non-empty continue must pass
@@ -207,8 +207,10 @@ If your installation exposes a different model identifier, pass it with
 
 Open T3 Code, select the **Hermes** provider, and send a message. A real Hermes
 assistant reply is the first-direction proof. On this project's e2e record the
-Hermes lab is blocked on profile fallback; do not treat install as a working
-assistant.
+Hermes lab is blocked until Codex auth can construct `openai-codex`. Missing
+Codex credentials fail closed with `codex_auth_missing`; they do not silently
+answer via DeepSeek or another profile fallback. Do not treat install as a
+working assistant.
 
 ### Pi
 

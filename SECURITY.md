@@ -48,3 +48,9 @@ not forward T3's transport authentication request to Pi, bounds JSON-line and
 pending-request memory, exposes only models belonging to the explicitly selected
 Pi provider, and passes T3-selected bare model IDs to Pi's native
 `session/set_model` method.
+
+The Hermes ACP relay never logs protocol payloads. When T3 requests
+`openai-codex` and Codex credentials are missing, the relay returns a named
+`codex_auth_missing` JSON-RPC error instead of letting Hermes construct a
+different provider. Doctor reports that fail-closed state as presence only; it
+never prints token values.

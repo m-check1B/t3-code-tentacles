@@ -26,6 +26,7 @@ import {
   requireExplicitRuntimeMode,
   resolveModelSelection,
 } from "./model-selection.mjs";
+import { inspectHermesOpenaiCodexAuth } from "./hermes-acp-launch.mjs";
 import { readBoundedResponseText, readOrchestrationSnapshot, T3HttpError } from "./t3-client.mjs";
 
 const HERMES_MENTION = /(^|\s)@hermes\b/i;
@@ -903,6 +904,7 @@ export async function doctor(client, {
   hermesUrl = process.env.HERMES_URL || DEFAULT_HERMES_URL,
   instanceId = DEFAULT_INSTANCE_ID,
   fetchImpl = globalThis.fetch,
+  hermesHome,
 } = {}) {
   const shell = await readOrchestrationSnapshot(client);
   const settings = await client.getSettings();
@@ -931,9 +933,17 @@ export async function doctor(client, {
   } catch (error) {
     hermes = { reachable: false, errorType: error?.name || "Error", error: error?.message || "Hermes health check failed" };
   }
+  const openaiCodex = inspectHermesOpenaiCodexAuth(hermesHome === undefined ? undefined : { home: hermesHome });
+  hermes.openaiCodex = openaiCodex;
   const hermesLab = labs.find((lab) => lab.instanceId === "hermes");
   if (hermesLab) {
     hermesLab.health = hermes.reachable ? { status: hermes.status, version: hermes.version } : { reachable: false };
+    hermesLab.openaiCodex = openaiCodex;
+    if (!openaiCodex.constructable && typeof hermesLab.defaultModel === "string" && hermesLab.defaultModel.startsWith("openai-codex:")) {
+      hermesLab.message = [hermesLab.message, "openai-codex fail-closed without Codex auth (no provider fallback)"]
+        .filter(Boolean)
+        .join("; ");
+    }
   }
 
   const provider = configById.get(instanceId);
@@ -999,6 +1009,14 @@ export function formatDoctor(result = {}) {
   } else {
     const detail = clipDoctorText(hermes.error || hermes.errorType || "unreachable");
     lines.push(detail ? `Hermes health: unreachable  ${detail}` : "Hermes health: unreachable");
+  }
+  const openaiCodex = hermes.openaiCodex && typeof hermes.openaiCodex === "object" ? hermes.openaiCodex : null;
+  if (openaiCodex) {
+    if (openaiCodex.constructable) {
+      lines.push("Hermes openai-codex: constructable");
+    } else {
+      lines.push(`Hermes openai-codex: fail-closed (${openaiCodex.code || "codex_auth_missing"}; no provider fallback)`);
+    }
   }
   if (nativeGrok.present || nativeGrok.disabled) {
     lines.push(`Native Grok: present=${yesNo(nativeGrok.present)}  enabled=${yesNo(nativeGrok.enabled)}  disabled=${yesNo(nativeGrok.disabled)}`);

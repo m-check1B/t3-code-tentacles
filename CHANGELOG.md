@@ -22,8 +22,17 @@ All notable changes to this project are documented here.
 - `tentacles doctor` prints a human-readable lab matrix for this machine;
   `--json` keeps the machine-readable document. Advertised is not proved.
 - README separates advertised labs from e2e proof: Grok, Codex, OpenCode, and
-  Cursor are proved; Claude, Kimi, DeepSeek (OpenRouter 401), Hermes fallback,
-  and Pi OAuth remain blocked. Install docs lead with a ready native lab.
+  Cursor are proved; Claude, Kimi, DeepSeek (OpenRouter 401), Hermes Codex
+  auth (`codex_auth_missing`, fail-closed), and Pi OAuth remain blocked.
+  Install docs lead with a ready native lab.
+
+### Security and reliability
+
+- Hermes ACP fails closed when T3 requests `openai-codex` and Codex
+  credentials are missing. The named error is `codex_auth_missing`. The
+  adapter no longer lets Hermes fall open to another provider (including
+  DeepSeek) while the turn still looks like Codex. `tentacles doctor`
+  prints that fail-closed state without secrets.
 
 ## [0.2.1] - 2026-08-11
 

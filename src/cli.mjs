@@ -34,6 +34,7 @@ import {
   DEFAULT_PI_PROVIDER,
   resolveExecutable,
 } from "./config.mjs";
+import { requireRequestedProviderConstructable } from "./hermes-acp-launch.mjs";
 import {
   defaultModelForLab,
   ORIGINATE_LABS,
@@ -367,6 +368,10 @@ async function main() {
     return;
   }
   if (command === "originate") {
+    const runtimeMode = requireExplicitRuntimeMode(options["runtime-mode"], "--runtime-mode");
+    if (originateSelection.instanceId === "hermes") {
+      requireRequestedProviderConstructable(originateSelection.model);
+    }
     const result = await originate(client, {
       workspace: path.resolve(required(options, "workspace")),
       title: required(options, "title"),
@@ -374,7 +379,7 @@ async function main() {
       instanceId: originateSelection.instanceId,
       model: originateSelection.model,
       options: originateSelection.options,
-      runtimeMode: requireExplicitRuntimeMode(options["runtime-mode"], "--runtime-mode"),
+      runtimeMode,
       idempotencyKey: options["idempotency-key"],
       stateFile: options["state-file"],
     });
