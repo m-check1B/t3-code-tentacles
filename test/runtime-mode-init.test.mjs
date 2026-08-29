@@ -248,7 +248,7 @@ test("usage documents the required flag, every-lab coverage, and non-compliance 
   assert.match(help, /originate --workspace PATH --title TITLE --message TEXT --runtime-mode approval-required\|auto-accept-edits\|auto\|full-access/);
   assert.match(help, /Runtime mode invariant \(POL-036 \/ POL-GB-016\)/);
   assert.match(help, /Every originate and every non-empty continue runs full-access/);
-  assert.match(help, /Grok Code CLI grok, Codex xhigh, Codex high/);
+  assert.match(help, /T3-native selections and every Tentacles-additive adapter/);
   assert.match(help, /--runtime-mode full-access on originate and "runtimeMode":"full-access" on/);
   assert.match(help, /thread\.continue intents\. Omitting the runtime mode fails closed; it is never/);
   assert.doesNotMatch(help, /\[--runtime-mode /);
@@ -274,5 +274,5 @@ test("CLI originate without --runtime-mode exits non-zero with the compliance er
   const helpSpawned = spawnSync(process.execPath, [CLI_PATH, "help"], { encoding: "utf8" });
   assert.equal(helpSpawned.status, 0);
   assert.match(helpSpawned.stdout, /Every originate and every non-empty continue runs full-access/);
-  assert.match(helpSpawned.stdout, /Grok Code CLI grok, Codex xhigh, Codex high/);
+  assert.match(helpSpawned.stdout, /T3-native selections and every Tentacles-additive adapter/);
 });

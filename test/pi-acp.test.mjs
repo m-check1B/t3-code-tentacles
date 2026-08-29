@@ -291,7 +291,7 @@ test("Pi providers coexist with Hermes and refuse foreign or cross-harness owner
 test("CLI help documents Pi provider commands", () => {
   const result = spawnSync(process.execPath, [path.resolve("src/cli.mjs"), "help"], { encoding: "utf8" });
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /^Tentacles — T3 Code tentacles — originate any ready lab/m);
+  assert.match(result.stdout, /^Tentacles — chair CLI and additive ACP adapters for T3 Code/m);
   assert.match(result.stdout, /Hermes was the first tentacle/);
   assert.match(result.stdout, /install-pi-provider \[--instance pi\] \[--model gpt-5\.6-terra\] \[--pi-provider openai-codex\]/);
   assert.match(result.stdout, /remove-pi-provider \[--instance pi\]/);
