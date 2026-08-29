@@ -1,17 +1,8 @@
 # T3 Code Tentacles and Labs
 
-Originate a [T3 Code](https://github.com/pingdotgg/t3code) lab from the command
-line — instance, model, and budget — without forking T3 or the agent harness.
-
-A **lab** is one T3 instance you can start and continue: native T3 providers
-such as Grok, Codex, OpenCode, and Cursor, plus optional ACP adapters such as
-Hermes, Pi, DeepSeek, and Kimi. Hermes was the first tentacle, not the product.
-T3 Code stays the cockpit. Each lab keeps its own runtime, model, authentication,
-and tools.
-
-The public product name is **Tentacles**. The public command is `tentacles`.
-`t3-agent-bridge` is an exact compatibility alias. GitHub is the public face of
-this repository; it is not a claim that every advertised lab is green.
+Tentacles connects chairs, [T3 Code](https://github.com/pingdotgg/t3code), and
+the labs T3 originates without forking T3 or an agent harness. The public
+command is `tentacles`; `t3-agent-bridge` is an exact compatibility alias.
 
 [![CI](https://github.com/m-check1B/t3-code-tentacles/actions/workflows/ci.yml/badge.svg)](https://github.com/m-check1B/t3-code-tentacles/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/m-check1B/t3-code-tentacles)](https://github.com/m-check1B/t3-code-tentacles/releases)
@@ -20,6 +11,101 @@ this repository; it is not a claim that every advertised lab is green.
 
 Repository documentation and integration authority boundaries start at
 [docs/README.md](docs/README.md).
+
+## Start here: one vertical path, two roles
+
+A **chair** operates T3 Code through Tentacles. T3 Code then originates a
+**lab** through that same bridge. The same product name can occupy either role,
+but the arrows and proof claims are separate: Hermes as a chair follows the
+same Tentacles path as Grok Bot, while Hermes as a lab inside T3 is the weaker,
+currently blocked adapter path recorded in the proof table.
+
+```text
+                              CHAIRS
+
+             [Grok Bot]     [Hermes]     [Agent Jack 1]
+                   \            |            /
+                    +------ [Tentacles] -----+
+                                |
+                            [T3 Code]
+                    /       /       |       \        \
+              [Codex]  [Grok]  [Hermes lab]  [OpenCode]  [Cursor]  [...]
+
+                               LABS
+```
+
+```mermaid
+flowchart TB
+    subgraph Chairs["Chairs"]
+        direction LR
+        GrokBot["Grok Bot<br/>works today"]
+        HermesChair["Hermes<br/>chair"]
+        Jack["Agent Jack¹<br/>chair"]
+    end
+
+    GrokBot --> Tentacles
+    HermesChair --> Tentacles
+    Jack --> Tentacles
+    Tentacles --> T3["T3 Code"]
+
+    subgraph Labs["Labs originated by T3 Code"]
+        direction LR
+        Codex
+        Grok
+        HermesLab["Hermes<br/>lab — weaker adapter"]
+        OpenCode
+        Cursor
+        More["..."]
+    end
+
+    T3 --> Codex
+    T3 --> Grok
+    T3 --> HermesLab
+    T3 --> OpenCode
+    T3 --> Cursor
+    T3 --> More
+```
+
+![Chairs use Tentacles to operate T3 Code, which originates labs](docs/tentacles-vertical.png)
+
+<sup>1</sup> **Jack local/cloud footnote.** Local Jack is an installable web app
+(PWA) in the user's browser and uses Tentacles to reach T3 on that machine—no
+Electron and no Jack 1 Device Bridge dashboard. Cloud Jack runs on Blaxel or
+another VM while the user works in a browser; it uses the same Tentacles bridge
+to reach the user's T3 on one or more computers. A cloud route still requires
+its remote connection and pairing to be installed and configured.
+
+A lab is one T3 instance you can start and continue. Native labs include Codex,
+Grok, OpenCode, and Cursor; optional adapters include Hermes, Pi, DeepSeek, and
+Kimi. Each lab keeps its own runtime, model, authentication, and tools.
+
+## Quick start
+
+After meeting the [prerequisites and issuing a local T3 token](#five-minute-setup),
+install the command, inspect this machine, and originate only a lab that doctor
+marks `ready`:
+
+```bash
+git clone https://github.com/m-check1B/t3-code-tentacles.git
+cd t3-code-tentacles
+npm link
+tentacles doctor
+tentacles originate \
+  --workspace "$PWD" \
+  --title "Tentacles quick start" \
+  --message "Start a ready Grok lab." \
+  --instance grok \
+  --runtime-mode full-access
+```
+
+Continue the returned thread with the same required runtime mode:
+
+```bash
+tentacles act --intent '{"action":"thread.continue","threadId":"<id>","text":"continue","runtimeMode":"full-access"}'
+```
+
+Every originate and every non-empty continue must remain `full-access`. Doctor
+is this-machine truth; advertised does not mean proved.
 
 > **Project status:** early macOS integration with Node.js 22 and T3 Code 0.0.34.
 > `tentacles doctor` prints the live lab matrix for *your* machine. Treat that
