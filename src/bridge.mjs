@@ -30,6 +30,7 @@ import { inspectHermesOpenaiCodexAuth } from "./hermes-acp-launch.mjs";
 import { readBoundedResponseText, readOrchestrationSnapshot, T3HttpError } from "./t3-client.mjs";
 
 const HERMES_MENTION = /(^|\s)@hermes\b/i;
+const HERMES_RUNTIME_PROVIDER_MISMATCH_NOTE = "runtime provider-mismatch fail-closed (provider_identity_mismatch) is PR #29 / In Review; Hermes is not lab-proved";
 const BRIDGE_OWNER_VARIABLE = "T3_HERMES_BRIDGE_OWNER";
 const BRIDGE_OWNER_VALUE = "t3-hermes-bridge/v1";
 const BRIDGE_HARNESS_VARIABLE = "T3_HERMES_BRIDGE_HARNESS";
@@ -939,8 +940,11 @@ export async function doctor(client, {
   if (hermesLab) {
     hermesLab.health = hermes.reachable ? { status: hermes.status, version: hermes.version } : { reachable: false };
     hermesLab.openaiCodex = openaiCodex;
-    if (!openaiCodex.constructable && typeof hermesLab.defaultModel === "string" && hermesLab.defaultModel.startsWith("openai-codex:")) {
-      hermesLab.message = [hermesLab.message, "openai-codex fail-closed without Codex auth (no provider fallback)"]
+    if (typeof hermesLab.defaultModel === "string" && hermesLab.defaultModel.startsWith("openai-codex:")) {
+      const constructionNote = openaiCodex.constructable
+        ? null
+        : "openai-codex construction fails closed without Codex auth (codex_auth_missing)";
+      hermesLab.message = [hermesLab.message, constructionNote, HERMES_RUNTIME_PROVIDER_MISMATCH_NOTE]
         .filter(Boolean)
         .join("; ");
     }
@@ -1013,9 +1017,9 @@ export function formatDoctor(result = {}) {
   const openaiCodex = hermes.openaiCodex && typeof hermes.openaiCodex === "object" ? hermes.openaiCodex : null;
   if (openaiCodex) {
     if (openaiCodex.constructable) {
-      lines.push("Hermes openai-codex: constructable");
+      lines.push(`Hermes openai-codex: constructable; ${HERMES_RUNTIME_PROVIDER_MISMATCH_NOTE}`);
     } else {
-      lines.push(`Hermes openai-codex: fail-closed (${openaiCodex.code || "codex_auth_missing"}; no provider fallback)`);
+      lines.push(`Hermes openai-codex: construction fail-closed (${openaiCodex.code || "codex_auth_missing"}); ${HERMES_RUNTIME_PROVIDER_MISMATCH_NOTE}`);
     }
   }
   if (nativeGrok.present || nativeGrok.disabled) {

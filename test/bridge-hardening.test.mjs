@@ -148,7 +148,9 @@ test("doctor prints an advertised lab matrix without secrets and keeps Cursor ex
   assert.match(byId.hermes.install, /install-provider/);
   assert.equal(byId.hermes.openaiCodex.constructable, false);
   assert.equal(byId.hermes.openaiCodex.code, "codex_auth_missing");
-  assert.match(byId.hermes.message, /fail-closed without Codex auth/);
+  assert.match(byId.hermes.message, /construction fails closed without Codex auth \(codex_auth_missing\)/);
+  assert.match(byId.hermes.message, /runtime provider-mismatch fail-closed \(provider_identity_mismatch\) is PR #29 \/ In Review/);
+  assert.match(byId.hermes.message, /Hermes is not lab-proved/);
   assert.equal(byId.cursor.defaultModel, null);
   assert.match(byId.cursor.message, /Cursor is disabled/);
   assert.match(byId.pi.message, /ACP startup failed/);
@@ -164,7 +166,9 @@ test("doctor prints an advertised lab matrix without secrets and keeps Cursor ex
   assert.match(matrix, /install: tentacles install-provider --instance hermes/);
   assert.match(matrix, /Cursor is disabled/);
   assert.match(matrix, /ACP startup failed/);
-  assert.match(matrix, /Hermes openai-codex: fail-closed \(codex_auth_missing; no provider fallback\)/);
+  assert.match(matrix, /Hermes openai-codex: construction fail-closed \(codex_auth_missing\)/);
+  assert.match(matrix, /runtime provider-mismatch fail-closed \(provider_identity_mismatch\) is PR #29 \/ In Review/);
+  assert.match(matrix, /Hermes is not lab-proved/);
   assert.match(matrix, /tentacles doctor --json/);
   assert.equal(matrix.includes("should-not-leak"), false);
   } finally {

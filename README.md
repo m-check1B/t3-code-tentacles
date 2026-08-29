@@ -50,7 +50,7 @@ Advertised labs:
 **Advertised is not proved.** Doctor `ready` means T3 currently reports that
 instance as ready on this host. It is not a compatibility certificate.
 
-### Proof status (this project, 2026-08-28)
+### Proof status (this project, 2026-08-29)
 
 Originate + continue with `runtimeMode: full-access`. Do not treat the remaining
 rows as green.
@@ -64,7 +64,7 @@ rows as green.
 | `claudeAgent` | Blocked | OpenRouter 401; no Claude Code subscription is required for this product |
 | `kimi` | Blocked | OpenRouter 401 |
 | `deepseek` | Blocked | OpenRouter 401 |
-| `hermes` | Blocked | Adapter can install; `openai-codex` without Codex auth fails closed (`codex_auth_missing`, no DeepSeek fallback) |
+| `hermes` | Blocked | Construction fail-closed landed (`codex_auth_missing`); runtime provider-mismatch fail-closed (`provider_identity_mismatch`) is PR #29 / In Review; no live Hermes proof |
 | `pi` | Blocked | Pi OAuth / ACP `initialize` failure |
 
 Every originate and every non-empty continue must pass
@@ -207,10 +207,12 @@ If your installation exposes a different model identifier, pass it with
 
 Open T3 Code, select the **Hermes** provider, and send a message. A real Hermes
 assistant reply is the first-direction proof. On this project's e2e record the
-Hermes lab is blocked until Codex auth can construct `openai-codex`. Missing
-Codex credentials fail closed with `codex_auth_missing`; they do not silently
-answer via DeepSeek or another profile fallback. Do not treat install as a
-working assistant.
+Hermes lab remains blocked. Construction-time missing Codex credentials fail
+closed with the landed `codex_auth_missing` guard. With credentials present,
+runtime provider binding can still fall through to the profile default; the
+`provider_identity_mismatch` fail-closed guard is PR #29 / In Review and is not
+landed or live-proved here. Do not treat install, a displayed Codex model name,
+or a DeepSeek response or error as a working Codex assistant.
 
 ### Pi
 
