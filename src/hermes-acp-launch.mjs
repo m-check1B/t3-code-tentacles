@@ -4,14 +4,23 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { DEFAULT_HERMES_PROFILE, resolveExecutable } from "./config.mjs";
-import { consumeJsonLines, forwardLine, MAX_ACP_LINE_BYTES } from "./pi-acp.mjs";
+import {
+  consumeJsonLines,
+  forwardLine,
+  MAX_ACP_LINE_BYTES,
+  MAX_PENDING_ACP_REQUESTS,
+  requestKey,
+} from "./pi-acp.mjs";
 
 const SHUTDOWN_GRACE_MS = 1_000;
+const PROVIDER_VERIFY_TIMEOUT_MS = 5_000;
 const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
-const GATED_METHODS = new Set(["session/set_model", "session/new"]);
+const SESSION_OPEN_METHODS = new Set(["session/new", "session/load", "session/resume"]);
+const GATED_METHODS = new Set(["session/set_model", ...SESSION_OPEN_METHODS]);
 
 export const CODEX_AUTH_MISSING = "codex_auth_missing";
 export const PROVIDER_NOT_CONSTRUCTABLE = "provider_not_constructable";
+export const PROVIDER_IDENTITY_MISMATCH = "provider_identity_mismatch";
 export const OPENAI_CODEX_PROVIDER = "openai-codex";
 
 export function hermesAuthFile(home = os.homedir()) {
@@ -136,7 +145,7 @@ function requestedModelId(message) {
   if (message.method === "session/set_model") {
     return typeof params.modelId === "string" ? params.modelId : typeof params.model === "string" ? params.model : null;
   }
-  if (message.method === "session/new") {
+  if (SESSION_OPEN_METHODS.has(message.method)) {
     return typeof params.modelId === "string" ? params.modelId : typeof params.model === "string" ? params.model : null;
   }
   return null;
@@ -150,6 +159,59 @@ export function providerConstructionErrorResponse(request, { provider = OPENAI_C
       code: -32001,
       message: providerNotConstructableMessage(provider, code),
       data: { code, provider },
+    },
+  };
+}
+
+function normalizedModelIdentity(modelId) {
+  const requested = requestedProviderFromModel(modelId);
+  if (!requested) return null;
+  return {
+    provider: requested.provider.trim().toLowerCase(),
+    model: requested.model.trim(),
+  };
+}
+
+export function currentModelIdFromSessionResult(result) {
+  const models = result?.models;
+  if (!models || typeof models !== "object" || Array.isArray(models)) return null;
+  const current = models.currentModelId ?? models.current_model_id;
+  return typeof current === "string" && current.trim() ? current.trim() : null;
+}
+
+export function answeringModelMatchesRequested(requestedModelId, answeringModelId) {
+  const requested = normalizedModelIdentity(requestedModelId);
+  const answering = normalizedModelIdentity(answeringModelId);
+  return Boolean(
+    requested
+    && answering
+    && requested.provider === answering.provider
+    && requested.model === answering.model,
+  );
+}
+
+export function providerIdentityMismatchResponse(request, {
+  requestedModelId,
+  answeringModelId = null,
+  code = PROVIDER_IDENTITY_MISMATCH,
+} = {}) {
+  const requested = normalizedModelIdentity(requestedModelId);
+  const answering = normalizedModelIdentity(answeringModelId);
+  const renderedRequested = requestedModelId || "unknown";
+  const renderedAnswering = answeringModelId || "unverifiable";
+  return {
+    jsonrpc: request?.jsonrpc || "2.0",
+    id: request?.id,
+    error: {
+      code: -32002,
+      message: `${code}: Hermes bound ${renderedAnswering} instead of requested ${renderedRequested}. Refusing to let another provider answer.`,
+      data: {
+        code,
+        requestedProvider: requested?.provider || null,
+        requestedModel: requested?.model || null,
+        answeringProvider: answering?.provider || null,
+        answeringModel: answering?.model || null,
+      },
     },
   };
 }
@@ -192,6 +254,7 @@ export function startHermesAcpProxy({
   stdin = process.stdin,
   stdout = process.stdout,
   maxLineBytes = MAX_ACP_LINE_BYTES,
+  providerVerifyTimeoutMs = PROVIDER_VERIFY_TIMEOUT_MS,
   exitImpl = defaultExit,
   authOptions,
 } = {}) {
@@ -206,6 +269,85 @@ export function startHermesAcpProxy({
   let forceKillTimer;
   let stdinRelay;
   let stdoutRelay;
+  let verificationSequence = 0;
+  const requests = new Map();
+  const sessions = new Map();
+  const verifications = new Map();
+
+  const writeResponse = (message) => forwardLine(stdout, JSON.stringify(message));
+
+  const rememberRequest = (message) => {
+    if (!message || typeof message !== "object" || Array.isArray(message)
+      || typeof message.method !== "string" || !Object.hasOwn(message, "id")
+      || message.id === null || message.id === undefined) return true;
+    const key = requestKey(message.id);
+    if (!key || requests.has(key) || requests.size >= MAX_PENDING_ACP_REQUESTS) return false;
+    requests.set(key, message);
+    return true;
+  };
+
+  const sessionFor = (sessionId) => {
+    if (typeof sessionId !== "string" || !sessionId) return null;
+    let state = sessions.get(sessionId);
+    if (!state) {
+      if (sessions.size >= MAX_PENDING_ACP_REQUESTS) return null;
+      state = { cwd: null, requestedModelId: null, answeringModelId: null, verified: false };
+      sessions.set(sessionId, state);
+    }
+    return state;
+  };
+
+  const failSessionRequest = (request, state) => writeResponse(providerIdentityMismatchResponse(request, {
+    requestedModelId: state?.requestedModelId,
+    answeringModelId: state?.answeringModelId,
+  }));
+
+  const nextVerificationId = () => {
+    while (true) {
+      verificationSequence += 1;
+      const id = `tentacles:provider-verify:${verificationSequence}`;
+      const key = requestKey(id);
+      if (key && !requests.has(key) && !verifications.has(key)) return { id, key };
+    }
+  };
+
+  const beginVerification = (request, originalResponse) => {
+    const sessionId = request.params?.sessionId;
+    const state = typeof sessionId === "string" ? sessions.get(sessionId) : null;
+    if (!state?.cwd) {
+      writeResponse(providerIdentityMismatchResponse(request, { requestedModelId: requestedModelId(request) }));
+      return null;
+    }
+    state.requestedModelId = requestedModelId(request);
+    state.answeringModelId = null;
+    state.verified = false;
+    if (verifications.size >= MAX_PENDING_ACP_REQUESTS) {
+      failSessionRequest(request, state);
+      stop();
+      return false;
+    }
+    const { id, key } = nextVerificationId();
+    const verification = { request, originalResponse, sessionId, key, timer: null };
+    verification.timer = setTimeout(() => {
+      if (!verifications.delete(key)) return;
+      failSessionRequest(request, state);
+      stop();
+    }, providerVerifyTimeoutMs);
+    verification.timer.unref?.();
+    verifications.set(key, verification);
+    // Hermes returns an empty success for session/set_model even when its
+    // _make_agent catch path built the profile fallback. session/load is the
+    // nearest structured runtime identity surface: it calls _build_model_state
+    // from the actual agent without invoking the model. Replay notifications
+    // are suppressed below, and the original success stays withheld until the
+    // provider-qualified currentModelId matches exactly.
+    return forwardLine(child.stdin, JSON.stringify({
+      jsonrpc: request.jsonrpc || "2.0",
+      id,
+      method: "session/load",
+      params: { sessionId, cwd: state.cwd },
+    }));
+  };
 
   const signalChildTree = (signal) => {
     if (!Number.isInteger(child.pid)) {
@@ -227,6 +369,10 @@ export function startHermesAcpProxy({
     stdinRelay?.stop();
     stdoutRelay?.stop();
     stdin.pause?.();
+    requests.clear();
+    sessions.clear();
+    for (const verification of verifications.values()) clearTimeout(verification.timer);
+    verifications.clear();
     try { child.stdin.destroy(); } catch {}
   };
 
@@ -250,14 +396,89 @@ export function startHermesAcpProxy({
   stdinRelay = consumeJsonLines(stdin, (line) => {
     const transformed = transformClientToAgentLine(line, authOptions);
     if (transformed.drop) return null;
-    if (transformed.respond) return forwardLine(stdout, JSON.stringify(transformed.respond));
+    if (transformed.respond) return writeResponse(transformed.respond);
+    const message = parseJsonObject(transformed.line);
+    if (message?.method === "session/prompt") {
+      const state = sessionFor(message.params?.sessionId);
+      if (state?.requestedModelId && !state.verified) {
+        if (!Object.hasOwn(message, "id") || message.id === null || message.id === undefined) return null;
+        return failSessionRequest(message, state);
+      }
+    }
+    if (message?.method === "session/set_model") {
+      const requestedModel = requestedModelId(message);
+      if (normalizedModelIdentity(requestedModel)) {
+        const state = sessionFor(message.params?.sessionId);
+        if (state) {
+          state.requestedModelId = requestedModel;
+          state.answeringModelId = null;
+          state.verified = false;
+        }
+        if (!Object.hasOwn(message, "id") || message.id === null || message.id === undefined) return null;
+      }
+    }
+    if (!rememberRequest(message)) {
+      stop();
+      return false;
+    }
     return forwardLine(child.stdin, transformed.line);
   }, stop, maxLineBytes);
   stdin.once("end", () => {
     try { child.stdin.end(); } catch {}
   });
 
-  stdoutRelay = consumeJsonLines(child.stdout, (line) => forwardLine(stdout, line), stop, maxLineBytes);
+  stdoutRelay = consumeJsonLines(child.stdout, (line) => {
+    const message = parseJsonObject(Buffer.isBuffer(line) ? line.toString("utf8") : String(line));
+    if (message?.method === "session/update") {
+      const sessionId = message.params?.sessionId;
+      if ([...verifications.values()].some((verification) => verification.sessionId === sessionId)) return null;
+      return forwardLine(stdout, line);
+    }
+    if (!message || typeof message !== "object" || Array.isArray(message)
+      || !Object.hasOwn(message, "id")
+      || (!Object.hasOwn(message, "result") && !Object.hasOwn(message, "error"))) {
+      return forwardLine(stdout, line);
+    }
+    const key = requestKey(message.id);
+    const verification = key ? verifications.get(key) : null;
+    if (verification) {
+      clearTimeout(verification.timer);
+      verifications.delete(key);
+      const state = sessionFor(verification.sessionId);
+      const answeringModelId = Object.hasOwn(message, "result")
+        ? currentModelIdFromSessionResult(message.result)
+        : null;
+      if (state) {
+        state.answeringModelId = answeringModelId;
+        state.verified = answeringModelMatchesRequested(state.requestedModelId, answeringModelId);
+      }
+      if (!state?.verified) return failSessionRequest(verification.request, state);
+      return writeResponse(verification.originalResponse);
+    }
+    const request = key ? requests.get(key) : null;
+    if (!request) return forwardLine(stdout, line);
+    requests.delete(key);
+    if (Object.hasOwn(message, "error")) return forwardLine(stdout, line);
+    if (request.method === "session/set_model" && normalizedModelIdentity(requestedModelId(request))) {
+      return beginVerification(request, message);
+    }
+    if (SESSION_OPEN_METHODS.has(request.method)) {
+      const sessionId = request.params?.sessionId || message.result?.sessionId;
+      const state = sessionFor(sessionId);
+      if (state) {
+        state.cwd = request.params?.cwd || state.cwd;
+        state.requestedModelId = requestedModelId(request) || state.requestedModelId;
+        state.answeringModelId = currentModelIdFromSessionResult(message.result);
+        if (state.requestedModelId) {
+          state.verified = answeringModelMatchesRequested(state.requestedModelId, state.answeringModelId);
+        }
+      }
+      if (normalizedModelIdentity(requestedModelId(request)) && !state?.verified) {
+        return failSessionRequest(request, state);
+      }
+    }
+    return forwardLine(stdout, line);
+  }, stop, maxLineBytes);
 
   child.stdin.on("error", () => stop());
   stdout.on?.("error", () => stop());
