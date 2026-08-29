@@ -188,6 +188,41 @@ test("thread.continue restarts an errored session before dispatching the turn", 
   assert.equal(result.sessionStatus, "running");
 });
 
+test("thread.continue retries when T3 retains the stopped provider session as error", async () => {
+  const commands = [];
+  const thread = {
+    id: "t1",
+    messages: [],
+    session: { status: "error", activeTurnId: null, updatedAt: "failed", lastError: "provider_identity_mismatch" },
+  };
+  const client = {
+    thread: async () => ({ thread }),
+    dispatch: async (command) => {
+      commands.push(command);
+      if (command.type === "thread.turn.start") {
+        thread.messages.push({ id: command.message.messageId, role: "user" });
+        thread.session = {
+          status: "error",
+          activeTurnId: null,
+          updatedAt: "failed-again",
+          lastError: "provider_identity_mismatch: refusing fallback",
+        };
+      }
+      return { sequence: commands.length };
+    },
+  };
+  await assert.rejects(
+    applyIntent(client, {
+      action: "thread.continue",
+      threadId: "t1",
+      text: "retry fail-closed provider",
+      runtimeMode: "full-access",
+    }, { commandId: "continue-error-1", intervalMs: 0, timeoutMs: 1_000 }),
+    /provider_identity_mismatch: refusing fallback/,
+  );
+  assert.deepEqual(commands.map((command) => command.type), ["thread.session.stop", "thread.turn.start"]);
+});
+
 test("thread.restart explicitly replaces a stale running session", async () => {
   const commands = [];
   const thread = {
