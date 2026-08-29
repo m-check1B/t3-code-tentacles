@@ -1,5 +1,64 @@
 # T3 Code Tentacles and Labs
 
+## Clone, hand it to a chair, then operate
+
+Clone the public repository and install its command shims without replacing an
+existing executable:
+
+```bash
+git clone https://github.com/m-check1B/t3-code-tentacles.git
+cd t3-code-tentacles
+mkdir -p "$HOME/.local/bin"
+for cmd in tentacles t3-agent-bridge; do
+  dest="$HOME/.local/bin/$cmd"
+  if [ -e "$dest" ] || [ -L "$dest" ]; then
+    printf 'Refusing to replace existing path: %s\n' "$dest" >&2
+  else
+    ln -s "$PWD/bin/t3-agent-bridge" "$dest"
+  fi
+done
+unset cmd dest
+```
+
+Then tell Grok, Claude, Codex, Agent Jack, or Hermes:
+
+> Use [`integrations/tentacles-operate-skill/SKILL.md`](integrations/tentacles-operate-skill/SKILL.md)
+> to operate Tentacles in this repository. Run doctor, choose a ready instance
+> and advertised model, and keep every originate and continue full-access.
+
+The chair starts by inspecting this machine:
+
+```bash
+tentacles doctor
+```
+
+Then it originates with an explicit instance, model, thought budget, and the
+mandatory runtime mode:
+
+```bash
+tentacles originate \
+  --workspace "$PWD" \
+  --title "Tentacles quick start" \
+  --message "Start the requested work and report the result." \
+  --instance codex \
+  --model gpt-5.6-sol \
+  --budget high \
+  --runtime-mode full-access
+```
+
+Continue the returned thread with a non-empty message and the same invariant:
+
+```bash
+tentacles act --intent '{"action":"thread.continue","threadId":"<thread-id>","text":"Continue with the next concrete step.","runtimeMode":"full-access"}'
+```
+
+Every originate and every non-empty continue must remain `full-access`.
+Omitting runtime mode fails closed under POL-036. Doctor is this-machine truth;
+advertised does not mean proved. Ensure `~/.local/bin` is on `PATH` before using
+the installed shims.
+
+## What Tentacles adds
+
 Tentacles is an additive bridge for [T3 Code](https://github.com/pingdotgg/t3code).
 It gives chair CLIs a way to originate and continue T3 work without the GUI,
 adds adapters that T3 does not ship, and provides a Claude-via-OpenRouter path
@@ -110,34 +169,6 @@ The additive lab adapters are Kimi CLI, DeepSeek CLI, Hermes lab, and Pi CLI.
 The separate Claude-via-OpenRouter path lets a chair talk to Claude without
 driving the T3-native Claude Code CLI; it does not replace that native lab.
 Each lab keeps its own runtime, model, authentication, and tools.
-
-## Quick start
-
-After meeting the [prerequisites and issuing a local T3 token](#five-minute-setup),
-install the command, inspect this machine, and originate only a lab that doctor
-marks `ready`:
-
-```bash
-git clone https://github.com/m-check1B/t3-code-tentacles.git
-cd t3-code-tentacles
-npm link
-tentacles doctor
-tentacles originate \
-  --workspace "$PWD" \
-  --title "Tentacles quick start" \
-  --message "Start a ready Grok lab." \
-  --instance grok \
-  --runtime-mode full-access
-```
-
-Continue the returned thread with the same required runtime mode:
-
-```bash
-tentacles act --intent '{"action":"thread.continue","threadId":"<id>","text":"continue","runtimeMode":"full-access"}'
-```
-
-Every originate and every non-empty continue must remain `full-access`. Doctor
-is this-machine truth; advertised does not mean proved.
 
 > **Project status:** early macOS integration with Node.js 22 and T3 Code 0.0.34.
 > `tentacles doctor` prints the live lab matrix for *your* machine. Treat that
