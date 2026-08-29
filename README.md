@@ -3,8 +3,9 @@
 Tentacles is an additive bridge for [T3 Code](https://github.com/pingdotgg/t3code).
 It gives chair CLIs a way to originate and continue T3 work without the GUI,
 adds adapters that T3 does not ship, and provides a Claude-via-OpenRouter path
-that does not require a Claude Code subscription. The public command is
-`tentacles`; `t3-agent-bridge` is an exact compatibility alias.
+so a chair can talk to Claude without driving the T3-native Claude Code CLI.
+The public command is `tentacles`; `t3-agent-bridge` is an exact compatibility
+alias.
 
 T3 Code already orchestrates Codex CLI, Claude Code CLI, Grok Build CLI, OpenCode CLI,
 and Cursor CLI, plus its own `t3 pair` / `app.t3.codes` remote path. Those are
@@ -43,9 +44,11 @@ different proof claims.
         orchestrated by T3
                    |                             |
  [Codex CLI] [Claude Code CLI]       [Claude via OpenRouter]
- [Grok Build CLI] [OpenCode CLI]     [Kimi CLI] [DeepSeek CLI]
- [Cursor CLI]                         [Hermes lab] [Pi CLI]
+ [Grok Build CLI] [OpenCode CLI]     extra path: chair talks to Claude
+ [Cursor CLI]                         without driving Claude Code CLI
  [t3 pair / app.t3.codes]
+                                      [Kimi CLI] [DeepSeek CLI]
+                                      [Hermes lab] [Pi CLI]
 ```
 
 ```mermaid
@@ -74,7 +77,7 @@ flowchart TB
 
     subgraph Additive["Tentacles additive"]
         direction LR
-        ClaudeOR["Claude via OpenRouter<br/>no Claude Code subscription"]
+        ClaudeOR["Claude via OpenRouter<br/>extra path — chair talks to Claude<br/>without driving Claude Code CLI"]
         Kimi["Kimi CLI"]
         DeepSeek["DeepSeek CLI"]
         HermesLab["Hermes lab"]
@@ -104,7 +107,8 @@ to reach the user's T3 on one or more computers. A cloud route still requires
 its remote connection and pairing to be installed and configured.
 
 The additive lab adapters are Kimi CLI, DeepSeek CLI, Hermes lab, and Pi CLI.
-The separate Claude-via-OpenRouter path avoids a Claude Code subscription.
+The separate Claude-via-OpenRouter path lets a chair talk to Claude without
+driving the T3-native Claude Code CLI; it does not replace that native lab.
 Each lab keeps its own runtime, model, authentication, and tools.
 
 ## Quick start
@@ -163,7 +167,7 @@ Tentacles-additive rows:
 
 | Additive path | Default originate model | Setup |
 |---|---|---|
-| Claude via OpenRouter | `anthropic/claude-3-haiku` | OpenRouter through a distinct `claude-openrouter` adapter; no Claude Code subscription |
+| Claude via OpenRouter | `anthropic/claude-3-haiku` | Extra path through a distinct `claude-openrouter` adapter so a chair can talk to Claude without driving Claude Code CLI |
 | Kimi CLI | `moonshotai/kimi-k3` | OpenRouter-backed Kimi CLI adapter |
 | DeepSeek CLI | `deepseek/deepseek-v4-flash` | OpenRouter-backed DeepSeek CLI adapter |
 | Hermes lab | `openai-codex:gpt-5.6-sol` | `tentacles install-provider` |
@@ -408,10 +412,11 @@ tentacles install-kimi-provider \
   --model moonshotai/kimi-k3
 ```
 
-**Claude via OpenRouter.** This is a separate Tentacles adapter, not T3's
-native Claude Code CLI and not a Claude Code subscription. It uses the
-bridge-owned `dsh-acp` compatibility transport with an 8,192-token output cap,
-which stays below Claude 3 Haiku's OpenRouter context window:
+**Claude via OpenRouter.** This is a separate Tentacles adapter that lets a
+chair talk to Claude without driving T3's native Claude Code CLI. It does not
+replace or change the normal Claude Code path. The adapter uses the bridge-owned
+`dsh-acp` compatibility transport with an 8,192-token output cap, which stays
+below Claude 3 Haiku's OpenRouter context window:
 
 ```bash
 tentacles install-claude-openrouter-provider \
