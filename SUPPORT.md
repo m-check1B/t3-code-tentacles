@@ -6,9 +6,10 @@ commercial support contract or guaranteed response time.
 ## Before opening an issue
 
 1. Read the [five-minute setup](README.md#five-minute-setup) and run
-   `tentacles doctor`.
+   `tentacles doctor`. Doctor is this-machine truth; advertised is not proved.
 2. Confirm the tested baseline or record your exact versions: Node.js, T3 Code,
-   Hermes Agent, operating system, and architecture.
+   Hermes Agent, operating system, and architecture. Include the doctor row for
+   the lab that failed (`ready` / `status` / redacted `message`).
 3. Search [existing issues](https://github.com/m-check1B/tentacles/issues)
    and the [Discussions](https://github.com/m-check1B/tentacles/discussions).
 4. Remove bearer tokens, authorization headers, usernames, local paths, prompts,

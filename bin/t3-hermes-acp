@@ -2,16 +2,24 @@
 set -eu
 
 HERMES_BIN=${HERMES_BIN:-hermes}
-HERMES_PROFILE=${HERMES_PROFILE:-default}
 
 case "${1:-}" in
   --version|-v|version)
     exec "$HERMES_BIN" --version
     ;;
   *)
-    # T3's Grok driver appends `agent stdio`; Hermes exposes the same ACP
-    # transport as `hermes acp`, so the adapter intentionally ignores T3's
-    # driver-specific argv and preserves the working directory and stdio.
-    exec "$HERMES_BIN" --profile "$HERMES_PROFILE" acp
+    # T3's Grok driver appends `agent stdio`; the launcher owns that driver
+    # argv and starts Hermes ACP through the fail-closed relay so a requested
+    # openai-codex model cannot silently answer via another provider.
+    SELF=$0
+    while [ -L "$SELF" ]; do
+      LINK=$(readlink "$SELF")
+      case "$LINK" in
+        /*) SELF=$LINK ;;
+        *) SELF=$(dirname -- "$SELF")/$LINK ;;
+      esac
+    done
+    SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$SELF")" && pwd)
+    exec node "$SCRIPT_DIR/../src/hermes-acp-launch.mjs"
     ;;
 esac

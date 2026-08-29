@@ -3,18 +3,18 @@
 ```text
 T3 Code UI
   │ native provider session (ACP over stdio)
-  ├──▶ t3-hermes-acp ──exec──▶ hermes --profile <profile> acp
+  ├──▶ t3-hermes-acp ──relay──▶ hermes --profile <profile> acp
   └──▶ t3-pi-acp ──relay─────▶ pi --acp --provider <provider> --model <initial>
 
 Hermes / automation
-  │ t3-agent-bridge originate, authenticated HTTP dispatch
+  │ tentacles originate, authenticated HTTP dispatch
   ▼
 T3 orchestration API ──▶ visible project/thread/turn
 
 Any non-Hermes T3 thread
   │ new user message containing @hermes, read-only polling
   ▼
-t3-agent-bridge watch ──▶ linked Hermes-backed T3 thread
+tentacles watch ──▶ linked Hermes-backed T3 thread
 ```
 
 The functional bridge changes neither upstream. It reuses the ACP contract
@@ -35,8 +35,11 @@ T3's provider driver identifies the protocol adapter, not the model a harness
 will run. The bridge installs instances with `driver: "grok"` because this T3
 adapter supports a configurable binary and ACP over standard input/output. T3
 invokes a configured wrapper as `t3-hermes-acp agent stdio` or
-`t3-pi-acp agent stdio`. The Hermes wrapper executes
-`hermes --profile <profile> acp`; the Pi wrapper relays to `pi --acp` and lets
+`t3-pi-acp agent stdio`. The Hermes wrapper relays ACP to
+`hermes --profile <profile> acp` and fails closed with a named
+`codex_auth_missing` error when T3 requests `openai-codex:*` and Codex
+credentials are not stored. It does not fall open to the profile's other
+providers. The Pi wrapper relays to `pi --acp` and lets
 T3 control Pi's visible model through `session/set_model`.
 
 The Codex adapter is a different protocol boundary. It launches `codex

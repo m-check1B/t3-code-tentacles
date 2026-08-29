@@ -7,6 +7,7 @@ import { T3Client } from "./t3-client.mjs";
 import {
   ALLOW_ALL_MENTION_POLICY,
   doctor,
+  formatDoctor,
   installDeepSeekProvider,
   installKimiProvider,
   installProvider,
@@ -33,6 +34,7 @@ import {
   DEFAULT_PI_PROVIDER,
   resolveExecutable,
 } from "./config.mjs";
+import { requireRequestedProviderConstructable } from "./hermes-acp-launch.mjs";
 import {
   defaultModelForLab,
   ORIGINATE_LABS,
@@ -62,7 +64,7 @@ export function parseArgs(argv) {
       continue;
     }
     const key = argument.slice(2);
-    if (key === "once" || key === "allow-all-projects" || key === "no-wait") {
+    if (key === "once" || key === "allow-all-projects" || key === "no-wait" || key === "json") {
       options[key] = true;
       continue;
     }
@@ -145,31 +147,33 @@ export function usage() {
 Hermes was the first tentacle. The public command is tentacles; t3-agent-bridge is an exact alias.
 
 Usage:
-  tentacles doctor
-  t3-agent-bridge install-provider [--instance hermes] [--profile default] [--model MODEL]
-  t3-agent-bridge remove-provider [--instance hermes]
-  t3-agent-bridge install-pi-provider [--instance pi] [--model gpt-5.6-terra] [--pi-provider openai-codex]
-  t3-agent-bridge remove-pi-provider [--instance pi]
-  t3-agent-bridge install-deepseek-provider [--instance deepseek] [--model deepseek-v4-flash] [--dsh-acp-bin PATH]
-  t3-agent-bridge remove-deepseek-provider [--instance deepseek]
-  t3-agent-bridge install-kimi-provider [--instance kimi] [--model kimi-code/k3] [--kimi-bin PATH]
-  t3-agent-bridge remove-kimi-provider [--instance kimi]
-  t3-agent-bridge restore-native-grok
-  t3-agent-bridge use-native-grok-cached-auth
-  t3-agent-bridge observe
-  t3-agent-bridge act --intent '{...}' [--intent-file PATH] [--no-wait]
-  t3-agent-bridge orchestrate --intent-file PATH [--no-wait]
-  t3-agent-bridge originate --workspace PATH --title TITLE --message TEXT --runtime-mode ${RUNTIME_MODES.join("|")} [--idempotency-key KEY] [--instance ${ORIGINATE_LABS.join("|")}] [--model MODEL] [--budget low|medium|high] [--option id=value]
-  t3-agent-bridge watch --once --allow-all-projects [--profile PROFILE] [--instance INSTANCE]
-  t3-agent-bridge watch --allow-all-projects [--interval 2000] [--state-file PATH] [--max-messages 10]
-  t3-agent-bridge install-service --profile PROFILE --instance INSTANCE [service options]
-  t3-agent-bridge service-status --profile PROFILE --instance INSTANCE
-  t3-agent-bridge restart-service --profile PROFILE --instance INSTANCE
-  t3-agent-bridge uninstall-service --profile PROFILE --instance INSTANCE
+  tentacles doctor [--json]
+  tentacles install-provider [--instance hermes] [--profile default] [--model MODEL]
+  tentacles remove-provider [--instance hermes]
+  tentacles install-pi-provider [--instance pi] [--model gpt-5.6-terra] [--pi-provider openai-codex]
+  tentacles remove-pi-provider [--instance pi]
+  tentacles install-deepseek-provider [--instance deepseek] [--model deepseek-v4-flash] [--dsh-acp-bin PATH]
+  tentacles remove-deepseek-provider [--instance deepseek]
+  tentacles install-kimi-provider [--instance kimi] [--model kimi-code/k3] [--kimi-bin PATH]
+  tentacles remove-kimi-provider [--instance kimi]
+  tentacles restore-native-grok
+  tentacles use-native-grok-cached-auth
+  tentacles observe
+  tentacles act --intent '{...}' [--intent-file PATH] [--no-wait]
+  tentacles orchestrate --intent-file PATH [--no-wait]
+  tentacles originate --workspace PATH --title TITLE --message TEXT --runtime-mode ${RUNTIME_MODES.join("|")} [--idempotency-key KEY] [--instance ${ORIGINATE_LABS.join("|")}] [--model MODEL] [--budget low|medium|high] [--option id=value]
+  tentacles watch --once --allow-all-projects [--profile PROFILE] [--instance INSTANCE]
+  tentacles watch --allow-all-projects [--interval 2000] [--state-file PATH] [--max-messages 10]
+  tentacles install-service --profile PROFILE --instance INSTANCE [service options]
+  tentacles service-status --profile PROFILE --instance INSTANCE
+  tentacles restart-service --profile PROFILE --instance INSTANCE
+  tentacles uninstall-service --profile PROFILE --instance INSTANCE
 
 The tentacles command is the public CLI. t3-agent-bridge is an exact alias.
 The legacy t3-hermes command remains an exact compatibility alias.
-Run doctor to print the advertised lab matrix (ready / installed / explicit).
+Run doctor to print the advertised lab matrix for this machine
+(ready / installed / explicit). Advertised is not proved. Use --json for the
+machine-readable document. Doctor never prints tokens or secrets.
 
 Runtime mode invariant (POL-036 / POL-GB-016):
   Every originate and every non-empty continue runs full-access, for every lab
@@ -270,7 +274,8 @@ async function main() {
   const client = new T3Client();
 
   if (command === "doctor") {
-    console.log(JSON.stringify(await doctor(client, { instanceId }), null, 2));
+    const result = await doctor(client, { instanceId });
+    console.log(options.json ? JSON.stringify(result, null, 2) : formatDoctor(result));
     return;
   }
   if (command === "install-provider") {
@@ -363,6 +368,10 @@ async function main() {
     return;
   }
   if (command === "originate") {
+    const runtimeMode = requireExplicitRuntimeMode(options["runtime-mode"], "--runtime-mode");
+    if (originateSelection.instanceId === "hermes") {
+      requireRequestedProviderConstructable(originateSelection.model);
+    }
     const result = await originate(client, {
       workspace: path.resolve(required(options, "workspace")),
       title: required(options, "title"),
@@ -370,7 +379,7 @@ async function main() {
       instanceId: originateSelection.instanceId,
       model: originateSelection.model,
       options: originateSelection.options,
-      runtimeMode: requireExplicitRuntimeMode(options["runtime-mode"], "--runtime-mode"),
+      runtimeMode,
       idempotencyKey: options["idempotency-key"],
       stateFile: options["state-file"],
     });

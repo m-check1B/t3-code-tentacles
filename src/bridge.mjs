@@ -26,6 +26,7 @@ import {
   requireExplicitRuntimeMode,
   resolveModelSelection,
 } from "./model-selection.mjs";
+import { inspectHermesOpenaiCodexAuth } from "./hermes-acp-launch.mjs";
 import { readBoundedResponseText, readOrchestrationSnapshot, T3HttpError } from "./t3-client.mjs";
 
 const HERMES_MENTION = /(^|\s)@hermes\b/i;
@@ -903,6 +904,7 @@ export async function doctor(client, {
   hermesUrl = process.env.HERMES_URL || DEFAULT_HERMES_URL,
   instanceId = DEFAULT_INSTANCE_ID,
   fetchImpl = globalThis.fetch,
+  hermesHome,
 } = {}) {
   const shell = await readOrchestrationSnapshot(client);
   const settings = await client.getSettings();
@@ -931,9 +933,17 @@ export async function doctor(client, {
   } catch (error) {
     hermes = { reachable: false, errorType: error?.name || "Error", error: error?.message || "Hermes health check failed" };
   }
+  const openaiCodex = inspectHermesOpenaiCodexAuth(hermesHome === undefined ? undefined : { home: hermesHome });
+  hermes.openaiCodex = openaiCodex;
   const hermesLab = labs.find((lab) => lab.instanceId === "hermes");
   if (hermesLab) {
     hermesLab.health = hermes.reachable ? { status: hermes.status, version: hermes.version } : { reachable: false };
+    hermesLab.openaiCodex = openaiCodex;
+    if (!openaiCodex.constructable && typeof hermesLab.defaultModel === "string" && hermesLab.defaultModel.startsWith("openai-codex:")) {
+      hermesLab.message = [hermesLab.message, "openai-codex fail-closed without Codex auth (no provider fallback)"]
+        .filter(Boolean)
+        .join("; ");
+    }
   }
 
   const provider = configById.get(instanceId);
@@ -965,4 +975,94 @@ export async function doctor(client, {
     },
     nativeGrok,
   };
+}
+
+function yesNo(value) {
+  return value ? "yes" : "no";
+}
+
+function clipDoctorText(value, max = 140) {
+  const text = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+  if (!text) return "";
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function formatDoctorTable(rows) {
+  const widths = rows[0].map((_, column) => Math.max(...rows.map((row) => String(row[column] ?? "").length)));
+  return rows.map((row) => row.map((cell, column) => String(cell ?? "").padEnd(widths[column])).join("  ")).join("\n");
+}
+
+export function formatDoctor(result = {}) {
+  const labs = Array.isArray(result.labs) ? result.labs : [];
+  const t3 = result.t3 && typeof result.t3 === "object" ? result.t3 : {};
+  const hermes = result.hermes && typeof result.hermes === "object" ? result.hermes : {};
+  const nativeGrok = result.nativeGrok && typeof result.nativeGrok === "object" ? result.nativeGrok : {};
+  const lines = [
+    "Tentacles doctor — lab matrix for this machine",
+    "Live local state only. Advertised is not proved. Ready is not a global compatibility claim.",
+    "",
+    `Product: ${result.product || "Tentacles"}`,
+    `T3: ${t3.reachable === false ? "unreachable" : "reachable"}  projects: ${t3.projects ?? 0}  threads: ${t3.threads ?? 0}`,
+  ];
+  if (hermes.reachable) {
+    lines.push(`Hermes health: reachable  status: ${hermes.status || "ok"}  version: ${hermes.version || "unknown"}`);
+  } else {
+    const detail = clipDoctorText(hermes.error || hermes.errorType || "unreachable");
+    lines.push(detail ? `Hermes health: unreachable  ${detail}` : "Hermes health: unreachable");
+  }
+  const openaiCodex = hermes.openaiCodex && typeof hermes.openaiCodex === "object" ? hermes.openaiCodex : null;
+  if (openaiCodex) {
+    if (openaiCodex.constructable) {
+      lines.push("Hermes openai-codex: constructable");
+    } else {
+      lines.push(`Hermes openai-codex: fail-closed (${openaiCodex.code || "codex_auth_missing"}; no provider fallback)`);
+    }
+  }
+  if (nativeGrok.present || nativeGrok.disabled) {
+    lines.push(`Native Grok: present=${yesNo(nativeGrok.present)}  enabled=${yesNo(nativeGrok.enabled)}  disabled=${yesNo(nativeGrok.disabled)}`);
+  }
+  lines.push("");
+  const table = [
+    ["lab", "kind", "advertised", "enabled", "installed", "ready", "status", "models", "default"],
+  ];
+  for (const lab of labs) {
+    table.push([
+      lab.instanceId || "",
+      lab.kind || "",
+      yesNo(lab.advertised),
+      yesNo(lab.enabled),
+      yesNo(lab.installed),
+      yesNo(lab.ready),
+      lab.status || "",
+      String(lab.modelCount ?? (Array.isArray(lab.models) ? lab.models.length : 0)),
+      lab.defaultModel || (lab.kind === "explicit" ? "(pass --model)" : ""),
+    ]);
+  }
+  lines.push(formatDoctorTable(table));
+
+  const ready = labs.filter((lab) => lab.ready).map((lab) => lab.instanceId).filter(Boolean);
+  const blocked = labs.filter((lab) => !lab.ready);
+  lines.push("");
+  lines.push(ready.length ? `Ready on this machine: ${ready.join(", ")}` : "Ready on this machine: none");
+  if (blocked.length) {
+    lines.push("Not ready:");
+    for (const lab of blocked) {
+      const parts = [lab.instanceId || "unknown"];
+      if (lab.status) parts.push(`status=${lab.status}`);
+      const message = clipDoctorText(lab.message);
+      if (message) parts.push(message);
+      const install = clipDoctorText(lab.install, 160);
+      if (install) parts.push(`install: ${install}`);
+      lines.push(`  - ${parts.join("  ")}`);
+    }
+  }
+
+  lines.push("");
+  lines.push("Originate a ready lab:");
+  lines.push("  tentacles originate --instance <lab> --workspace \"$PWD\" --title \"…\" --message \"…\" --runtime-mode full-access");
+  lines.push("Cursor is explicit: pass --model with a slug T3 currently advertises.");
+  lines.push("Every originate and every non-empty continue requires runtimeMode full-access.");
+  lines.push("Machine JSON: tentacles doctor --json");
+  lines.push("Doctor never prints tokens, auth headers, or provider secrets.");
+  return `${lines.join("\n")}\n`;
 }

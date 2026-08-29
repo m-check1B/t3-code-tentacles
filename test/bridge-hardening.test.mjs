@@ -8,6 +8,7 @@ import {
   ALLOW_ALL_MENTION_POLICY,
   acquireStateLock,
   doctor,
+  formatDoctor,
   formatUntrustedContext,
   originate,
   readBridgeState,
@@ -127,9 +128,12 @@ test("doctor prints an advertised lab matrix without secrets and keeps Cursor ex
       ],
     }),
   };
-  const result = await doctor(client, {
-    fetchImpl: async () => { throw new Error("hermes down"); },
-  });
+  const hermesHome = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles-doctor-hermes-"));
+  try {
+    const result = await doctor(client, {
+      fetchImpl: async () => { throw new Error("hermes down"); },
+      hermesHome,
+    });
   const byId = Object.fromEntries(result.labs.map((lab) => [lab.instanceId, lab]));
   assert.equal(result.hermes.reachable, false);
   assert.equal(byId.grok.ready, true);
@@ -142,10 +146,30 @@ test("doctor prints an advertised lab matrix without secrets and keeps Cursor ex
   assert.equal(byId.hermes.kind, "adapter");
   assert.equal(byId.hermes.ready, false);
   assert.match(byId.hermes.install, /install-provider/);
+  assert.equal(byId.hermes.openaiCodex.constructable, false);
+  assert.equal(byId.hermes.openaiCodex.code, "codex_auth_missing");
+  assert.match(byId.hermes.message, /fail-closed without Codex auth/);
   assert.equal(byId.cursor.defaultModel, null);
   assert.match(byId.cursor.message, /Cursor is disabled/);
   assert.match(byId.pi.message, /ACP startup failed/);
   assert.equal(JSON.stringify(result).includes("should-not-leak"), false);
+
+  const matrix = formatDoctor(result);
+  assert.match(matrix, /Tentacles doctor — lab matrix for this machine/);
+  assert.match(matrix, /Advertised is not proved/);
+  assert.match(matrix, /grok\s+native\s+yes\s+yes\s+yes\s+yes\s+ready/);
+  assert.match(matrix, /cursor\s+explicit/);
+  assert.match(matrix, /Ready on this machine: codex, claudeAgent, grok, opencode/);
+  assert.match(matrix, /Not ready:/);
+  assert.match(matrix, /install: tentacles install-provider --instance hermes/);
+  assert.match(matrix, /Cursor is disabled/);
+  assert.match(matrix, /ACP startup failed/);
+  assert.match(matrix, /Hermes openai-codex: fail-closed \(codex_auth_missing; no provider fallback\)/);
+  assert.match(matrix, /tentacles doctor --json/);
+  assert.equal(matrix.includes("should-not-leak"), false);
+  } finally {
+    fs.rmSync(hermesHome, { recursive: true, force: true });
+  }
 });
 
 test("missing or pruned cursor never replays an evicted historical mention", async () => {
