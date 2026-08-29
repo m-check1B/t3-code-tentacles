@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here.
 
+## Unreleased
+
+### Security
+
+- Add a fixed, secret-free Matrix before/after emitter around Tentacles
+  orchestration dispatch, with fail-closed pre-dispatch writes and synthetic
+  denial tests.
+- Document the isolated broker/Synapse writer boundary and explicitly exclude
+  provider-internal tool calls until their dispatcher is brokered.
+
 ## [0.3.0] - 2026-08-28
 
 ### Public identity

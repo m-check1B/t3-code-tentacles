@@ -60,6 +60,7 @@ export class T3Client {
     WebSocketImpl = globalThis.WebSocket,
     requestTimeoutMs = 15_000,
     responseMaxBytes = 32 * 1024 * 1024,
+    toolAuditEmitter = null,
   } = {}) {
     this.baseUrl = requireLoopbackUrl(baseUrl, "T3_URL");
     this.token = token;
@@ -67,6 +68,7 @@ export class T3Client {
     this.WebSocketImpl = WebSocketImpl;
     this.requestTimeoutMs = requestTimeoutMs;
     this.responseMaxBytes = responseMaxBytes;
+    this.toolAuditEmitter = toolAuditEmitter;
   }
 
   async request(pathname, { method = "GET", body } = {}) {
@@ -123,8 +125,17 @@ export class T3Client {
     return this.request(`/api/orchestration/threads/${encodeURIComponent(threadId)}${suffix}`);
   }
 
-  dispatch(command) {
-    return this.request("/api/orchestration/dispatch", { method: "POST", body: command });
+  async dispatch(command) {
+    if (this.toolAuditEmitter !== null) await this.toolAuditEmitter.before(command);
+    let result;
+    try {
+      result = await this.request("/api/orchestration/dispatch", { method: "POST", body: command });
+    } catch (error) {
+      if (this.toolAuditEmitter !== null) await this.toolAuditEmitter.after(command, "failed");
+      throw error;
+    }
+    if (this.toolAuditEmitter !== null) await this.toolAuditEmitter.after(command, "succeeded");
+    return result;
   }
 
   async rpc(tag, payload = {}, { timeoutMs = 15_000 } = {}) {

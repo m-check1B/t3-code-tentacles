@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { T3Client } from "./t3-client.mjs";
+import { matrixToolAuditEmitterFromEnv } from "./tool-audit.mjs";
 import {
   ALLOW_ALL_MENTION_POLICY,
   doctor,
@@ -267,7 +268,7 @@ async function main() {
     return;
   }
 
-  const client = new T3Client();
+  const client = new T3Client({ toolAuditEmitter: matrixToolAuditEmitterFromEnv() });
 
   if (command === "doctor") {
     console.log(JSON.stringify(await doctor(client, { instanceId }), null, 2));

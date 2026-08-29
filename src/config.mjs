@@ -18,7 +18,7 @@ export const DEFAULT_STATE_DIR = path.join(os.homedir(), ".local", "state", "t3-
 export const DEFAULT_TOKEN_FILE = path.join(DEFAULT_STATE_DIR, "t3.token");
 export const DEFAULT_BRIDGE_STATE_FILE = path.join(DEFAULT_STATE_DIR, "bridge-state.json");
 
-export function readToken(tokenFile = process.env.T3_HERMES_TOKEN_FILE || DEFAULT_TOKEN_FILE) {
+export function readPrivateToken(tokenFile, label = "Bearer token") {
   const linkStat = fs.lstatSync(tokenFile);
   if (linkStat.isSymbolicLink()) throw new Error(`Token file must not be a symlink: ${tokenFile}`);
   const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0);
@@ -27,22 +27,26 @@ export function readToken(tokenFile = process.env.T3_HERMES_TOKEN_FILE || DEFAUL
     const stat = fs.fstatSync(descriptor);
     if (!stat.isFile()) throw new Error(`Token path is not a regular file: ${tokenFile}`);
     if (typeof process.getuid === "function" && stat.uid !== process.getuid()) {
-      throw new Error(`Token file is not owned by the current user: ${tokenFile}`);
+      throw new Error(`${label} file is not owned by the current user: ${tokenFile}`);
     }
     if ((stat.mode & 0o077) !== 0) {
-      throw new Error(`Token file permissions are too broad: ${tokenFile}; expected mode 0600`);
+      throw new Error(`${label} file permissions are too broad: ${tokenFile}; expected mode 0600`);
     }
     if (stat.size < 16 || stat.size > 16_384) {
-      throw new Error(`Token file size is outside the accepted range: ${tokenFile}`);
+      throw new Error(`${label} file size is outside the accepted range: ${tokenFile}`);
     }
     const token = fs.readFileSync(descriptor, "utf8").trim();
     if (!/^[^\s\u0000-\u001f\u007f]{16,16384}$/.test(token)) {
-      throw new Error(`T3 bearer token has an invalid format: ${tokenFile}`);
+      throw new Error(`${label} has an invalid format: ${tokenFile}`);
     }
     return token;
   } finally {
     fs.closeSync(descriptor);
   }
+}
+
+export function readToken(tokenFile = process.env.T3_HERMES_TOKEN_FILE || DEFAULT_TOKEN_FILE) {
+  return readPrivateToken(tokenFile, "T3 bearer token");
 }
 
 export function ensurePrivateDirectory(directory = DEFAULT_STATE_DIR) {

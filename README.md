@@ -463,7 +463,8 @@ refuses to delete a provider it did not create.
   patch only corrects the displayed Hermes logo.
 
 See [the architecture](docs/architecture.md), [the security policy](SECURITY.md),
-and [the v0.1.0 demo recipe](docs/demo.md).
+[the independent tool-action audit contract](docs/tool-audit.md), and [the
+v0.1.0 demo recipe](docs/demo.md).
 
 ## Built by the workflow it connects
 

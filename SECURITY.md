@@ -41,6 +41,13 @@ Treat Hermes profiles and Pi Agent as privileged local processes: the bridge
 does not reduce or expand the filesystem, shell, network, or tool permissions
 already granted to the selected runtime.
 
+Optional Matrix tool-action audit writes fixed-schema before/after events for
+Tentacles orchestration dispatches and fails closed if the before event is not
+accepted. The logger credential must belong to an isolated broker service
+identity that the agent cannot read or impersonate. Same-user local deployment
+does not provide that boundary. See [docs/tool-audit.md](docs/tool-audit.md) for
+scope, Synapse writer roles, and acceptance proof.
+
 Pi authentication remains exclusively in Pi's normal local configuration. The
 Pi provider stores only non-secret absolute executable, provider, initial model,
 and ownership metadata in T3. The ACP relay never logs protocol payloads, does

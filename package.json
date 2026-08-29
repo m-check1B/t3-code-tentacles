@@ -45,7 +45,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "check": "node --check src/cli.mjs && node --check src/t3-client.mjs && node --check src/bridge.mjs && node --check src/orchestrate.mjs && node --check src/model-selection.mjs && node --check src/pi-acp.mjs && node --check src/service.mjs && node --check src/deepseek-acp-launch.mjs && node --check src/kimi-acp-launch.mjs && node --check src/grok-acp-launch.mjs",
+    "check": "node --check src/cli.mjs && node --check src/t3-client.mjs && node --check src/tool-audit.mjs && node --check src/bridge.mjs && node --check src/orchestrate.mjs && node --check src/model-selection.mjs && node --check src/pi-acp.mjs && node --check src/service.mjs && node --check src/deepseek-acp-launch.mjs && node --check src/kimi-acp-launch.mjs && node --check src/grok-acp-launch.mjs",
     "test": "node --test"
   },
   "license": "MIT"
