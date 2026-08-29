@@ -56,4 +56,6 @@ different provider. Doctor reports that fail-closed state as presence only; it
 never prints token values. After Hermes accepts a provider-qualified model
 switch, the relay withholds success until Hermes' structured session state
 reports that exact provider and model. It returns `provider_identity_mismatch`
-and blocks the prompt when Hermes binds a profile fallback instead.
+and blocks the prompt when Hermes binds a profile fallback instead. Hermes'
+bare `grok-build` alias is also exact-identity gated, so it cannot fall through
+to DeepSeek merely because the requested ID lacks a provider prefix.

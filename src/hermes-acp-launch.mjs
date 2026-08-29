@@ -22,6 +22,7 @@ export const CODEX_AUTH_MISSING = "codex_auth_missing";
 export const PROVIDER_NOT_CONSTRUCTABLE = "provider_not_constructable";
 export const PROVIDER_IDENTITY_MISMATCH = "provider_identity_mismatch";
 export const OPENAI_CODEX_PROVIDER = "openai-codex";
+export const GROK_BUILD_MODEL = "grok-build";
 
 export function hermesAuthFile(home = os.homedir()) {
   return path.join(home, ".hermes", "auth.json");
@@ -164,8 +165,15 @@ export function providerConstructionErrorResponse(request, { provider = OPENAI_C
 }
 
 function normalizedModelIdentity(modelId) {
-  const requested = requestedProviderFromModel(modelId);
-  if (!requested) return null;
+  if (typeof modelId !== "string") return null;
+  const trimmed = modelId.trim();
+  const requested = requestedProviderFromModel(trimmed);
+  if (!requested) {
+    // Hermes advertises grok-build as a bare alias. It still requires runtime
+    // identity verification: otherwise its profile fallback can answer through
+    // DeepSeek while T3 displays grok-build.
+    return trimmed === GROK_BUILD_MODEL ? { provider: null, model: trimmed } : null;
+  }
   return {
     provider: requested.provider.trim().toLowerCase(),
     model: requested.model.trim(),
