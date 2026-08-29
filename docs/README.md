@@ -21,6 +21,7 @@ proved. The README lab matrix records which labs have a fresh e2e proof.
 - Purpose, lab matrix, setup, operations, and uninstall: [README.md](../README.md)
 - Agent contribution and live-runtime boundary: [AGENTS.md](../AGENTS.md)
 - Component architecture: [architecture.md](architecture.md)
+- Outbound Cloud Jack pairing protocol: [remote-pairing.md](remote-pairing.md)
 - Security policy: [SECURITY.md](../SECURITY.md)
 - Contribution workflow: [CONTRIBUTING.md](../CONTRIBUTING.md)
 - Synthetic demo runbook: [demo.md](demo.md)
