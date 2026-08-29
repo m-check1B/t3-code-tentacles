@@ -11,6 +11,7 @@ command is `tentacles`; `t3-agent-bridge` is an exact compatibility alias.
 
 Repository documentation and integration authority boundaries start at
 [docs/README.md](docs/README.md).
+This project is released under the permissive [MIT License](LICENSE).
 
 ## Start here: one vertical path, two roles
 
