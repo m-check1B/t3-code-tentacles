@@ -458,14 +458,19 @@ export async function waitForMessageProjection(client, threadId, messageId, { ti
   throw new Error(`Timed out waiting for message ${messageId} in thread ${threadId}`);
 }
 
-async function waitForStoppedSession(client, threadId, { timeoutMs = 15_000, intervalMs = 100 } = {}) {
+async function waitForRestartableSession(client, threadId, { timeoutMs = 15_000, intervalMs = 100 } = {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const detail = await getThreadIfProjected(client, threadId);
-    if (detail && (detail.thread?.session == null || detail.thread.session.status === "stopped")) return detail;
+    const status = detail?.thread?.session?.status ?? null;
+    // T3 may retain a failed provider session as `error` after acknowledging
+    // thread.session.stop. That state has no active turn and is safe to replace
+    // with the next turn; requiring a synthetic `stopped` projection makes a
+    // fail-closed thread impossible to continue.
+    if (detail && (status === null || status === "stopped" || status === "error")) return detail;
     await delay(intervalMs);
   }
-  throw new Error(`Timed out waiting for T3 projection: stopped session in thread ${threadId}`);
+  throw new Error(`Timed out waiting for T3 projection: restartable session in thread ${threadId}`);
 }
 
 export async function waitForTurnOutcome(client, threadId, messageId, {
@@ -533,7 +538,7 @@ export async function applyIntent(client, intent, { wait = true, commandId, crea
         createdAt: command.createdAt,
       });
       restartDispatchResult = await client.dispatch(restartCommand);
-      baseline = await waitForStoppedSession(client, command.threadId, { timeoutMs, intervalMs });
+      baseline = await waitForRestartableSession(client, command.threadId, { timeoutMs, intervalMs });
     }
   }
   const baselineSession = isRecord(baseline?.thread?.session)
