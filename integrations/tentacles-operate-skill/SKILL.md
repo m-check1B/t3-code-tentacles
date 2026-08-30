@@ -61,12 +61,12 @@ Keep these two lab identities explicit:
 | Lab | `--instance` | `--model` | Meaning |
 | --- | --- | --- | --- |
 | Grok Code | `grok` | `grok-4.6` | The Grok Code hire path. |
-| Hermes-as-lab | `hermes` | A model advertised by doctor, when ready | Its own lab, never a route to another lab. |
+| Hermes | `hermes` | A model advertised by doctor, when ready | Its own worker. Never a route to another lab. |
 
-- Hermes-as-lab is a real lab worker at the same layer as codex, grok, pi, and the rest. It is its own lab.
+- Hermes (`--instance hermes`) is its own worker at the same layer as codex, grok, pi, and the rest.
 - It is not Grok. It is not a proxy for any other lab. Never hire `--instance hermes` when you meant grok, codex, claudeAgent, pi, kimi, or deepseek.
 - Hiring `--instance hermes` only makes sense when the chair needs Hermes's GBrain and memory.
-- In our setup the chair already has direct GBrain and memory, so do not hire Hermes-as-lab as a worker. Doctor not-ready is extra reason to skip it here, not a reason to route another lab through it.
+- In our setup the chair already has direct GBrain and memory, so do not hire `--instance hermes` as a worker. Doctor not-ready is extra reason to skip it here, not a reason to route another lab through it.
 
 If you want Grok Code and are about to type `--instance hermes`, stop. Originate
 `--instance grok` instead.
@@ -76,7 +76,7 @@ T3-native instances are `codex` (Codex CLI), `claudeAgent` (Claude Code CLI),
 owns `t3 pair` / `app.t3.codes`; those are not Tentacles instances.
 
 Tentacles-additive instances are `kimi` (Kimi CLI), `deepseek` (DeepSeek CLI),
-`hermes` (Hermes lab), and `pi` (Pi CLI). Cursor must already be enabled in T3
+`hermes` (Hermes), and `pi` (Pi CLI). Cursor must already be enabled in T3
 and always needs an explicit model.
 
 Kimi CLI, DeepSeek CLI, and Claude Code CLI are independent products. Tentacles

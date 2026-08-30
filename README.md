@@ -58,8 +58,8 @@ tentacles act --intent '{"action":"thread.continue","threadId":"<thread-id>","te
 
 A **chair** operates T3 Code through the Tentacles chair CLI. Grok Bot already
 uses this path; Hermes and Agent Jack use the same contract. Chairs are not
-labs. Hermes as a chair and Hermes as a lab are two different arrows and two
-different proof claims.
+labs. Hermes as a chair and Hermes as an additive instance are two different
+arrows and two different proof claims.
 
 ```text
                     CHAIRS — TENTACLES ADDITIVE
@@ -78,7 +78,7 @@ different proof claims.
       orchestrated by T3
                  |                             |
   [Codex CLI] [Claude Code CLI]     [Kimi CLI] [DeepSeek CLI]
-  [Grok Build CLI] [OpenCode CLI]   [Hermes lab] [Pi CLI]
+  [Grok Build CLI] [OpenCode CLI]   [Hermes] [Pi CLI]
   [Cursor CLI]
   [t3 pair / app.t3.codes]
 ```
@@ -97,7 +97,7 @@ flowchart TB
     Chairs --> ChairCLI["Tentacles chair CLI"]
     ChairCLI --> T3["T3 Code"]
     T3 --> Native["T3 native: Codex CLI, Claude Code CLI, Grok Build CLI, OpenCode CLI, Cursor CLI, t3 pair / app.t3.codes"]
-    T3 --> Additive["Tentacles additive: Kimi CLI, DeepSeek CLI, Hermes lab, Pi CLI"]
+    T3 --> Additive["Tentacles additive: Kimi CLI, DeepSeek CLI, Hermes, Pi CLI"]
 ```
 
 ![T3-native capabilities and Tentacles-additive chair and lab paths](docs/tentacles-vertical.png)
@@ -108,13 +108,13 @@ Jack 1 Device Bridge dashboard. Cloud Jack runs on Blaxel or another VM while
 the user works in a browser; it uses the same Tentacles bridge to reach the
 user's T3 on one or more computers. A cloud route still requires its remote
 connection and pairing to be installed and configured. Chairs are not labs.
-Hermes chair ≠ Hermes lab.
+Hermes chair ≠ Hermes.
 
-Tentacles-additive labs a chair may select are Kimi CLI, DeepSeek CLI, Hermes
-lab, and Pi CLI. Kimi CLI, DeepSeek CLI, and Claude Code CLI are independent
+Tentacles-additive labs a chair may select are Kimi CLI, DeepSeek CLI, Hermes,
+and Pi CLI. Kimi CLI, DeepSeek CLI, and Claude Code CLI are independent
 products. Tentacles names those CLIs; it does not own or explain their
-settings, routing, tokens, or plans. Hermes lab and Pi CLI are the adapters
-this repository installs. Claude Code is T3-native: a chair selects
+settings, routing, tokens, or plans. Hermes and Pi CLI are the adapters this
+repository installs. Claude Code is T3-native: a chair selects
 `--instance claudeAgent`. Tentacles does not ship a second Claude product.
 
 ## Quick start
@@ -175,7 +175,7 @@ Tentacles-additive rows:
 |---|---|
 | Kimi CLI | Independent lab a chair may select when doctor marks it ready. Tentacles does not own or explain its settings. |
 | DeepSeek CLI | Independent lab a chair may select when doctor marks it ready. Tentacles does not own or explain its settings. |
-| Hermes lab | Tentacles adapter. `tentacles install-provider`. Default originate model `openai-codex:gpt-5.6-sol`. |
+| Hermes | Tentacles adapter. `tentacles install-provider`. Default originate model `openai-codex:gpt-5.6-sol`. |
 | Pi CLI | Tentacles adapter. `tentacles install-pi-provider`. Default originate model `gpt-5.6-terra`. |
 
 **Advertised is not proved.** Doctor `ready` means T3 currently reports that
@@ -192,7 +192,7 @@ intentionally not counted as a Tentacles lab proof.
 | Chair CLI | Proved from Grok Bot | Originate + continue without the T3 GUI; the selected Grok CLI lab remains T3-native |
 | Kimi CLI | Proved | Fresh Kimi CLI originate + non-empty continue answered |
 | DeepSeek CLI | Proved | Fresh DeepSeek CLI originate + non-empty continue answered |
-| Hermes lab | Fail-closed proved; assistant blocked | Live `openai-codex:gpt-5.6-sol` returned the named `provider_identity_mismatch` error instead of falling through to DeepSeek; no assistant answer is claimed |
+| Hermes | Fail-closed proved; assistant blocked | Live `openai-codex:gpt-5.6-sol` returned the named `provider_identity_mismatch` error instead of falling through to DeepSeek; no assistant answer is claimed |
 | Pi CLI | Proved | Human-approved OpenAI-Codex OAuth re-login, then fresh Pi originate + non-empty continue answered on `gpt-5.6-terra` |
 
 T3-native Claude Code CLI is not in this table. Do not count it as proved until
@@ -211,7 +211,7 @@ mode fails closed.
 | Chair CLI continues thread | `tentacles act` `thread.continue` with `runtimeMode: full-access` | Proved from Grok Bot |
 | T3 Code → Hermes / Pi | Tentacles adapter appears as a T3 provider over ACP when installed | Install path exists; live assistant proof is blocked where the table says blocked |
 | Chair selects Kimi CLI or DeepSeek CLI | Independent lab, when doctor marks it ready | Proved where the proof table says proved; Tentacles does not configure those products |
-| Any T3 thread → Hermes | A new `@hermes` message routes to one linked Hermes thread | Requires an armed watcher **and** an answering Hermes lab |
+| Any T3 thread → Hermes | A new `@hermes` message routes to one linked Hermes thread | Requires an armed watcher **and** an answering Hermes |
 | Existing T3 providers | Provider install/remove preserves unrelated instances | Tested |
 | Background routing | Reversible per-user macOS LaunchAgent or Linux systemd user unit | macOS tested; Linux unit-tested, not live-verified |
 | Inline Hermes reply in another provider's thread | Requires an upstream T3 extension point | Not available |
@@ -383,7 +383,7 @@ to run Pi's `/login openai-codex` flow; Tentacles never handles those credential
 
 ## Optional: `@hermes` mention routing
 
-Requires an answering Hermes lab. Skip it while the Hermes assistant path is
+Requires an answering Hermes. Skip it while the Hermes assistant path is
 blocked.
 
 ```bash
