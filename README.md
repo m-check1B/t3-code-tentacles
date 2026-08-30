@@ -110,10 +110,14 @@ user's T3 on one or more computers. A cloud route still requires its remote
 connection and pairing to be installed and configured. Chairs are not labs.
 Hermes chair ≠ Hermes lab.
 
-The additive lab adapters are Kimi CLI, DeepSeek CLI, Hermes lab, and Pi CLI.
-Each lab keeps its own runtime, model, authentication, and tools.
-A quiet extra adapter, `claude-openrouter`, lets a chair talk to Claude without
-driving Claude Code CLI. It does not replace that native lab.
+Tentacles-additive labs a chair may select are Kimi CLI, DeepSeek CLI, Hermes
+lab, and Pi CLI. Kimi CLI, DeepSeek CLI, and Claude Code CLI are independent
+products. Tentacles names those CLIs; it does not own or explain their
+settings, routing, tokens, or plans. Hermes lab and Pi CLI are the adapters
+this repository installs.
+A quiet extra Tentacles path, `claude-openrouter`, lets a chair talk to Claude
+without driving Claude Code CLI. It is not Claude Code's settings, and it is
+not Kimi or DeepSeek.
 
 ## Quick start
 
@@ -161,7 +165,7 @@ T3-native reference rows:
 | T3-native lab | Tentacles relationship |
 |---|---|
 | Codex CLI | T3 ships it; a chair may select it through the Tentacles chair CLI |
-| Claude Code CLI | T3 ships it; this is the Claude lab T3 ships |
+| Claude Code CLI | T3 ships it; independent of Tentacles. This is the Claude lab T3 ships |
 | Grok Build CLI | T3 ships it; Grok Bot remains a chair, not this lab |
 | OpenCode CLI | T3 ships it |
 | Cursor CLI | T3 ships it |
@@ -169,12 +173,12 @@ T3-native reference rows:
 
 Tentacles-additive rows:
 
-| Additive path | Default originate model | Setup |
-|---|---|---|
-| Kimi CLI | `moonshotai/kimi-k3` | `tentacles install-kimi-provider` |
-| DeepSeek CLI | `deepseek/deepseek-v4-flash` | `tentacles install-deepseek-provider` |
-| Hermes lab | `openai-codex:gpt-5.6-sol` | `tentacles install-provider` |
-| Pi CLI | `gpt-5.6-terra` | `tentacles install-pi-provider` |
+| Additive lab | Tentacles relationship |
+|---|---|
+| Kimi CLI | Independent lab a chair may select when doctor marks it ready. Tentacles does not own or explain its settings. |
+| DeepSeek CLI | Independent lab a chair may select when doctor marks it ready. Tentacles does not own or explain its settings. |
+| Hermes lab | Tentacles adapter. `tentacles install-provider`. Default originate model `openai-codex:gpt-5.6-sol`. |
+| Pi CLI | Tentacles adapter. `tentacles install-pi-provider`. Default originate model `gpt-5.6-terra`. |
 
 **Advertised is not proved.** Doctor `ready` means T3 currently reports that
 instance as ready on this host. It is not a compatibility certificate.
@@ -188,8 +192,8 @@ intentionally not counted as a Tentacles lab proof.
 | Additive path | E2E | Notes |
 |---|---|---|
 | Chair CLI | Proved from Grok Bot | Originate + continue without the T3 GUI; the selected Grok CLI lab remains T3-native |
-| Kimi CLI | Proved | Fresh Kimi CLI originate + non-empty continue answered on `moonshotai/kimi-k3` |
-| DeepSeek CLI | Proved | Fresh DeepSeek CLI originate + non-empty continue answered on `deepseek/deepseek-v4-flash` |
+| Kimi CLI | Proved | Fresh Kimi CLI originate + non-empty continue answered |
+| DeepSeek CLI | Proved | Fresh DeepSeek CLI originate + non-empty continue answered |
 | Hermes lab | Fail-closed proved; assistant blocked | Live `openai-codex:gpt-5.6-sol` returned the named `provider_identity_mismatch` error instead of falling through to DeepSeek; no assistant answer is claimed |
 | Pi CLI | Proved | Human-approved OpenAI-Codex OAuth re-login, then fresh Pi originate + non-empty continue answered on `gpt-5.6-terra` |
 
@@ -204,7 +208,8 @@ mode fails closed.
 | `tentacles doctor` | Human-readable lab matrix for this machine; `--json` for the document | Tested |
 | Chair CLI → T3 thread | Grok Bot uses `tentacles originate` without the T3 GUI | Proved; the selected Grok CLI remains T3-native |
 | Chair CLI continues thread | `tentacles act` `thread.continue` with `runtimeMode: full-access` | Proved from Grok Bot |
-| T3 Code → Hermes / Pi / DeepSeek / Kimi | Adapter appears as a T3 provider over ACP when installed | Install path exists; live assistant proof is blocked where the table says blocked |
+| T3 Code → Hermes / Pi | Tentacles adapter appears as a T3 provider over ACP when installed | Install path exists; live assistant proof is blocked where the table says blocked |
+| Chair selects Kimi CLI or DeepSeek CLI | Independent lab, when doctor marks it ready | Proved where the proof table says proved; Tentacles does not configure those products |
 | Any T3 thread → Hermes | A new `@hermes` message routes to one linked Hermes thread | Requires an armed watcher **and** an answering Hermes lab |
 | Existing T3 providers | Provider install/remove preserves unrelated instances | Tested |
 | Background routing | Reversible per-user macOS LaunchAgent or Linux systemd user unit | macOS tested; Linux unit-tested, not live-verified |
@@ -220,8 +225,9 @@ It does not impersonate the assistant inside another provider's existing thread.
 - T3 Code 0.0.34-nightly.20260811.1064 listening on `127.0.0.1:3773`.
 - Node.js 22+.
 - At least one T3 lab you can already use in the T3 UI (Grok, Codex, OpenCode,
-  or Cursor). Adapter labs (Hermes, Pi, DeepSeek, Kimi) are optional and listed
-  after the first originate.
+  or Cursor). Optional Tentacles adapters (Hermes, Pi) are listed after the
+  first originate. Kimi CLI and DeepSeek CLI are independent labs a chair may
+  select when doctor marks them ready.
 
 Clone Tentacles and install the command shims:
 
@@ -313,8 +319,9 @@ and effort; an omitted runtime mode is refused, never defaulted.
 
 ## Optional adapters
 
-Skip this section until a native lab originates. These harnesses are advertised;
-they are not claimed green in the proof table above.
+Skip this section until a native lab originates. Hermes and Pi are Tentacles
+adapters. They are advertised; they are not claimed green in the proof table
+above.
 
 ### Hermes
 
@@ -372,48 +379,6 @@ OpenAI-Codex OAuth flow on 2026-08-29. Tentacles doctor then reported Pi ready,
 and a fresh `gpt-5.6-terra` originate plus non-empty continue both answered with
 `runtimeMode: full-access`. A future invalidated refresh still requires a human
 to run Pi's `/login openai-codex` flow; Tentacles never handles those credentials.
-
-### Kimi CLI
-
-Kimi is Kimi CLI. Register it after Kimi's normal local setup:
-
-```bash
-tentacles install-kimi-provider \
-  --instance kimi \
-  --model moonshotai/kimi-k3
-```
-
-Open T3 Code and select **Kimi CLI**. Remove the registration with
-`tentacles remove-kimi-provider --instance kimi`.
-
-### DeepSeek CLI
-
-DeepSeek is DeepSeek CLI. Register it after installing `dsh-acp`:
-
-```bash
-npm i -g dsh-acp
-tentacles install-deepseek-provider \
-  --instance deepseek \
-  --model deepseek/deepseek-v4-flash
-```
-
-The default model is `deepseek/deepseek-v4-flash`; override it with `--model` or
-`T3_DEEPSEEK_MODEL`. The wrapper launches `dsh-acp` from `PATH` (or an absolute
-`--dsh-acp-bin`/`DSH_ACP_BIN` override) with a bridge-owned Cordis config and
-`workspace-write` permissions. Sessions persist under
-`~/.dsh/acp-sessions/<workspace-hash>`: dsh-acp's SQLite session store is
-single-process, so the bridge keys the store on a digest of the working
-directory T3 spawned the thread with—sessions stay resumable per workspace
-while parallel T3 threads in different workspaces each get their own store.
-An explicit `DSH_SESSIONS_ROOT` replaces this default entirely and must then
-be unique per concurrent lane.
-
-Open T3 Code and select **DeepSeek CLI**. Remove the registration with
-`tentacles remove-deepseek-provider --instance deepseek`.
-
-Each instance carries its own ownership marker and the same foreign-instance
-refusal rules as the Hermes and Pi providers. A doctor `ready` row still does
-not replace an authenticated originate + continue proof.
 
 ## Optional: `@hermes` mention routing
 
@@ -562,8 +527,6 @@ when a skill resolves outside the active profile's trusted `skills/` directory.
 
 ```bash
 tentacles uninstall-service --profile default --instance hermes
-tentacles remove-deepseek-provider --instance deepseek
-tentacles remove-kimi-provider --instance kimi
 tentacles remove-pi-provider --instance pi
 tentacles remove-provider
 

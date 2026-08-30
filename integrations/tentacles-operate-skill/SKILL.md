@@ -79,9 +79,13 @@ Tentacles-additive instances are `kimi` (Kimi CLI), `deepseek` (DeepSeek CLI),
 `hermes` (Hermes lab), and `pi` (Pi CLI). Cursor must already be enabled in T3
 and always needs an explicit model.
 
-A quiet extra adapter, `claude-openrouter`, lets a chair talk to Claude without
-driving Claude Code CLI. It is not a Tentacles-additive lab and does not replace
-the T3-native Claude Code CLI.
+Kimi CLI, DeepSeek CLI, and Claude Code CLI are independent products. Tentacles
+names them as labs a chair may select. Do not configure, document, or invent
+their settings, routing, tokens, or plans.
+
+A quiet extra Tentacles path, `claude-openrouter`, lets a chair talk to Claude
+without driving Claude Code CLI. It is not Claude Code's settings, and it is
+not Kimi or DeepSeek.
 
 ## 3. Originate
 

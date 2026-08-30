@@ -47,8 +47,11 @@ the canonical workflow:
 
 The T3-native instance IDs are `codex`, `claudeAgent`, `grok`, `opencode`, and
 `cursor`. Tentacles-additive instance IDs are `kimi`, `deepseek`, `hermes`, and
-`pi`. A quiet extra adapter, `claude-openrouter`, lets a chair talk to Claude
-without driving Claude Code CLI. It is not a Tentacles-additive lab.
+`pi`. Kimi CLI, DeepSeek CLI, and Claude Code CLI are independent products;
+Tentacles names them and does not explain their settings. A quiet extra
+Tentacles path, `claude-openrouter`, lets a chair talk to Claude without driving
+Claude Code CLI. It is not Claude Code's settings, and it is not Kimi or
+DeepSeek.
 
 ```bash
 tentacles originate \
