@@ -7,10 +7,9 @@ All notable changes to this project are documented here.
 ### Documentation
 
 - README names T3-native labs and Tentacles-additive labs by their CLIs.
-  The additive Hermes instance is Hermes, not Hermes lab. Claude Code is
-  T3-native `--instance claudeAgent`, not a Tentacles extra product.
-  Advertised is not proved. Kimi, DeepSeek, and Claude Code are independent;
-  Tentacles does not document their settings.
+  The paper-ink poster, ASCII, and mermaid match: native Claude Code CLI,
+  additive Kimi CLI / DeepSeek CLI / Hermes / Pi CLI. Hermes is Hermes.
+  Claude Code is T3-native `--instance claudeAgent` and is not proved.
 
 ## [0.3.0] - 2026-08-28
 

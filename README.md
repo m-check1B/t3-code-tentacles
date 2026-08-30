@@ -91,7 +91,7 @@ flowchart TB
     subgraph Chairs["Chairs — Tentacles additive"]
         direction LR
         GrokBot["Grok Bot"]
-        HermesChair["Hermes chair"]
+        HermesChair["Hermes"]
         Jack["Agent Jack 3.0"]
     end
     Chairs --> ChairCLI["Tentacles chair CLI"]
@@ -112,8 +112,7 @@ Hermes chair ≠ Hermes.
 
 Tentacles-additive labs a chair may select are Kimi CLI, DeepSeek CLI, Hermes,
 and Pi CLI. Kimi CLI, DeepSeek CLI, and Claude Code CLI are independent
-products. Tentacles names those CLIs; it does not own or explain their
-settings, routing, tokens, or plans. Hermes and Pi CLI are the adapters this
+products. Tentacles names those CLIs. Hermes and Pi CLI are the adapters this
 repository installs. Claude Code is T3-native: a chair selects
 `--instance claudeAgent`. Tentacles does not ship a second Claude product.
 
@@ -173,8 +172,8 @@ Tentacles-additive rows:
 
 | Additive lab | Tentacles relationship |
 |---|---|
-| Kimi CLI | Independent lab a chair may select when doctor marks it ready. Tentacles does not own or explain its settings. |
-| DeepSeek CLI | Independent lab a chair may select when doctor marks it ready. Tentacles does not own or explain its settings. |
+| Kimi CLI | Independent lab a chair may select when doctor marks it ready |
+| DeepSeek CLI | Independent lab a chair may select when doctor marks it ready |
 | Hermes | Tentacles adapter. `tentacles install-provider`. Default originate model `openai-codex:gpt-5.6-sol`. |
 | Pi CLI | Tentacles adapter. `tentacles install-pi-provider`. Default originate model `gpt-5.6-terra`. |
 
