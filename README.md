@@ -37,6 +37,10 @@ choose an advertised instance and model, set a thought budget, originate with
 `--runtime-mode full-access`, continue with `runtimeMode: full-access`, observe,
 and stop the thread safely.
 
+The chair is whichever CLI runs `tentacles` from a terminal. Grok Bot, Hermes,
+Agent Jack, Claude Code, Codex, and any other CLI with shell access all use the
+same binary and contract.
+
 If the chair loads skills from a filesystem directory, link the whole
 `integrations/tentacles-operate-skill` folder into that configured directory as
 `tentacles-operate`. Do not replace an existing skill path without inspecting
@@ -44,75 +48,83 @@ it first.
 
 ```bash
 tentacles doctor
+# Worked example: Codex is the chair; DeepSeek is the hired lab.
 tentacles originate \
   --workspace "$PWD" \
-  --title "Tentacles quick start" \
-  --message "Start this work and report the result." \
-  --instance grok \
-  --model grok-4.6 \
-  --budget high \
+  --title "Codex chair hires DeepSeek" \
+  --message "Work on this task and report the result." \
+  --instance deepseek \
+  --model deepseek/deepseek-v4-flash \
   --runtime-mode full-access
 tentacles act --intent '{"action":"thread.continue","threadId":"<thread-id>","text":"Continue with the next concrete step.","runtimeMode":"full-access"}'
 ```
 
+Choose the exact DeepSeek model advertised by `tentacles doctor`; the model
+above is the currently documented default. Codex is only the chair in this
+example. The bottom lab is selected independently, so any other chair/ready-lab
+pair is valid.
+
 ## Start here: what T3 ships and what Tentacles adds
 
-A **chair** operates T3 Code through the Tentacles chair CLI. Grok Bot already
-uses this path; Hermes and Agent Jack use the same contract. Chairs are not
-labs. Hermes as a chair and Hermes as an additive instance are two different
-arrows and two different proof claims.
+A **chair** is any CLI with shell access that runs the Tentacles chair CLI.
+Grok Bot, Hermes, Agent Jack, Claude Code, Codex, or another terminal CLI can
+occupy the top role interchangeably. The chair does not determine the lab.
+Chairs are not labs: Hermes as a chair and `--instance hermes` at the bottom are
+two separate roles and two separate proof claims.
 
 ```text
-                    CHAIRS — TENTACLES ADDITIVE
+                         CHAIR — SWAPPABLE TOP
 
-           [Grok Bot]    [Hermes]    [Remote client]
-                 \           |            /
-                  +--- [Tentacles chair CLI] ---+
-                       originate + continue
-                        without the T3 GUI
-                                |
-                            [T3 Code]
-                                |
-                 +--------------+--------------+
-                 |                             |
-     T3 NATIVE — already                 TENTACLES ADDITIVE
-      orchestrated by T3
-                 |                             |
-  [Codex CLI] [Claude Code CLI]     [Kimi CLI] [DeepSeek CLI]
-  [Grok Code CLI] [OpenCode CLI]   [Hermes] [Pi CLI]
-  [Cursor CLI]
-  [t3 pair / app.t3.codes]
+ [Grok Bot] [Hermes] [Agent Jack] [Claude Code] [Codex] [any shell CLI]
+                                 |
+                   [same `tentacles` binary]
+                      originate + continue
+                       without the T3 GUI
+                                 |
+                             [T3 Code]
+                                 |
+                    LAB — SWAPPABLE BOTTOM
+                      selected by --instance
+
+       [grok] [codex] [claudeAgent] [kimi] [deepseek]
+             [opencode] [cursor] [pi] [hermes]
 ```
 
 The poster is the canonical visual. The mermaid below is a short text map of
-the same chairs, native labs, and additive labs.
+the same interchangeable top and bottom roles. The ownership matrix that
+follows still distinguishes T3-native labs from Tentacles adapters.
 
 ```mermaid
 flowchart TB
-    subgraph Chairs["Chairs — Tentacles additive"]
-        direction LR
-        GrokBot["Grok Bot"]
-        HermesChair["Hermes"]
-        Remote["Remote client"]
-    end
-    Chairs --> ChairCLI["Tentacles chair CLI"]
+    Chairs["Swappable chair: Grok Bot · Hermes · Agent Jack · Claude Code · Codex · any CLI with a shell"]
+    Chairs --> ChairCLI["same tentacles binary"]
     ChairCLI --> T3["T3 Code"]
-    T3 --> Native["T3 native: Codex CLI, Claude Code CLI, Grok Code CLI, OpenCode CLI, Cursor CLI, t3 pair / app.t3.codes"]
-    T3 --> Additive["Tentacles additive: Kimi CLI, DeepSeek CLI, Hermes, Pi CLI"]
+    T3 --> Labs["Swappable lab (--instance): grok · codex · claudeAgent · kimi · deepseek · opencode · cursor · pi · hermes"]
 ```
 
-![T3-native capabilities and Tentacles-additive chair and lab paths](docs/tentacles-vertical.png)
+![Swappable Tentacles chair and bottom lab instance paths](docs/tentacles-vertical.png)
 
 Remote clients use Tentacles only after the optional outbound pairing path has
 been installed and configured. Tentacles does not define or version those
-clients. Chairs are not labs; Hermes as a chair and Hermes as a lab are separate
-roles.
+clients. Chairs are not labs; Hermes as a chair and the bottom
+`--instance hermes` role are separate.
+
+The nine bottom instance IDs are fixed: `grok`, `codex`, `claudeAgent`, `kimi`,
+`deepseek`, `opencode`, `cursor`, `pi`, and `hermes`. A worked pair is Codex at
+the top hiring DeepSeek with `--instance deepseek`; other pairs are valid when
+doctor marks the selected lab ready.
 
 Tentacles-additive labs a chair may select are Kimi CLI, DeepSeek CLI, Hermes,
 and Pi CLI. Kimi CLI, DeepSeek CLI, and Claude Code CLI are independent
 products. Tentacles names those CLIs. Hermes and Pi CLI are the adapters this
 repository installs. Claude Code is T3-native: a chair selects
 `--instance claudeAgent`. Tentacles does not ship a second Claude product.
+
+People using Claude Code or Codex as the chair already have those product
+setups. Tentacles does not ship or configure Claude, Codex, DeepSeek, or Kimi
+plans, provider routing, OpenRouter setup, or authentication. There is no
+Tentacles `claude-openrouter` SKU. Each product keeps ownership of its setup and
+credentials.
 
 ## Quick start
 
