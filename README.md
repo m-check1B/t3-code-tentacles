@@ -163,7 +163,7 @@ T3-native reference rows:
 | T3-native lab | Tentacles relationship |
 |---|---|
 | Codex CLI | T3 ships it; a chair may select it through the Tentacles chair CLI |
-| Claude Code CLI | T3 ships it. A chair selects `--instance claudeAgent`. Independent of Tentacles. Not a Tentacles e2e proof yet |
+| Claude Code CLI | T3 ships it. A chair selects `--instance claudeAgent`. Independent of Tentacles. Advertised is not proved |
 | Grok Build CLI | T3 ships it; Grok Bot remains a chair, not this lab |
 | OpenCode CLI | T3 ships it |
 | Cursor CLI | T3 ships it |
@@ -195,8 +195,8 @@ intentionally not counted as a Tentacles lab proof.
 | Hermes | Fail-closed proved; assistant blocked | Live `openai-codex:gpt-5.6-sol` returned the named `provider_identity_mismatch` error instead of falling through to DeepSeek; no assistant answer is claimed |
 | Pi CLI | Proved | Human-approved OpenAI-Codex OAuth re-login, then fresh Pi originate + non-empty continue answered on `gpt-5.6-terra` |
 
-T3-native Claude Code CLI is not in this table. Do not count it as proved until
-a `--instance claudeAgent` originate + continue lands.
+T3-native Claude Code CLI is not in this table. A `--instance claudeAgent`
+originate is not a Tentacles proof claim. Do not count Claude Code as proved.
 
 Every originate and every non-empty continue must pass
 `--runtime-mode full-access` / `"runtimeMode":"full-access"`. An omitted runtime

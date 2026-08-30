@@ -84,8 +84,8 @@ names them as labs a chair may select. Do not configure, document, or invent
 their settings, routing, tokens, or plans.
 
 Claude Code is T3-native. If you want Claude, originate `--instance claudeAgent`.
-Do not originate a second Claude path. Do not count Claude Code as proved until
-a `claudeAgent` originate + continue answers.
+Do not originate a second Claude path. Doctor ready is not proof. Do not count
+Claude Code as proved.
 
 ## 3. Originate
 
