@@ -114,10 +114,8 @@ Tentacles-additive labs a chair may select are Kimi CLI, DeepSeek CLI, Hermes
 lab, and Pi CLI. Kimi CLI, DeepSeek CLI, and Claude Code CLI are independent
 products. Tentacles names those CLIs; it does not own or explain their
 settings, routing, tokens, or plans. Hermes lab and Pi CLI are the adapters
-this repository installs.
-A quiet extra Tentacles path, `claude-openrouter`, lets a chair talk to Claude
-without driving Claude Code CLI. It is not Claude Code's settings, and it is
-not Kimi or DeepSeek.
+this repository installs. Claude Code is T3-native: a chair selects
+`--instance claudeAgent`. Tentacles does not ship a second Claude product.
 
 ## Quick start
 
@@ -165,7 +163,7 @@ T3-native reference rows:
 | T3-native lab | Tentacles relationship |
 |---|---|
 | Codex CLI | T3 ships it; a chair may select it through the Tentacles chair CLI |
-| Claude Code CLI | T3 ships it; independent of Tentacles. This is the Claude lab T3 ships |
+| Claude Code CLI | T3 ships it. A chair selects `--instance claudeAgent`. Independent of Tentacles. Not a Tentacles e2e proof yet |
 | Grok Build CLI | T3 ships it; Grok Bot remains a chair, not this lab |
 | OpenCode CLI | T3 ships it |
 | Cursor CLI | T3 ships it |
@@ -197,6 +195,9 @@ intentionally not counted as a Tentacles lab proof.
 | Hermes lab | Fail-closed proved; assistant blocked | Live `openai-codex:gpt-5.6-sol` returned the named `provider_identity_mismatch` error instead of falling through to DeepSeek; no assistant answer is claimed |
 | Pi CLI | Proved | Human-approved OpenAI-Codex OAuth re-login, then fresh Pi originate + non-empty continue answered on `gpt-5.6-terra` |
 
+T3-native Claude Code CLI is not in this table. Do not count it as proved until
+a `--instance claudeAgent` originate + continue lands.
+
 Every originate and every non-empty continue must pass
 `--runtime-mode full-access` / `"runtimeMode":"full-access"`. An omitted runtime
 mode fails closed.
@@ -224,10 +225,10 @@ It does not impersonate the assistant inside another provider's existing thread.
 
 - T3 Code 0.0.34-nightly.20260811.1064 listening on `127.0.0.1:3773`.
 - Node.js 22+.
-- At least one T3 lab you can already use in the T3 UI (Grok, Codex, OpenCode,
-  or Cursor). Optional Tentacles adapters (Hermes, Pi) are listed after the
-  first originate. Kimi CLI and DeepSeek CLI are independent labs a chair may
-  select when doctor marks them ready.
+- At least one T3 lab you can already use in the T3 UI (Grok, Codex, Claude
+  Code, OpenCode, or Cursor). Optional Tentacles adapters (Hermes, Pi) are
+  listed after the first originate. Kimi CLI and DeepSeek CLI are independent
+  labs a chair may select when doctor marks them ready.
 
 Clone Tentacles and install the command shims:
 

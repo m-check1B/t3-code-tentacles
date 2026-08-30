@@ -7,9 +7,9 @@ All notable changes to this project are documented here.
 ### Documentation
 
 - README names T3-native labs and Tentacles-additive labs by their CLIs.
-  Kimi, DeepSeek, and Claude Code are independent products; Tentacles does
-  not document or own their settings. `claude-openrouter` remains one quiet
-  extra Tentacles path, not those products' settings.
+  Claude Code is T3-native `--instance claudeAgent`, not a Tentacles extra
+  product and not a proof claim. Kimi, DeepSeek, and Claude Code are
+  independent; Tentacles does not document their settings.
 
 ## [0.3.0] - 2026-08-28
 

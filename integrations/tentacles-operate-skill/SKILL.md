@@ -83,9 +83,9 @@ Kimi CLI, DeepSeek CLI, and Claude Code CLI are independent products. Tentacles
 names them as labs a chair may select. Do not configure, document, or invent
 their settings, routing, tokens, or plans.
 
-A quiet extra Tentacles path, `claude-openrouter`, lets a chair talk to Claude
-without driving Claude Code CLI. It is not Claude Code's settings, and it is
-not Kimi or DeepSeek.
+Claude Code is T3-native. If you want Claude, originate `--instance claudeAgent`.
+Do not originate a second Claude path. Do not count Claude Code as proved until
+a `claudeAgent` originate + continue answers.
 
 ## 3. Originate
 
