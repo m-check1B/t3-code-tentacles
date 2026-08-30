@@ -79,6 +79,7 @@ test("each advertised lab has a kind and only Cursor omits a default model", () 
   assert.equal(labKind("hermes"), "adapter");
   assert.equal(labKind("cursor"), "explicit");
   assert.equal(defaultModelForLab("grok"), "grok-4.6");
+  assert.equal(defaultModelForLab("hermes"), "deepseek:deepseek-v4-flash");
   assert.equal(defaultModelForLab("codex"), "gpt-5.6-luna");
   assert.equal(defaultModelForLab("claudeAgent"), "claude-sonnet-5");
   assert.equal(defaultModelForLab("opencode"), "opencode/big-pickle");
@@ -340,8 +341,7 @@ test("continueThread resolves a partial legacy selection and omits only the all-
   });
   assert.deepEqual(client.commands[3].modelSelection, {
     instanceId: "hermes",
-    model: "openai-codex:gpt-5.6-sol",
-    options: [{ id: "reasoningEffort", value: "high" }],
+    model: "deepseek:deepseek-v4-flash",
   });
 
   await continueThread(client, {

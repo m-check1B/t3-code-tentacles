@@ -172,9 +172,9 @@ Tentacles-additive rows:
 
 | Additive lab | Tentacles relationship |
 |---|---|
-| Kimi CLI | Independent CLI reached through the Tentacles Kimi ACP adapter; requires Kimi plus an owner-controlled OpenRouter token |
-| DeepSeek CLI | Independent `dsh-acp` runtime reached through the Tentacles DeepSeek adapter; requires `dsh-acp` plus an owner-controlled OpenRouter token |
-| Hermes | Tentacles adapter. `tentacles install-provider`. Default originate model `openai-codex:gpt-5.6-sol`. |
+| Kimi CLI | Independent CLI reached through the Tentacles Kimi ACP adapter; requires Kimi's normal local setup |
+| DeepSeek CLI | Independent `dsh-acp` runtime reached through the Tentacles DeepSeek adapter; requires `dsh-acp` and its normal local setup |
+| Hermes | Tentacles adapter. `tentacles install-provider`. Default originate model `deepseek:deepseek-v4-flash`. |
 | Pi CLI | Tentacles adapter. `tentacles install-pi-provider`. Default originate model `gpt-5.6-terra`. |
 
 **Advertised is not proved.** Doctor marks a lab `ready` only when its T3
@@ -193,9 +193,9 @@ assistant content are never published.
 
 | Lab | Instance | Default/model rule | Acceptance for the current receipt |
 |---|---|---|---|
-| Hermes | `hermes` | `openai-codex:gpt-5.6-sol` when doctor advertises it | Originate + continue; exact provider identity required |
+| Hermes | `hermes` | `deepseek:deepseek-v4-flash` when doctor advertises it | Originate + continue; exact provider identity required |
 | Codex CLI | `codex` | `gpt-5.6-luna` when doctor advertises it | Originate + continue |
-| Claude Code CLI | `claudeAgent` | `claude-sonnet-5` when doctor advertises it | Originate + continue |
+| Claude Code CLI | `claudeAgent` | `claude-sonnet-5`; skipped unless a bounded assistant proof exists | Originate + continue |
 | Grok Code CLI | `grok` | `grok-4.6` when doctor advertises it | Originate + continue |
 | Cursor CLI | `cursor` | always pass a model shown by doctor | Originate + continue |
 | DeepSeek CLI adapter | `deepseek` | `deepseek/deepseek-v4-flash` when doctor advertises it | Originate + continue |
@@ -205,10 +205,11 @@ assistant content are never published.
 
 Maintainers can generate the bounded receipt against an already configured
 local installation. The runner creates only isolated synthetic projects and
-threads, changes no provider/service/token configuration, prints no live IDs or
-content, and exits non-zero unless all nine rows pass. It records doctor’s
-same-run preflight for every lab but deliberately attempts every advertised lab
-that has a model, so a stale T3 provider status cannot hide fresh evidence:
+threads, changes no provider/service/token configuration, and prints no live IDs
+or content. It attempts only rows doctor marks ready, requires every attempted
+row to pass, and records an explicit fail-closed skip for every other advertised
+row. The default assistant bound is 60 seconds and can be adjusted with
+`TENTACLES_E2E_TIMEOUT_MS`:
 
 ```bash
 npm run e2e:labs
@@ -345,21 +346,12 @@ Skip this section until a native lab originates. Hermes, Pi, Kimi, and DeepSeek
 are Tentacles adapters. Install only the runtimes you intend to use; doctor and
 the current proof receipt determine whether they are ready.
 
-### Shared credential custody for Kimi and DeepSeek
+### Kimi and DeepSeek runtime custody
 
-Kimi and DeepSeek use a shared OpenRouter bearer file. Tentacles never stores
-that bearer in T3 settings and never prints it. Create the owner-only file,
-then edit it without putting the value in shell history:
-
-```bash
-install -d -m 700 ~/.local/state/t3-hermes-bridge
-install -m 600 /dev/null ~/.local/state/t3-hermes-bridge/openrouter.token
-${EDITOR:-vi} ~/.local/state/t3-hermes-bridge/openrouter.token
-```
-
-Set `OPENROUTER_TOKEN_FILE` to another owner-controlled `0600` regular file
-if needed. Kimi also requires its normal CLI installation; DeepSeek requires
-the `dsh-acp` executable. Tentacles does not install either upstream runtime.
+Kimi and DeepSeek keep credentials in their upstream runtime's normal local
+custody. Tentacles never stores credential values in T3 settings and never
+prints them. Kimi requires its normal CLI installation; DeepSeek requires the
+`dsh-acp` executable. Tentacles does not install or authenticate either runtime.
 
 ```bash
 tentacles install-kimi-provider --instance kimi
@@ -375,7 +367,7 @@ defaults are `default` and the model used by the tested setup:
 ```bash
 tentacles install-provider \
   --profile default \
-  --model openai-codex:gpt-5.6-sol
+  --model deepseek:deepseek-v4-flash
 tentacles doctor
 ```
 
@@ -441,7 +433,7 @@ command cannot accidentally replace a different watcher:
 tentacles install-service \
   --profile default \
   --instance hermes \
-  --model openai-codex:gpt-5.6-sol \
+  --model deepseek:deepseek-v4-flash \
   --interval 2000 \
   --t3-url http://127.0.0.1:3773 \
   --hermes-url http://127.0.0.1:8642 \
@@ -493,7 +485,7 @@ a LaunchAgent:
 tentacles install-service \
   --profile default \
   --instance hermes \
-  --model openai-codex:gpt-5.6-sol \
+  --model deepseek:deepseek-v4-flash \
   --interval 2000 \
   --t3-url http://127.0.0.1:3773 \
   --hermes-url http://127.0.0.1:8642 \

@@ -985,7 +985,8 @@ function doctorAction(lab) {
   if (!lab.installed) return labInstallHint(lab.instanceId);
   if (lab.code === "codex_auth_missing") return "Authenticate openai-codex through Hermes' normal local setup";
   if (lab.code === "hermes_unreachable") return "Start or recover the loopback Hermes health endpoint";
-  if (lab.code === "openrouter_auth_unavailable") return "Repair the owner-controlled OpenRouter token file, then rerun doctor";
+  if (lab.code === "adapter_auth_unavailable") return "Repair the adapter runtime's owner-controlled credential file, then rerun doctor";
+  if (lab.code === "assistant_unverified") return "No assistant reply is verified within the bounded probe; keep this lab skipped";
   if (lab.code === "disabled") return lab.instanceId === "cursor"
     ? "Enable Cursor in T3, then choose a model shown by doctor"
     : `Enable the ${lab.instanceId} instance in T3`;
@@ -995,7 +996,7 @@ function doctorAction(lab) {
   return null;
 }
 
-function inspectOpenRouterAuth(tokenFile) {
+function inspectAdapterAuth(tokenFile) {
   try {
     readOpenRouterToken(tokenFile);
     return { constructable: true };
@@ -1003,7 +1004,7 @@ function inspectOpenRouterAuth(tokenFile) {
     void error;
     return {
       constructable: false,
-      code: "openrouter_auth_unavailable",
+      code: "adapter_auth_unavailable",
     };
   }
 }
@@ -1030,14 +1031,28 @@ export async function doctor(client, {
     labs.push(labRow({ instanceId: labId, advertised: true, settings, configById }));
   }
 
-  const openrouter = inspectOpenRouterAuth(openrouterTokenFile);
+  const adapterCredential = inspectAdapterAuth(openrouterTokenFile);
   for (const labId of ["kimi", "deepseek"]) {
     const lab = labs.find((entry) => entry.instanceId === labId);
     if (!lab) continue;
-    if (lab.installed && !openrouter.constructable) {
+    if (lab.installed && !adapterCredential.constructable) {
       lab.ready = false;
-      lab.code = "openrouter_auth_unavailable";
+      lab.code = "adapter_auth_unavailable";
     }
+  }
+
+  const deepseekLab = labs.find((lab) => lab.instanceId === "deepseek");
+  if (deepseekLab?.enabled && deepseekLab.installed && deepseekLab.defaultAvailable && adapterCredential.constructable) {
+    deepseekLab.ready = true;
+    deepseekLab.status = "configured";
+    deepseekLab.code = null;
+  }
+
+  const claudeLab = labs.find((lab) => lab.instanceId === "claudeAgent");
+  if (claudeLab?.ready) {
+    claudeLab.ready = false;
+    claudeLab.status = "unverified";
+    claudeLab.code = "assistant_unverified";
   }
 
   let hermes;
@@ -1047,18 +1062,28 @@ export async function doctor(client, {
     void error;
     hermes = { reachable: false, code: "hermes_unreachable" };
   }
-  const openaiCodex = inspectHermesOpenaiCodexAuth(hermesHome === undefined ? undefined : { home: hermesHome });
-  hermes.openaiCodex = openaiCodex;
   const hermesLab = labs.find((lab) => lab.instanceId === "hermes");
   if (hermesLab) {
     hermesLab.health = hermes.reachable ? { status: hermes.status, version: hermes.version } : { reachable: false };
-    hermesLab.openaiCodex = openaiCodex;
-    if (hermesLab.installed && !openaiCodex.constructable && typeof hermesLab.defaultModel === "string" && hermesLab.defaultModel.startsWith("openai-codex:")) {
+    const requestsOpenaiCodex = typeof hermesLab.defaultModel === "string" && hermesLab.defaultModel.startsWith("openai-codex:");
+    const openaiCodex = requestsOpenaiCodex
+      ? inspectHermesOpenaiCodexAuth(hermesHome === undefined ? undefined : { home: hermesHome })
+      : null;
+    if (openaiCodex) {
+      hermes.openaiCodex = openaiCodex;
+      hermesLab.openaiCodex = openaiCodex;
+    }
+    if (hermesLab.installed && openaiCodex && !openaiCodex.constructable) {
       hermesLab.ready = false;
       hermesLab.code = "codex_auth_missing";
     } else if (hermesLab.installed && !hermes.reachable) {
       hermesLab.ready = false;
       hermesLab.code = "hermes_unreachable";
+    }
+    if (hermesLab.ready) {
+      hermesLab.ready = false;
+      hermesLab.status = "unverified";
+      hermesLab.code = "assistant_unverified";
     }
   }
   for (const lab of labs) {
@@ -1085,7 +1110,7 @@ export async function doctor(client, {
     t3: { reachable: true, version: serverVersion, projects: projects.length, threads: threads.length },
     pairing: readPairPresence(pairStateFile),
     labs,
-    openrouter,
+    adapterCredential,
     hermes,
     nativeGrok,
   };
@@ -1133,11 +1158,11 @@ export function formatDoctor(result = {}) {
       lines.push(`Hermes openai-codex: fail-closed (${openaiCodex.code || "codex_auth_missing"}; no provider fallback)`);
     }
   }
-  const openrouter = result.openrouter && typeof result.openrouter === "object" ? result.openrouter : null;
-  if (openrouter) {
-    lines.push(openrouter.constructable
-      ? "OpenRouter credential route: constructable"
-      : `OpenRouter credential route: fail-closed (${openrouter.code || "openrouter_auth_unavailable"})`);
+  const adapterCredential = result.adapterCredential && typeof result.adapterCredential === "object" ? result.adapterCredential : null;
+  if (adapterCredential) {
+    lines.push(adapterCredential.constructable
+      ? "Adapter credential route: constructable"
+      : `Adapter credential route: fail-closed (${adapterCredential.code || "adapter_auth_unavailable"})`);
   }
   if (nativeGrok.present || nativeGrok.disabled) {
     lines.push(`Native Grok: present=${yesNo(nativeGrok.present)}  enabled=${yesNo(nativeGrok.enabled)}  disabled=${yesNo(nativeGrok.disabled)}`);

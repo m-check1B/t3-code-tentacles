@@ -119,6 +119,28 @@ test("doctor bounds and validates the Hermes health response", async () => {
   }
 });
 
+test("doctor keeps an installed Hermes lab fail-closed without bounded assistant proof", async () => {
+  const client = {
+    snapshot: async () => ({ projects: [], threads: [] }),
+    getSettings: async () => ({ providerInstances: {
+      hermes: { driver: "grok", enabled: true },
+    } }),
+    rpc: async () => ({ providers: [{
+      instanceId: "hermes",
+      status: "ready",
+      installed: true,
+      models: [{ slug: "deepseek:deepseek-v4-flash" }],
+    }] }),
+  };
+  const result = await doctor(client, {
+    fetchImpl: async () => new Response(JSON.stringify({ status: "ok", version: "test-version" })),
+  });
+  const hermes = result.labs.find((lab) => lab.instanceId === "hermes");
+  assert.equal(hermes.ready, false);
+  assert.equal(hermes.status, "unverified");
+  assert.equal(hermes.code, "assistant_unverified");
+});
+
 test("doctor prints an advertised lab matrix without secrets and keeps Cursor explicit", async () => {
   const client = {
     snapshot: async () => ({ projects: [{ id: "p1" }], threads: [{ id: "t1" }] }),
@@ -136,7 +158,7 @@ test("doctor prints an advertised lab matrix without secrets and keeps Cursor ex
     rpc: async () => ({
       environment: { serverVersion: "/Users/private/TOKEN-CANARY" },
       providers: [
-        { instanceId: "hermes", driver: "grok", status: "ready", installed: true, models: [{ slug: "openai-codex:gpt-5.6-sol" }] },
+        { instanceId: "hermes", driver: "grok", status: "ready", installed: true, models: [{ slug: "deepseek:deepseek-v4-flash" }] },
         { instanceId: "grok", driver: "grok", status: "ready", installed: true, models: [{ slug: "grok-4.6", name: "Grok 4.6" }] },
         { instanceId: "codex", driver: "codex", status: "ready", installed: true, models: [{ slug: "gpt-5.6-luna" }] },
         { instanceId: "claudeAgent", driver: "claudeAgent", status: "ready", installed: true, models: [{ slug: "claude-sonnet-5" }] },
@@ -159,16 +181,16 @@ test("doctor prints an advertised lab matrix without secrets and keeps Cursor ex
   assert.equal(byId.grok.ready, true);
   assert.equal(byId.grok.kind, "native");
   assert.equal(byId.codex.ready, true);
-  assert.equal(byId.claudeAgent.ready, true);
+  assert.equal(byId.claudeAgent.ready, false);
+  assert.equal(byId.claudeAgent.code, "assistant_unverified");
   assert.equal(byId.opencode.ready, true);
   assert.equal(byId.cursor.kind, "explicit");
   assert.equal(byId.cursor.ready, false);
   assert.equal(byId.hermes.kind, "adapter");
   assert.equal(byId.hermes.ready, false);
-  assert.match(byId.hermes.action, /Authenticate openai-codex/);
-  assert.equal(byId.hermes.openaiCodex.constructable, false);
-  assert.equal(byId.hermes.openaiCodex.code, "codex_auth_missing");
-  assert.equal(byId.hermes.code, "codex_auth_missing");
+  assert.match(byId.hermes.action, /Hermes health/);
+  assert.equal(byId.hermes.openaiCodex, undefined);
+  assert.equal(byId.hermes.code, "hermes_unreachable");
   assert.equal(byId.cursor.defaultModel, null);
   assert.equal(byId.cursor.code, "disabled");
   assert.equal(byId.pi.code, "provider_error");
@@ -184,15 +206,15 @@ test("doctor prints an advertised lab matrix without secrets and keeps Cursor ex
   assert.match(matrix, /Advertised is not proved/);
   assert.match(matrix, /grok\s+native\s+yes\s+yes\s+yes\s+yes\s+ready/);
   assert.match(matrix, /cursor\s+explicit/);
-  assert.match(matrix, /Ready on this machine: codex, claudeAgent, grok, opencode/);
+  assert.match(matrix, /Ready on this machine: codex, grok, opencode/);
   assert.match(matrix, /Not ready:/);
-  assert.match(matrix, /action: Authenticate openai-codex/);
+  assert.match(matrix, /action: Start or recover the loopback Hermes/);
+  assert.match(matrix, /claudeAgent\s+status=unverified\s+code=assistant_unverified/);
   assert.match(matrix, /cursor\s+status=disabled\s+code=disabled/);
   assert.match(matrix, /pi\s+status=error\s+code=provider_error/);
   assert.match(matrix, /grok-4\.6/);
-  assert.match(matrix, /Hermes openai-codex: fail-closed \(codex_auth_missing; no provider fallback\)/);
-  assert.match(matrix, /OpenRouter credential route: (?:constructable|fail-closed)/);
-  assert.doesNotMatch(matrix, /OpenRouter adapters/);
+  assert.doesNotMatch(matrix, /Hermes openai-codex:/);
+  assert.match(matrix, /Adapter credential route: (?:constructable|fail-closed)/);
   assert.match(matrix, /tentacles doctor --json/);
   assert.equal(matrix.includes("should-not-leak"), false);
   } finally {
@@ -236,6 +258,36 @@ test("doctor validates the full model set and promotes the default into bounded 
   assert.equal(claude.ready, false);
   assert.equal(claude.code, "default_model_unavailable");
   assert.match(formatDoctor(result), /gpt-5\.6-luna/);
+});
+
+test("doctor does not mislabel a configured DeepSeek adapter from stale provider status", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles-doctor-deepseek-"));
+  const credentialFile = path.join(directory, "adapter.token");
+  fs.writeFileSync(credentialFile, "test-only-fixture\n", { mode: 0o600 });
+  const client = {
+    snapshot: async () => ({ projects: [], threads: [] }),
+    getSettings: async () => ({ providerInstances: {
+      deepseek: { driver: "grok", enabled: true },
+    } }),
+    rpc: async () => ({ providers: [{
+      instanceId: "deepseek",
+      status: "error",
+      installed: true,
+      models: [{ slug: "deepseek/deepseek-v4-flash" }],
+    }] }),
+  };
+  try {
+    const result = await doctor(client, {
+      fetchImpl: async () => { throw new Error("not installed"); },
+      openrouterTokenFile: credentialFile,
+    });
+    const deepseek = result.labs.find((lab) => lab.instanceId === "deepseek");
+    assert.equal(deepseek.ready, true);
+    assert.equal(deepseek.status, "configured");
+    assert.equal(deepseek.code, null);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("missing or pruned cursor never replays an evicted historical mention", async () => {

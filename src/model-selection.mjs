@@ -14,7 +14,7 @@ export const ADAPTER_LABS = Object.freeze(["hermes", "pi", "deepseek", "kimi"]);
 export const EXPLICIT_LABS = Object.freeze(["cursor"]);
 
 export const LAB_DEFAULT_MODELS = Object.freeze({
-  hermes: process.env.T3_HERMES_MODEL || "openai-codex:gpt-5.6-sol",
+  hermes: process.env.T3_HERMES_MODEL || "deepseek:deepseek-v4-flash",
   pi: process.env.T3_PI_MODEL || "gpt-5.6-terra",
   deepseek: process.env.T3_DEEPSEEK_MODEL || "deepseek/deepseek-v4-flash",
   kimi: process.env.T3_KIMI_MODEL || "moonshotai/kimi-k3",

@@ -5,7 +5,7 @@ import path from "node:path";
 export const DEFAULT_T3_URL = "http://127.0.0.1:3773";
 export const DEFAULT_HERMES_URL = "http://127.0.0.1:8642";
 export const DEFAULT_INSTANCE_ID = "hermes";
-export const DEFAULT_MODEL = process.env.T3_HERMES_MODEL || "openai-codex:gpt-5.6-sol";
+export const DEFAULT_MODEL = process.env.T3_HERMES_MODEL || "deepseek:deepseek-v4-flash";
 export const DEFAULT_PI_INSTANCE_ID = "pi";
 export const DEFAULT_PI_PROVIDER = process.env.T3_PI_PROVIDER || "openai-codex";
 export const DEFAULT_PI_MODEL = process.env.T3_PI_MODEL || "gpt-5.6-terra";

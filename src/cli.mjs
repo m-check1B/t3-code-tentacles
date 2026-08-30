@@ -236,7 +236,7 @@ instance. They never choose a profile implicitly.
 Environment:
   T3_URL                    default http://127.0.0.1:3773
   T3_HERMES_TOKEN_FILE      default ~/.local/state/t3-hermes-bridge/t3.token
-  T3_HERMES_MODEL           default openai-codex:gpt-5.6-sol
+  T3_HERMES_MODEL           default deepseek:deepseek-v4-flash
   HERMES_URL                default http://127.0.0.1:8642
   HERMES_PROFILE            used by bin/t3-hermes-acp; default default`;
 }
