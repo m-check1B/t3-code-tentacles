@@ -6,7 +6,7 @@ and adds adapters that T3 does not ship.
 The public command is `tentacles`; `t3-agent-bridge` is an exact compatibility
 alias.
 
-T3 Code already orchestrates Codex CLI, Claude Code CLI, Grok Build CLI, OpenCode CLI,
+T3 Code already orchestrates Codex CLI, Claude Code CLI, Grok Code CLI, OpenCode CLI,
 and Cursor CLI, plus its own `t3 pair` / `app.t3.codes` remote path. Those are
 T3-native capabilities, not Tentacles inventions or Tentacles proof claims.
 
@@ -78,7 +78,7 @@ arrows and two different proof claims.
       orchestrated by T3
                  |                             |
   [Codex CLI] [Claude Code CLI]     [Kimi CLI] [DeepSeek CLI]
-  [Grok Build CLI] [OpenCode CLI]   [Hermes] [Pi CLI]
+  [Grok Code CLI] [OpenCode CLI]   [Hermes] [Pi CLI]
   [Cursor CLI]
   [t3 pair / app.t3.codes]
 ```
@@ -96,7 +96,7 @@ flowchart TB
     end
     Chairs --> ChairCLI["Tentacles chair CLI"]
     ChairCLI --> T3["T3 Code"]
-    T3 --> Native["T3 native: Codex CLI, Claude Code CLI, Grok Build CLI, OpenCode CLI, Cursor CLI, t3 pair / app.t3.codes"]
+    T3 --> Native["T3 native: Codex CLI, Claude Code CLI, Grok Code CLI, OpenCode CLI, Cursor CLI, t3 pair / app.t3.codes"]
     T3 --> Additive["Tentacles additive: Kimi CLI, DeepSeek CLI, Hermes, Pi CLI"]
 ```
 
@@ -163,7 +163,7 @@ T3-native reference rows:
 |---|---|
 | Codex CLI | T3 ships it; a chair may select it through the Tentacles chair CLI |
 | Claude Code CLI | T3 ships it. A chair selects `--instance claudeAgent`. Independent of Tentacles. Advertised is not proved |
-| Grok Build CLI | T3 ships it; Grok Bot remains a chair, not this lab |
+| Grok Code CLI | T3 ships it. A chair selects `--instance grok --model grok-4.6`. Grok Bot remains a chair, not this lab |
 | OpenCode CLI | T3 ships it |
 | Cursor CLI | T3 ships it |
 | `t3 pair` / `app.t3.codes` | T3 ships this native remote path |
@@ -188,7 +188,7 @@ intentionally not counted as a Tentacles lab proof.
 
 | Additive path | E2E | Notes |
 |---|---|---|
-| Chair CLI | Proved from Grok Bot | Originate + continue without the T3 GUI; the selected Grok CLI lab remains T3-native |
+| Chair CLI | Proved from Grok Bot | Originate + continue without the T3 GUI; the selected Grok Code CLI remains T3-native |
 | Kimi CLI | Proved | Fresh Kimi CLI originate + non-empty continue answered |
 | DeepSeek CLI | Proved | Fresh DeepSeek CLI originate + non-empty continue answered |
 | Hermes | Fail-closed proved; assistant blocked | Live `openai-codex:gpt-5.6-sol` returned the named `provider_identity_mismatch` error instead of falling through to DeepSeek; no assistant answer is claimed |
@@ -206,7 +206,7 @@ mode fails closed.
 | Flow | Result | Status |
 |---|---|---|
 | `tentacles doctor` | Human-readable lab matrix for this machine; `--json` for the document | Tested |
-| Chair CLI → T3 thread | Grok Bot uses `tentacles originate` without the T3 GUI | Proved; the selected Grok CLI remains T3-native |
+| Chair CLI → T3 thread | Grok Bot uses `tentacles originate` without the T3 GUI | Proved; the selected Grok Code CLI remains T3-native |
 | Chair CLI continues thread | `tentacles act` `thread.continue` with `runtimeMode: full-access` | Proved from Grok Bot |
 | T3 Code → Hermes / Pi | Tentacles adapter appears as a T3 provider over ACP when installed | Install path exists; live assistant proof is blocked where the table says blocked |
 | Chair selects Kimi CLI or DeepSeek CLI | Independent lab, when doctor marks it ready | Proved where the proof table says proved; Tentacles does not configure those products |

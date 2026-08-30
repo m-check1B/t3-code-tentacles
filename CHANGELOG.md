@@ -7,7 +7,8 @@ All notable changes to this project are documented here.
 ### Documentation
 
 - README names T3-native labs and Tentacles-additive labs by their CLIs.
-  The paper-ink poster, ASCII, and mermaid match: native Claude Code CLI,
+  The paper-ink poster, ASCII, and mermaid match: native Codex CLI,
+  Claude Code CLI, Grok Code CLI, OpenCode CLI, Cursor CLI, t3 pair;
   additive Kimi CLI / DeepSeek CLI / Hermes / Pi CLI. Hermes is Hermes.
   Claude Code is T3-native `--instance claudeAgent` and is not proved.
 
