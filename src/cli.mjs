@@ -60,6 +60,19 @@ import {
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+const ORIGINATE_OPTION_KEYS = new Set([
+  "workspace",
+  "title",
+  "message",
+  "runtime-mode",
+  "idempotency-key",
+  "instance",
+  "model",
+  "budget",
+  "option",
+  "state-file",
+]);
+
 export function parseArgs(argv) {
   const [command = "help", ...rest] = argv;
   const options = { _: [] };
@@ -70,6 +83,9 @@ export function parseArgs(argv) {
       continue;
     }
     const key = argument.slice(2);
+    if (command === "originate" && !ORIGINATE_OPTION_KEYS.has(key)) {
+      throw new Error(`Unknown originate option --${key}; run tentacles help for supported options`);
+    }
     if (key === "once" || key === "allow-all-projects" || key === "no-wait" || key === "json") {
       options[key] = true;
       continue;
