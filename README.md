@@ -1,4 +1,4 @@
-# T3 Code Tentacles and Labs
+# T3 Code Tentacles and Labs - (work in progress but used and usable)
 
 Tentacles is an additive bridge for [T3 Code](https://github.com/pingdotgg/t3code).
 It gives chair CLIs a way to originate and continue T3 work without the GUI,
