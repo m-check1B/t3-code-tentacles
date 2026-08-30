@@ -65,81 +65,53 @@ different proof claims.
 ```text
                     CHAIRS — TENTACLES ADDITIVE
 
-              [Grok Bot]   [Hermes]   [Agent Jack 1]
-                    \          |          /
-                     +-- [Tentacles chair CLI] --+
-                         originate + continue
-                          without the T3 GUI
-                                  |
-                              [T3 Code]
-                                  |
-                   +--------------+--------------+
-                   |                             |
-       T3 NATIVE — already                 TENTACLES ADDITIVE
-        orchestrated by T3
-                   |                             |
- [Codex CLI] [Claude Code CLI]       [Claude via OpenRouter]
- [Grok Build CLI] [OpenCode CLI]     extra path: chair talks to Claude
- [Cursor CLI]                         without driving Claude Code CLI
- [t3 pair / app.t3.codes]
-                                      [Kimi CLI] [DeepSeek CLI]
-                                      [Hermes lab] [Pi CLI]
+           [Grok Bot]    [Hermes]    [Agent Jack 3.0]
+                 \           |            /
+                  +--- [Tentacles chair CLI] ---+
+                       originate + continue
+                        without the T3 GUI
+                                |
+                            [T3 Code]
+                                |
+                 +--------------+--------------+
+                 |                             |
+     T3 NATIVE — already                 TENTACLES ADDITIVE
+      orchestrated by T3
+                 |                             |
+  [Codex CLI] [Claude Code CLI]     [Claude via OpenRouter]
+  [Grok Build CLI] [OpenCode CLI]   extra path: chair talks to Claude
+  [Cursor CLI]                       without driving Claude Code CLI
+  [t3 pair / app.t3.codes]
+                                     [Kimi CLI] [DeepSeek CLI]
+                                     [Hermes lab] [Pi CLI]
 ```
+
+The poster is the canonical visual. The mermaid below is a short text map of
+the same chairs, native labs, and additive labs.
 
 ```mermaid
 flowchart TB
     subgraph Chairs["Chairs — Tentacles additive"]
         direction LR
-        GrokBot["Grok Bot<br/>works today"]
-        HermesChair["Hermes<br/>chair"]
-        Jack["Agent Jack¹<br/>chair"]
+        GrokBot["Grok Bot"]
+        HermesChair["Hermes chair"]
+        Jack["Agent Jack 3.0"]
     end
-
-    GrokBot --> ChairCLI["Tentacles chair CLI<br/>originate + continue without the T3 GUI"]
-    HermesChair --> ChairCLI
-    Jack --> ChairCLI
+    Chairs --> ChairCLI["Tentacles chair CLI"]
     ChairCLI --> T3["T3 Code"]
-
-    subgraph Native["T3 native — already orchestrated by T3"]
-        direction LR
-        Codex["Codex CLI"]
-        ClaudeCode["Claude Code CLI"]
-        GrokCLI["Grok Build CLI"]
-        OpenCode["OpenCode CLI"]
-        Cursor["Cursor CLI"]
-        Pair["t3 pair / app.t3.codes"]
-    end
-
-    subgraph Additive["Tentacles additive"]
-        direction LR
-        ClaudeOR["Claude via OpenRouter<br/>extra path — chair talks to Claude<br/>without driving Claude Code CLI"]
-        Kimi["Kimi CLI"]
-        DeepSeek["DeepSeek CLI"]
-        HermesLab["Hermes lab"]
-        Pi["Pi CLI"]
-    end
-
-    T3 --> Codex
-    T3 --> ClaudeCode
-    T3 --> GrokCLI
-    T3 --> OpenCode
-    T3 --> Cursor
-    T3 --> Pair
-    T3 --> ClaudeOR
-    T3 --> Kimi
-    T3 --> DeepSeek
-    T3 --> HermesLab
-    T3 --> Pi
+    T3 --> Native["T3 native: Codex CLI, Claude Code CLI, Grok Build CLI, OpenCode CLI, Cursor CLI, t3 pair / app.t3.codes"]
+    T3 --> Additive["Tentacles additive: Claude via OpenRouter extra path, Kimi CLI, DeepSeek CLI, Hermes lab, Pi CLI"]
 ```
 
 ![T3-native capabilities and Tentacles-additive chair and lab paths](docs/tentacles-vertical.png)
 
-<sup>1</sup> **Jack local/cloud footnote.** Local Jack is an installable web app
-(PWA) in the user's browser and uses Tentacles to reach T3 on that machine—no
-Electron and no Jack 1 Device Bridge dashboard. Cloud Jack runs on Blaxel or
-another VM while the user works in a browser; it uses the same Tentacles bridge
-to reach the user's T3 on one or more computers. A cloud route still requires
-its remote connection and pairing to be installed and configured.
+**Agent Jack 3.0.** Local Jack is an installable web app (PWA) in the user's
+browser and uses Tentacles to reach T3 on that machine—no Electron and no
+Jack 1 Device Bridge dashboard. Cloud Jack runs on Blaxel or another VM while
+the user works in a browser; it uses the same Tentacles bridge to reach the
+user's T3 on one or more computers. A cloud route still requires its remote
+connection and pairing to be installed and configured. Chairs are not labs.
+Hermes chair ≠ Hermes lab.
 
 The additive lab adapters are Kimi CLI, DeepSeek CLI, Hermes lab, and Pi CLI.
 The separate Claude-via-OpenRouter path lets a chair talk to Claude without
