@@ -101,7 +101,7 @@ flowchart TB
     T3 --> Additive["Tentacles additive: Kimi CLI, DeepSeek CLI, Hermes, Pi CLI"]
 ```
 
-![T3-native capabilities and Tentacles-additive chair and lab paths](docs/tentacles-vertical.png)
+![Swappable Tentacles chair and bottom lab instance paths](docs/tentacles-vertical.png)
 
 Remote clients use Tentacles only after the optional outbound pairing path has
 been installed and configured. Tentacles does not define or version those
