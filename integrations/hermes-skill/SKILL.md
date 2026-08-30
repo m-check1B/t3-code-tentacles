@@ -32,12 +32,12 @@ models. Keep these two lab identities explicit:
 | Lab | `--instance` | `--model` | Meaning |
 | --- | --- | --- | --- |
 | Grok Code | `grok` | `grok-4.6` | The Grok Code hire path. |
-| Hermes-as-lab | `hermes` | A model advertised by doctor, when ready | Its own lab, never a route to another lab. |
+| Hermes | `hermes` | A model advertised by doctor, when ready | Its own worker. Never a route to another lab. |
 
-- Hermes-as-lab is a real lab worker at the same layer as codex, grok, pi, and the rest. It is its own lab.
+- Hermes (`--instance hermes`) is its own worker at the same layer as codex, grok, pi, and the rest. It is its own lab.
 - It is not Grok. It is not a proxy for any other lab. Never hire `--instance hermes` when you meant grok, codex, claudeAgent, pi, kimi, or deepseek.
 - Hiring `--instance hermes` only makes sense when the chair needs Hermes's GBrain and memory.
-- In our setup the chair already has direct GBrain and memory, so do not hire Hermes-as-lab as a worker. Doctor not-ready is extra reason to skip it here, not a reason to route another lab through it.
+- In our setup the chair already has direct GBrain and memory, so do not hire `--instance hermes` as a worker. Doctor not-ready is extra reason to skip it here, not a reason to route another lab through it.
 
 If you want Grok Code and are about to type `--instance hermes`, stop. Originate
 `--instance grok` instead.
@@ -46,13 +46,11 @@ Then originate with every selection explicit. This Grok Code example follows
 the canonical workflow:
 
 The T3-native instance IDs are `codex`, `claudeAgent`, `grok`, `opencode`, and
-`cursor`. Tentacles-additive instance IDs are `claude-openrouter`, `kimi`,
-`deepseek`, `hermes`, and `pi`.
-
-Keep lab identity separate from credential routing: `kimi` is Kimi CLI and
-`deepseek` is DeepSeek CLI. OpenRouter may be one route configured in their
-settings; it is not either lab's name. `claude-openrouter` is the distinct
-Claude-via-OpenRouter extra path.
+`cursor`. Tentacles-additive instance IDs are `kimi`, `deepseek`, `hermes`, and
+`pi`. Kimi CLI, DeepSeek CLI, and Claude Code CLI are independent products;
+Tentacles names them and does not explain their settings. Claude Code is
+`--instance claudeAgent` only. Do not originate a second Claude path. Do not
+count Claude Code as proved.
 
 ```bash
 tentacles originate \
@@ -81,7 +79,7 @@ Rules:
 - Use an absolute workspace path.
 - Keep work in the same workspace tree serial. Do not originate a second worker
   into that tree while the first worker is active.
-- Never print or read bearer, provider, OAuth, or OpenRouter tokens.
+- Never print or read bearer, provider, or OAuth tokens.
 - Every originate and every non-empty continue is `full-access`; omitted mode
   fails closed under POL-036.
 - Do not originate a thread in response to another bridge-originated message.
