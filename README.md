@@ -146,8 +146,8 @@ is this-machine truth; advertised does not mean proved.
 > release is v0.2.1. This is an early macOS integration with Node.js 22 and T3
 > Code 0.0.34.
 > `tentacles doctor` prints the live lab matrix for *your* machine. Treat that
-> output as local truth. The proof table below is this project's e2e record, not
-> a promise that the same labs are ready on a fresh clone.
+> output as local truth. The source-bound receipt attached to each change is
+> the e2e record, not a promise that the same labs are ready on a fresh clone.
 
 ## Native versus additive matrix
 
@@ -191,22 +191,24 @@ or a fail-closed error is not a pass. The public-safe receipt is attached to the
 Forgejo change and repeated in the typed handoff; thread IDs, prompts, and
 assistant content are never published.
 
-| Lab | Instance | Default/model rule | Fresh two-turn proof |
+| Lab | Instance | Default/model rule | Acceptance for the current receipt |
 |---|---|---|---|
-| Hermes | `hermes` | `openai-codex:gpt-5.6-sol` when doctor advertises it | Pending the current candidate receipt |
-| Codex CLI | `codex` | `gpt-5.6-luna` when doctor advertises it | Pending the current candidate receipt |
-| Claude Code CLI | `claudeAgent` | `claude-sonnet-5` when doctor advertises it | Pending the current candidate receipt |
-| Grok Code CLI | `grok` | `grok-4.6` when doctor advertises it | Pending the current candidate receipt |
-| Cursor CLI | `cursor` | always pass a model shown by doctor | Pending the current candidate receipt |
-| DeepSeek CLI adapter | `deepseek` | `deepseek/deepseek-v4-flash` when doctor advertises it | Pending the current candidate receipt |
-| Kimi CLI adapter | `kimi` | `moonshotai/kimi-k3` when doctor advertises it | Pending the current candidate receipt |
-| Pi CLI adapter | `pi` | `gpt-5.6-terra` when doctor advertises it | Pending the current candidate receipt |
-| OpenCode CLI | `opencode` | `opencode/big-pickle` when doctor advertises it | Pending the current candidate receipt |
+| Hermes | `hermes` | `openai-codex:gpt-5.6-sol` when doctor advertises it | Originate + continue; exact provider identity required |
+| Codex CLI | `codex` | `gpt-5.6-luna` when doctor advertises it | Originate + continue |
+| Claude Code CLI | `claudeAgent` | `claude-sonnet-5` when doctor advertises it | Originate + continue |
+| Grok Code CLI | `grok` | `grok-4.6` when doctor advertises it | Originate + continue |
+| Cursor CLI | `cursor` | always pass a model shown by doctor | Originate + continue |
+| DeepSeek CLI adapter | `deepseek` | `deepseek/deepseek-v4-flash` when doctor advertises it | Originate + continue |
+| Kimi CLI adapter | `kimi` | `moonshotai/kimi-k3` when doctor advertises it | Originate + continue |
+| Pi CLI adapter | `pi` | `gpt-5.6-terra` when doctor advertises it | Originate + continue |
+| OpenCode CLI | `opencode` | `opencode/big-pickle` when doctor advertises it | Originate + continue |
 
 Maintainers can generate the bounded receipt against an already configured
 local installation. The runner creates only isolated synthetic projects and
 threads, changes no provider/service/token configuration, prints no live IDs or
-content, and exits non-zero unless all nine rows pass:
+content, and exits non-zero unless all nine rows pass. It records doctor’s
+same-run preflight for every lab but deliberately attempts every advertised lab
+that has a model, so a stale T3 provider status cannot hide fresh evidence:
 
 ```bash
 npm run e2e:labs
@@ -224,8 +226,8 @@ mode fails closed.
 | Optional remote client → paired computer | Outbound WSS shim for seats / originate / continue / doctor-status; T3 stays loopback | Synthetic protocol proof; no live endpoint claim |
 | Chair CLI → T3 thread | `tentacles originate` starts a selected ready lab without the T3 GUI | Covered by the current receipt |
 | Chair CLI continues thread | `tentacles act` continues with `runtimeMode: full-access` | Covered by the current receipt |
-| T3 Code → Hermes / Pi | Tentacles adapter appears as a T3 provider over ACP when installed | Install path exists; live assistant proof is blocked where the table says blocked |
-| Chair selects Kimi CLI or DeepSeek CLI | Independent lab, when doctor marks it ready | Proved where the proof table says proved; Tentacles does not configure those products |
+| T3 Code → Hermes / Pi | Tentacles adapter appears as a T3 provider over ACP when installed | Install path is tested; assistant status comes from the source-bound receipt |
+| Chair selects Kimi CLI or DeepSeek CLI | Independent lab through its Tentacles adapter | Assistant status comes from the source-bound receipt; upstream runtime setup remains owner-controlled |
 | Any T3 thread → Hermes | A new `@hermes` message routes to one linked Hermes thread | Requires an armed watcher **and** an answering Hermes |
 | Existing T3 providers | Provider install/remove preserves unrelated instances | Tested |
 | Background routing | Reversible per-user macOS LaunchAgent or Linux systemd user unit | macOS tested; Linux unit-tested, not live-verified |
@@ -419,8 +421,8 @@ proof receipt for answering-assistant status.
 
 ## Optional: `@hermes` mention routing
 
-Requires an answering Hermes. Skip it while the Hermes assistant path is
-blocked.
+Requires an answering Hermes. Check doctor and the current source-bound receipt
+before enabling it.
 
 ```bash
 tentacles watch --once --allow-all-projects   # arms the initial watermark

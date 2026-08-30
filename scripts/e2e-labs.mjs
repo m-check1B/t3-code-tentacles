@@ -68,7 +68,10 @@ function safeVersion(command) {
   try {
     const output = execFileSync(command, ["--version"], { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] });
     const line = output.split(/\r?\n/, 1)[0].trim();
-    return /^[^\u0000-\u001f\u007f]{1,160}$/.test(line) ? line : "unavailable";
+    const unsafe = line.includes(os.homedir())
+      || /(?:authorization|bearer|token|secret|api.?key)\s*[:=]/i.test(line)
+      || /(?:file|https?):\/\//i.test(line);
+    return !unsafe && /^[^\u0000-\u001f\u007f]{1,160}$/.test(line) ? line : "unavailable";
   } catch {
     return "unavailable";
   }
@@ -165,14 +168,18 @@ async function main() {
       originateAssistant: false,
       continueAssistant: false,
       identity: false,
-      verdict: "blocked",
-      code: row?.ready ? null : row?.code || "doctor_not_ready",
+      threadCreated: false,
+      verdict: "pending",
+      code: null,
     };
-    process.stderr.write(`e2e ${lab}: ${row?.ready ? "start" : "blocked"}\n`);
-    if (!row?.ready || !model) {
+    if (!row || !model) {
+      result.verdict = "blocked";
+      result.code = row?.code || "doctor_model_unavailable";
+      process.stderr.write(`e2e ${lab}: blocked ${result.code}\n`);
       results.push(result);
       continue;
     }
+    process.stderr.write(`e2e ${lab}: start${row.ready ? "" : ` (doctor ${row.code || "not_ready"})`}\n`);
     try {
       const markerOne = `TENTACLES_${runId}_${lab}_ONE`;
       const originated = await originate(client, {
@@ -185,9 +192,11 @@ async function main() {
         idempotencyKey: `${runId}:${lab}:originate`,
         stateFile,
       });
+      result.threadCreated = true;
       const first = await waitForAssistant(client, originated.threadId, { baselineCount: 0, marker: markerOne, lab, model });
       result.originateAssistant = first.passed;
       if (!first.passed) {
+        result.verdict = "failed";
         result.code = first.code;
         results.push(result);
         process.stderr.write(`e2e ${lab}: failed ${result.code}\n`);
@@ -250,7 +259,7 @@ async function main() {
     results,
     runtimeUnchanged,
     syntheticProjectsCreated: 1,
-    syntheticThreadsCreated: results.filter((result) => result.doctorReady).length,
+    syntheticThreadsCreated: results.filter((result) => result.threadCreated).length,
   };
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   const passed = clean
