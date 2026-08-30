@@ -11,7 +11,7 @@ of driving the T3 GUI.
 
 ## Safety contract
 
-- Never read or print T3, provider, OAuth, or OpenRouter tokens.
+- Never read or print T3, provider, or OAuth tokens.
 - Every originate uses `--runtime-mode full-access`.
 - Every non-empty continue sends `"runtimeMode":"full-access"`.
 - An omitted runtime mode is a POL-036 failure. Do not retry with a weaker mode.
@@ -61,12 +61,12 @@ Keep these two lab identities explicit:
 | Lab | `--instance` | `--model` | Meaning |
 | --- | --- | --- | --- |
 | Grok Code | `grok` | `grok-4.6` | The Grok Code hire path. |
-| Hermes-as-lab | `hermes` | A model advertised by doctor, when ready | Its own lab, never a route to another lab. |
+| Hermes | `hermes` | A model advertised by doctor, when ready | Its own worker. Never a route to another lab. |
 
-- Hermes-as-lab is a real lab worker at the same layer as codex, grok, pi, and the rest. It is its own lab.
+- Hermes (`--instance hermes`) is its own worker at the same layer as codex, grok, pi, and the rest.
 - It is not Grok. It is not a proxy for any other lab. Never hire `--instance hermes` when you meant grok, codex, claudeAgent, pi, kimi, or deepseek.
 - Hiring `--instance hermes` only makes sense when the chair needs Hermes's GBrain and memory.
-- In our setup the chair already has direct GBrain and memory, so do not hire Hermes-as-lab as a worker. Doctor not-ready is extra reason to skip it here, not a reason to route another lab through it.
+- In our setup the chair already has direct GBrain and memory, so do not hire `--instance hermes` as a worker. Doctor not-ready is extra reason to skip it here, not a reason to route another lab through it.
 
 If you want Grok Code and are about to type `--instance hermes`, stop. Originate
 `--instance grok` instead.
@@ -75,18 +75,17 @@ T3-native instances are `codex` (Codex CLI), `claudeAgent` (Claude Code CLI),
 `grok` (Grok Code), `opencode` (OpenCode CLI), and `cursor` (Cursor CLI). T3 also
 owns `t3 pair` / `app.t3.codes`; those are not Tentacles instances.
 
-Tentacles-additive instances are `claude-openrouter` (Claude via OpenRouter),
-`kimi` (Kimi CLI), `deepseek` (DeepSeek CLI), `hermes` (Hermes lab), and `pi`
-(Pi CLI). Cursor must already be enabled in T3 and always needs an explicit
-model.
+Tentacles-additive instances are `kimi` (Kimi CLI), `deepseek` (DeepSeek CLI),
+`hermes` (Hermes), and `pi` (Pi CLI). Cursor must already be enabled in T3
+and always needs an explicit model.
 
-Keep lab identity separate from credential routing: `kimi` is Kimi CLI and
-`deepseek` is DeepSeek CLI. OpenRouter may be one route configured in their
-settings; it is not either lab's name. `claude-openrouter` is the distinct
-Claude-via-OpenRouter extra path.
+Kimi CLI, DeepSeek CLI, and Claude Code CLI are independent products. Tentacles
+names them as labs a chair may select. Do not configure, document, or invent
+their settings, routing, tokens, or plans.
 
-`claude-openrouter` lets a chair talk to Claude without driving Claude Code
-CLI. It does not replace the T3-native Claude Code CLI.
+Claude Code is T3-native. If you want Claude, originate `--instance claudeAgent`.
+Do not originate a second Claude path. Doctor ready is not proof. Do not count
+Claude Code as proved.
 
 ## 3. Originate
 
