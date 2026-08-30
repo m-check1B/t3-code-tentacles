@@ -2,7 +2,6 @@ export const ORIGINATE_LABS = Object.freeze([
   "hermes",
   "codex",
   "claudeAgent",
-  "claude-openrouter",
   "grok",
   "cursor",
   "deepseek",
@@ -11,7 +10,7 @@ export const ORIGINATE_LABS = Object.freeze([
   "opencode",
 ]);
 
-export const ADAPTER_LABS = Object.freeze(["hermes", "pi", "deepseek", "kimi", "claude-openrouter"]);
+export const ADAPTER_LABS = Object.freeze(["hermes", "pi", "deepseek", "kimi"]);
 export const EXPLICIT_LABS = Object.freeze(["cursor"]);
 
 export const LAB_DEFAULT_MODELS = Object.freeze({
@@ -19,7 +18,6 @@ export const LAB_DEFAULT_MODELS = Object.freeze({
   pi: process.env.T3_PI_MODEL || "gpt-5.6-terra",
   deepseek: process.env.T3_DEEPSEEK_MODEL || "deepseek/deepseek-v4-flash",
   kimi: process.env.T3_KIMI_MODEL || "moonshotai/kimi-k3",
-  "claude-openrouter": process.env.T3_CLAUDE_OPENROUTER_MODEL || "anthropic/claude-3-haiku",
   grok: process.env.T3_GROK_MODEL || "grok-4.6",
   codex: process.env.T3_CODEX_MODEL || "gpt-5.6-luna",
   claudeAgent: process.env.T3_CLAUDE_MODEL || "claude-sonnet-5",
@@ -27,6 +25,7 @@ export const LAB_DEFAULT_MODELS = Object.freeze({
 });
 
 export function labKind(instanceId) {
+  if (!ORIGINATE_LABS.includes(instanceId)) return "external";
   if (ADAPTER_LABS.includes(instanceId)) return "adapter";
   if (EXPLICIT_LABS.includes(instanceId)) return "explicit";
   return "native";
@@ -48,8 +47,6 @@ export function labInstallHint(instanceId) {
       return "tentacles install-deepseek-provider --instance deepseek";
     case "kimi":
       return "tentacles install-kimi-provider --instance kimi";
-    case "claude-openrouter":
-      return "tentacles install-claude-openrouter-provider --instance claude-openrouter";
     case "cursor":
       return "Enable the T3 Cursor instance, then originate with --instance cursor --model <advertised>";
     default:
@@ -76,6 +73,14 @@ function requireNonEmptyString(value, label) {
   return value.trim();
 }
 
+export function requireAdvertisedLab(instanceId, label = "instance") {
+  const id = requireNonEmptyString(instanceId, label);
+  if (!ORIGINATE_LABS.includes(id)) {
+    throw new Error(`${label} must be an advertised Tentacles lab: ${ORIGINATE_LABS.join(", ")}`);
+  }
+  return id;
+}
+
 function normalizeOptionValue(value, label) {
   if (typeof value === "boolean") return value;
   if (typeof value === "string") {
@@ -95,7 +100,7 @@ export function requireRuntimeMode(runtimeMode, label = "runtimeMode") {
 }
 
 export const RUNTIME_MODE_INVARIANT =
-  'POL-036/POL-GB-016: runtime mode "full-access" is mandatory on every originate and every non-empty continue for every lab and effort (including Grok Code CLI and Codex xhigh/high); omitting the runtime mode is not a compliant operation';
+  'runtime mode "full-access" is mandatory on every originate and every non-empty continue for every lab and effort; omitting it fails closed';
 
 export function requireExplicitRuntimeMode(runtimeMode, label = "runtimeMode") {
   if (runtimeMode === undefined || runtimeMode === null || (typeof runtimeMode === "string" && runtimeMode.trim().length === 0)) {

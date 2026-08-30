@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
@@ -8,14 +9,12 @@ import {
   ALLOW_ALL_MENTION_POLICY,
   doctor,
   formatDoctor,
-  installClaudeOpenRouterProvider,
   installDeepSeekProvider,
   installKimiProvider,
   installProvider,
   installPiProvider,
   originate,
   removeDeepSeekProvider,
-  removeClaudeOpenRouterProvider,
   removeKimiProvider,
   removeProvider,
   removePiProvider,
@@ -26,8 +25,6 @@ import {
 import {
   DEFAULT_DEEPSEEK_INSTANCE_ID,
   DEFAULT_DEEPSEEK_MODEL,
-  DEFAULT_CLAUDE_OPENROUTER_INSTANCE_ID,
-  DEFAULT_CLAUDE_OPENROUTER_MODEL,
   DEFAULT_HERMES_PROFILE,
   DEFAULT_INSTANCE_ID,
   DEFAULT_KIMI_INSTANCE_ID,
@@ -43,6 +40,7 @@ import {
   defaultModelForLab,
   ORIGINATE_LABS,
   parseModelOptionFlags,
+  requireAdvertisedLab,
   requireExplicitRuntimeMode,
   resolveModelSelection,
   RUNTIME_MODES,
@@ -59,6 +57,23 @@ import {
 } from "./service.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const RESERVED_REMOVED_INSTANCE_IDS = new Set(["claude-openrouter"]);
+const PROVIDER_INSTANCE_COMMANDS = new Set([
+  "install-provider", "remove-provider", "install-pi-provider", "remove-pi-provider",
+  "install-deepseek-provider", "remove-deepseek-provider", "install-kimi-provider", "remove-kimi-provider",
+]);
+const KNOWN_COMMANDS = new Set([
+  "doctor", "pair", "install-provider", "remove-provider", "install-pi-provider", "remove-pi-provider",
+  "install-deepseek-provider", "remove-deepseek-provider", "install-kimi-provider", "remove-kimi-provider",
+  "restore-native-grok", "use-native-grok-cached-auth", "observe", "act", "orchestrate", "originate", "watch",
+  "install-service", "service-status", "restart-service", "uninstall-service",
+]);
+
+function assertNoReservedRemovedInstance(command, instanceId) {
+  if (PROVIDER_INSTANCE_COMMANDS.has(command) && RESERVED_REMOVED_INSTANCE_IDS.has(instanceId)) {
+    throw new Error(`Provider instance '${instanceId}' is reserved legacy state and cannot be installed, repurposed, or removed by Tentacles`);
+  }
+}
 
 const ORIGINATE_OPTION_KEYS = new Set([
   "workspace",
@@ -179,8 +194,6 @@ Usage:
   tentacles remove-deepseek-provider [--instance deepseek]
   tentacles install-kimi-provider [--instance kimi] [--model moonshotai/kimi-k3] [--kimi-bin PATH]
   tentacles remove-kimi-provider [--instance kimi]
-  tentacles install-claude-openrouter-provider [--instance claude-openrouter] [--model anthropic/claude-3-haiku] [--dsh-acp-bin PATH]
-  tentacles remove-claude-openrouter-provider [--instance claude-openrouter]
   tentacles restore-native-grok
   tentacles use-native-grok-cached-auth
   tentacles observe
@@ -205,7 +218,7 @@ T3 remains on loopback. The one-shot pair offer is read from a 0600 file and
 removed only after the relay acknowledges the bind. Never pass a token on the
 command line.
 
-Runtime mode invariant (POL-036 / POL-GB-016):
+Runtime mode safety invariant:
   Every originate and every non-empty continue runs full-access, for every lab
   (T3-native selections and every Tentacles-additive adapter). Pass
   --runtime-mode full-access on originate and "runtimeMode":"full-access" on
@@ -267,11 +280,13 @@ async function main() {
     console.log(usage());
     return;
   }
+  if (!KNOWN_COMMANDS.has(command)) throw new Error(`Unknown command: ${command}\n\n${usage()}`);
   const instanceId = options.instance || DEFAULT_INSTANCE_ID;
+  assertNoReservedRemovedInstance(command, instanceId);
   const model = options.model || DEFAULT_MODEL;
   let originateSelection = null;
   if (command === "originate") {
-    const labInstanceId = options.instance || DEFAULT_INSTANCE_ID;
+    const labInstanceId = requireAdvertisedLab(options.instance || DEFAULT_INSTANCE_ID, "--instance");
     const labModel = options.model || defaultModelForLab(labInstanceId);
     if (!labModel) {
       throw new Error(`${labInstanceId} is an explicit lab; pass --model with a model T3 currently advertises`);
@@ -400,22 +415,6 @@ async function main() {
     console.log(JSON.stringify(await removeKimiProvider(client, { instanceId: options.instance || DEFAULT_KIMI_INSTANCE_ID }), null, 2));
     return;
   }
-  if (command === "install-claude-openrouter-provider") {
-    const claudeInstanceId = options.instance || DEFAULT_CLAUDE_OPENROUTER_INSTANCE_ID;
-    const claudeModel = options.model || DEFAULT_CLAUDE_OPENROUTER_MODEL;
-    const result = await installClaudeOpenRouterProvider(client, {
-      wrapperPath: path.join(repoRoot, "bin", "t3-deepseek-acp"),
-      instanceId: claudeInstanceId,
-      model: claudeModel,
-      dshAcpBin: resolveDshAcpExecutable(options["dsh-acp-bin"]),
-    });
-    console.log(JSON.stringify({ installed: true, instanceId: claudeInstanceId, provider: result.provider?.instanceId || claudeInstanceId }, null, 2));
-    return;
-  }
-  if (command === "remove-claude-openrouter-provider") {
-    console.log(JSON.stringify(await removeClaudeOpenRouterProvider(client, { instanceId: options.instance || DEFAULT_CLAUDE_OPENROUTER_INSTANCE_ID }), null, 2));
-    return;
-  }
   if (command === "restore-native-grok") {
     console.log(JSON.stringify(await restoreNativeGrok(client), null, 2));
     return;
@@ -512,7 +511,13 @@ async function main() {
 // module); importing it for tests must not start a command.
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   main().catch((error) => {
-    console.error(`t3-agent-bridge: ${error.message}`);
+    const home = os.homedir();
+    const message = String(error?.message || "command failed")
+      .split(home).join("~")
+      .replace(/\/(?:Users|home)\/[^/\s]+/g, "~")
+      .replace(/\b(?:authorization|bearer)\s*[:=]?\s*\S+/gi, "$1 [redacted]")
+      .replace(/\b(?:sk|xox[baprs]|gh[pousr])-[A-Za-z0-9_-]{8,}\b/g, "[redacted]");
+    console.error(`tentacles: ${message}`);
     process.exitCode = 1;
   });
 }

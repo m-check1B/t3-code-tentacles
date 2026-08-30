@@ -7,9 +7,9 @@ commercial support contract or guaranteed response time.
 
 1. Read the [five-minute setup](README.md#five-minute-setup) and run
    `tentacles doctor`. Doctor is this-machine truth; advertised is not proved.
-2. Confirm the tested baseline or record your exact versions: Node.js, T3 Code,
-   Hermes Agent, operating system, and architecture. Include the doctor row for
-   the lab that failed (`ready` / `status` / redacted `message`).
+2. Record exact versions for Node.js, T3 Code, the affected lab runtime,
+   operating system, and architecture. Include the doctor row for the failed
+   lab (`ready` / `status` / normalized `code`).
 3. Search [existing issues](https://github.com/m-check1B/t3-code-tentacles/issues)
    and the [Discussions](https://github.com/m-check1B/t3-code-tentacles/discussions).
 4. Remove bearer tokens, authorization headers, usernames, local paths, prompts,
@@ -26,6 +26,7 @@ private process in [SECURITY.md](SECURITY.md).
 
 ## Compatibility
 
-The currently verified service path is macOS. Reports from Linux and Windows
-are welcome, but the project does not yet ship native service packaging for
-those systems.
+The macOS service path is live-verified. Tentacles also ships a unit-tested
+systemd user-service path for Linux, which is not yet live-verified on a real
+distribution. Windows has no native service package. Compatibility reports are
+welcome when they include exact versions and redacted diagnostics.

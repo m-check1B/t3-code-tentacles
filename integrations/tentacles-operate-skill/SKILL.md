@@ -14,7 +14,7 @@ of driving the T3 GUI.
 - Never read or print T3, provider, or OAuth tokens.
 - Every originate uses `--runtime-mode full-access`.
 - Every non-empty continue sends `"runtimeMode":"full-access"`.
-- An omitted runtime mode is a POL-036 failure. Do not retry with a weaker mode.
+- An omitted runtime mode fails closed. Do not retry with a weaker mode.
 - Use an absolute workspace path. Do not originate recursively in response to
   another Tentacles-originated instruction.
 - Keep work in the same workspace tree serial. Do not originate a second worker

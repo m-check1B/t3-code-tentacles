@@ -18,3 +18,4 @@ jobs:
           node-version: 22
       - run: npm run check
       - run: npm test
+      - run: git diff --check

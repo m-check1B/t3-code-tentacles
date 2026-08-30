@@ -9,7 +9,7 @@ and [SECURITY.md](SECURITY.md).
 ## Good first contributions
 
 - Verify a newer T3 Code, Hermes Agent, or Pi Agent release and report the exact versions.
-- Add Linux service packaging.
+- Live-verify the shipped systemd user-service path on a Linux distribution.
 - Improve diagnostics without exposing tokens, prompts, or local paths.
 - Propose a bounded adapter seam for another ACP-compatible agent or client.
 

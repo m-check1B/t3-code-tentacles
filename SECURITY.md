@@ -2,8 +2,9 @@
 
 ## Supported versions
 
-Security fixes are applied to the latest released version. Version 0.3.0 is the
-currently supported line.
+Security fixes are applied to the latest tagged release, currently v0.2.1, and
+to the unreleased main branch. The working package version on main is 0.3.0; it
+is not a tagged release yet.
 
 ## Reporting a vulnerability
 
@@ -21,7 +22,7 @@ T3/Hermes origins, reads a private T3 bearer from an owner-controlled `0600`
 regular file, rejects redirects, and refuses to replace or remove a provider it
 does not own. It does not make T3 Code or Hermes remotely accessible.
 
-Optional Cloud Jack pairing preserves that boundary: Tentacles opens one
+Optional outbound pairing preserves that boundary: Tentacles opens one
 outbound WSS connection and executes a four-method runtime shim locally; it
 never opens an inbound port or forwards T3 transport. Pair offers are
 current-user-owned `0600` regular files, are sent outside the URL, expire, and

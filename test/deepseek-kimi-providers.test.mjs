@@ -5,14 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
-  CLAUDE_OPENROUTER_HARNESS_VALUE,
   DEEPSEEK_HARNESS_VALUE,
-  installClaudeOpenRouterProvider,
   installDeepSeekProvider,
   installKimiProvider,
   KIMI_HARNESS_VALUE,
   providerHarness,
-  removeClaudeOpenRouterProvider,
   removeDeepSeekProvider,
   removeKimiProvider,
 } from "../src/bridge.mjs";
@@ -144,38 +141,7 @@ test("removeKimiProvider refuses foreign instances, reports absent, removes owne
   assert.equal("kimi" in owned.instances(), false);
 });
 
-test("Claude OpenRouter is a distinct DSH-backed provider with a bounded output budget", async () => {
-  const client = settingsClient();
-  const result = await installClaudeOpenRouterProvider(client, { wrapperPath: WRAPPER_DEEPSEEK, dshAcpBin: "/opt/dsh/bin/dsh-acp" });
-  assert.equal(result.provider.instanceId, "claude-openrouter");
-  const instance = client.instances()["claude-openrouter"];
-  assert.equal(instance.displayName, "Claude via OpenRouter");
-  assert.equal(instance.config.binaryPath, WRAPPER_DEEPSEEK);
-  assert.deepEqual(instance.config.customModels, ["anthropic/claude-3-haiku"]);
-  const env = envMap(instance);
-  assert.equal(env.get("T3_HERMES_BRIDGE_HARNESS"), "claude-openrouter");
-  assert.equal(env.get("DSH_ACP_BIN"), "/opt/dsh/bin/dsh-acp");
-  assert.equal(env.get("DEEPSEEK_MODEL"), "anthropic/claude-3-haiku");
-  assert.equal(env.get("DSH_MAX_TOKENS"), "8192");
-  assert.equal(env.has("KIMI_BIN"), false);
-  assert.deepEqual(await removeClaudeOpenRouterProvider(client), { removed: true });
-  assert.equal("claude-openrouter" in client.instances(), false);
-});
-
-test("Claude OpenRouter requires an absolute dsh-acp path and refuses foreign instances", async () => {
-  const client = settingsClient();
-  await assert.rejects(
-    installClaudeOpenRouterProvider(client, { wrapperPath: WRAPPER_DEEPSEEK, dshAcpBin: "dsh-acp" }),
-    /absolute dsh-acp executable path/,
-  );
-  const foreign = settingsClient({ "claude-openrouter": { driver: "grok", environment: [] } });
-  await assert.rejects(
-    installClaudeOpenRouterProvider(foreign, { wrapperPath: WRAPPER_DEEPSEEK }),
-    /not owned by the Claude via OpenRouter harness/,
-  );
-});
-
-test("providerHarness classification stays stable for legacy hermes and pi instances", () => {
+test("providerHarness classification keeps abandoned markers inert legacy state", () => {
   const owned = (environment) => ({ driver: "grok", environment });
   const ownerMarker = { name: "T3_HERMES_BRIDGE_OWNER", value: "t3-hermes-bridge/v1", sensitive: false };
   assert.equal(providerHarness(owned([ownerMarker])), "hermes");
@@ -187,7 +153,22 @@ test("providerHarness classification stays stable for legacy hermes and pi insta
   assert.equal(providerHarness({ driver: "grok", environment: [] }), null);
   assert.equal(DEEPSEEK_HARNESS_VALUE, "deepseek");
   assert.equal(KIMI_HARNESS_VALUE, "kimi");
-  assert.equal(CLAUDE_OPENROUTER_HARNESS_VALUE, "claude-openrouter");
+});
+
+test("surviving installers and removers refuse the abandoned instance without reading settings", async () => {
+  const client = {
+    getSettings: async () => assert.fail("reserved instance must fail before settings read"),
+  };
+  await assert.rejects(
+    installDeepSeekProvider(client, { instanceId: "claude-openrouter", wrapperPath: WRAPPER_DEEPSEEK }),
+    /reserved legacy state/,
+  );
+  await assert.rejects(removeDeepSeekProvider(client, { instanceId: "claude-openrouter" }), /reserved legacy state/);
+  await assert.rejects(
+    installKimiProvider(client, { instanceId: "claude-openrouter", wrapperPath: WRAPPER_KIMI, kimiBin: "/opt/kimi/bin/kimi" }),
+    /reserved legacy state/,
+  );
+  await assert.rejects(removeKimiProvider(client, { instanceId: "claude-openrouter" }), /reserved legacy state/);
 });
 
 test("readDeepSeekApiKey fails loud without leaking material", () => {

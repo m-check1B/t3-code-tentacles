@@ -5,7 +5,7 @@ first tentacle, not the product. T3 Code tentacles — originate any ready lab
 (instance + model + budget).
 
 This document describes the read (`observe`) and write (`act` / `orchestrate`)
-surfaces any system — TOP-G, a cron job, another agent — can drive over the
+surfaces any local automation — a cron job, another agent, or a script — can drive over the
 bridge's existing loopback-authenticated HTTP/RPC client. The public command is
 `tentacles`; `t3-agent-bridge` is an exact alias.
 
@@ -80,8 +80,8 @@ An intent file is a JSON array of intents, or `{"intents": [...]}`.
 | `thread.external-message` | `threadId`, `text` | `thread.external-message.append` |
 
 Enums: `runtimeMode` ∈ `approval-required`, `auto-accept-edits`, `auto`,
-`full-access`. POL-036/POL-GB-016 mandate `"runtimeMode":"full-access"` on
-every originate and every non-empty continue for every lab and effort
+`full-access`. Tentacles requires `"runtimeMode":"full-access"` on every
+originate and every non-empty continue for every lab and effort
 (including Codex xhigh/high); an omitted `runtimeMode` fails closed and is
 never a compliant operation. The bridge does not substitute any default.
 `decision` ∈ `accept`, `acceptForSession`, `decline`, `cancel`;

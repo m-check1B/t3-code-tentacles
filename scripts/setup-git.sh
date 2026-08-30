@@ -1,5 +1,5 @@
 #!/bin/sh
-# KRA-5513: wire repo-local git identity (.gitidentity) + hooks (.githooks).
+# Wire the repo-local git identity (.gitidentity) and hooks (.githooks).
 # Idempotent; safe to re-run. Run once after clone. Never use --no-verify.
 set -eu
 

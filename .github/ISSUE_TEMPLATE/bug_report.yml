@@ -7,7 +7,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping improve the bridge. Never paste bearer tokens,
+        Thanks for helping improve Tentacles. Never paste bearer tokens,
         authorization headers, private prompts, local usernames, or complete
         state files. Report security vulnerabilities through SECURITY.md.
   - type: checkboxes
@@ -26,8 +26,8 @@ body:
     attributes:
       label: Affected flow
       options:
-        - T3 Code to Hermes over ACP
-        - Hermes or automation to T3 Code
+        - T3 Code to an additive ACP lab
+        - Chair CLI to T3 Code
         - "@hermes mention routing"
         - Provider install or removal
         - Background service lifecycle
@@ -39,8 +39,8 @@ body:
     id: versions
     attributes:
       label: Versions
-      description: Include bridge, Node.js, T3 Code, and Hermes Agent versions.
-      placeholder: "bridge 0.1.1; Node 22.x; T3 Code 0.0.31; Hermes Agent 0.20.0"
+      description: Include Tentacles, Node.js, T3 Code, and affected lab-runtime versions.
+      placeholder: "Tentacles 0.3.0; Node 22.x; T3 Code 0.0.34; Pi 0.1.x"
     validations:
       required: true
   - type: input
@@ -68,7 +68,7 @@ body:
     id: actual
     attributes:
       label: Actual behavior and redacted diagnostics
-      description: Include the smallest relevant redacted output from `t3-hermes doctor` or `service-status`.
+      description: Include the smallest relevant redacted output from `tentacles doctor` or `tentacles service-status`.
     validations:
       required: true
   - type: textarea

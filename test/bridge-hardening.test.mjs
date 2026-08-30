@@ -93,10 +93,12 @@ test("doctor bounds and validates the Hermes health response", async () => {
     fetchImpl: async () => new Response(JSON.stringify({ status: "ok", padding: "x".repeat(65_536) })),
   });
   assert.equal(oversized.hermes.reachable, false);
-  assert.match(oversized.hermes.error, /Hermes health response exceeds 65536 bytes/);
+  assert.equal(oversized.hermes.code, "hermes_unreachable");
+  assert.equal(JSON.stringify(oversized).includes("65536"), false);
   const invalid = await doctor(client, { fetchImpl: async () => new Response("not-json") });
   assert.equal(invalid.hermes.reachable, false);
-  assert.match(invalid.hermes.error, /invalid JSON/);
+  assert.equal(invalid.hermes.code, "hermes_unreachable");
+  assert.equal(JSON.stringify(invalid).includes("invalid JSON"), false);
   const result = await doctor(client, {
     fetchImpl: async () => new Response(JSON.stringify({ status: "ok", version: "test-version" })),
     pairStateFile,
@@ -105,10 +107,16 @@ test("doctor bounds and validates the Hermes health response", async () => {
   assert.equal(result.product, "Tentacles");
   assert.deepEqual(result.pairing, { status: "paired" });
   assert.match(formatDoctor(result), /Remote pair: paired/);
-  assert.equal(result.labs.length >= 10, true);
-  assert.deepEqual(result.labs.map((lab) => lab.instanceId).slice(0, 10), [
-    "hermes", "codex", "claudeAgent", "claude-openrouter", "grok", "cursor", "deepseek", "kimi", "pi", "opencode",
+  assert.equal(result.labs.length, 9);
+  assert.deepEqual(result.labs.map((lab) => lab.instanceId), [
+    "hermes", "codex", "claudeAgent", "grok", "cursor", "deepseek", "kimi", "pi", "opencode",
   ]);
+  for (const lab of result.labs) {
+    assert.equal(lab.enabled, false);
+    assert.equal(lab.installed, false);
+    assert.equal(lab.ready, false);
+    assert.equal(lab.code, "absent");
+  }
 });
 
 test("doctor prints an advertised lab matrix without secrets and keeps Cursor explicit", async () => {
@@ -122,16 +130,20 @@ test("doctor prints an advertised lab matrix without secrets and keeps Cursor ex
       },
       providerInstances: {
         grok: { driver: "grok", enabled: true, config: { binaryPath: "/tmp/grok" } },
+        hermes: { driver: "grok", enabled: true, config: { binaryPath: "/tmp/hermes" } },
       },
     }),
     rpc: async () => ({
+      environment: { serverVersion: "/Users/private/TOKEN-CANARY" },
       providers: [
+        { instanceId: "hermes", driver: "grok", status: "ready", installed: true, models: [{ slug: "openai-codex:gpt-5.6-sol" }] },
         { instanceId: "grok", driver: "grok", status: "ready", installed: true, models: [{ slug: "grok-4.6", name: "Grok 4.6" }] },
         { instanceId: "codex", driver: "codex", status: "ready", installed: true, models: [{ slug: "gpt-5.6-luna" }] },
         { instanceId: "claudeAgent", driver: "claudeAgent", status: "ready", installed: true, models: [{ slug: "claude-sonnet-5" }] },
         { instanceId: "opencode", driver: "opencode", status: "ready", installed: true, models: [{ slug: "opencode/big-pickle" }] },
         { instanceId: "cursor", driver: "cursor", status: "disabled", installed: false, models: [], message: "Cursor is disabled in T3 Code settings." },
         { instanceId: "pi", driver: "grok", status: "error", installed: true, models: [{ slug: "gpt-5.6-terra" }], message: "Grok CLI is installed but ACP startup failed." },
+        { instanceId: "PRIVATE-PROJECT-CANARY", status: "error", installed: true, models: [{ slug: "Bearer SECRET-CANARY" }], message: "/Users/private/prompt SECRET-CANARY" },
       ],
     }),
   };
@@ -140,6 +152,7 @@ test("doctor prints an advertised lab matrix without secrets and keeps Cursor ex
     const result = await doctor(client, {
       fetchImpl: async () => { throw new Error("hermes down"); },
       hermesHome,
+      openrouterTokenFile: path.join(hermesHome, "missing-openrouter.token"),
     });
   const byId = Object.fromEntries(result.labs.map((lab) => [lab.instanceId, lab]));
   assert.equal(result.hermes.reachable, false);
@@ -152,14 +165,19 @@ test("doctor prints an advertised lab matrix without secrets and keeps Cursor ex
   assert.equal(byId.cursor.ready, false);
   assert.equal(byId.hermes.kind, "adapter");
   assert.equal(byId.hermes.ready, false);
-  assert.match(byId.hermes.install, /install-provider/);
+  assert.match(byId.hermes.action, /Authenticate openai-codex/);
   assert.equal(byId.hermes.openaiCodex.constructable, false);
   assert.equal(byId.hermes.openaiCodex.code, "codex_auth_missing");
-  assert.match(byId.hermes.message, /fail-closed without Codex auth/);
+  assert.equal(byId.hermes.code, "codex_auth_missing");
   assert.equal(byId.cursor.defaultModel, null);
-  assert.match(byId.cursor.message, /Cursor is disabled/);
-  assert.match(byId.pi.message, /ACP startup failed/);
+  assert.equal(byId.cursor.code, "disabled");
+  assert.equal(byId.pi.code, "provider_error");
+  assert.equal(result.labs.length, 9);
+  assert.equal(result.t3.version, null);
   assert.equal(JSON.stringify(result).includes("should-not-leak"), false);
+  assert.equal(JSON.stringify(result).includes("PRIVATE-PROJECT-CANARY"), false);
+  assert.equal(JSON.stringify(result).includes("SECRET-CANARY"), false);
+  assert.equal(JSON.stringify(result).includes("/Users/private"), false);
 
   const matrix = formatDoctor(result);
   assert.match(matrix, /Tentacles doctor — lab matrix for this machine/);
@@ -168,9 +186,10 @@ test("doctor prints an advertised lab matrix without secrets and keeps Cursor ex
   assert.match(matrix, /cursor\s+explicit/);
   assert.match(matrix, /Ready on this machine: codex, claudeAgent, grok, opencode/);
   assert.match(matrix, /Not ready:/);
-  assert.match(matrix, /install: tentacles install-provider --instance hermes/);
-  assert.match(matrix, /Cursor is disabled/);
-  assert.match(matrix, /ACP startup failed/);
+  assert.match(matrix, /action: Authenticate openai-codex/);
+  assert.match(matrix, /cursor\s+status=disabled\s+code=disabled/);
+  assert.match(matrix, /pi\s+status=error\s+code=provider_error/);
+  assert.match(matrix, /grok-4\.6/);
   assert.match(matrix, /Hermes openai-codex: fail-closed \(codex_auth_missing; no provider fallback\)/);
   assert.match(matrix, /OpenRouter credential route: (?:constructable|fail-closed)/);
   assert.doesNotMatch(matrix, /OpenRouter adapters/);
@@ -179,6 +198,44 @@ test("doctor prints an advertised lab matrix without secrets and keeps Cursor ex
   } finally {
     fs.rmSync(hermesHome, { recursive: true, force: true });
   }
+});
+
+test("doctor validates the full model set and promotes the default into bounded visible choices", async () => {
+  const models = [
+    ...Array.from({ length: 20 }, (_, index) => ({ slug: `model-${index}` })),
+    { slug: "gpt-5.6-luna" },
+    { slug: "model-0" },
+    { slug: "bad\nslug" },
+    { slug: "x".repeat(257) },
+  ];
+  const client = {
+    snapshot: async () => ({ projects: [], threads: [] }),
+    getSettings: async () => ({ providerInstances: {
+      codex: { driver: "codex", enabled: true },
+      claudeAgent: { driver: "claudeAgent", enabled: true },
+    } }),
+    rpc: async () => ({
+      environment: { serverVersion: "0.0.34-test" },
+      providers: [
+        { instanceId: "codex", status: "ready", installed: true, models },
+        { instanceId: "claudeAgent", status: "ready", installed: true, models: [{ slug: "different-model" }] },
+      ],
+    }),
+  };
+  const result = await doctor(client, { fetchImpl: async () => { throw new Error("not installed"); } });
+  const codex = result.labs.find((lab) => lab.instanceId === "codex");
+  assert.equal(codex.ready, true);
+  assert.equal(codex.defaultAvailable, true);
+  assert.equal(codex.modelCount, 21);
+  assert.equal(codex.models.length, 16);
+  assert.equal(codex.modelsTruncated, true);
+  assert.equal(codex.models.includes("gpt-5.6-luna"), true);
+  assert.equal(new Set(codex.models).size, codex.models.length);
+  assert.equal(result.t3.version, "0.0.34-test");
+  const claude = result.labs.find((lab) => lab.instanceId === "claudeAgent");
+  assert.equal(claude.ready, false);
+  assert.equal(claude.code, "default_model_unavailable");
+  assert.match(formatDoctor(result), /gpt-5\.6-luna/);
 });
 
 test("missing or pruned cursor never replays an evicted historical mention", async () => {

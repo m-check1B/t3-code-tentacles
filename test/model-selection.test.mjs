@@ -499,11 +499,12 @@ test("CLI parseArgs collects repeatable --option and usage documents originate f
   assert.match(help, /Never pass a token on the\s+command line/);
   assert.match(help, /Advertised is not proved/);
   assert.match(help, /originate --workspace PATH --title TITLE --message TEXT --runtime-mode approval-required\|auto-accept-edits\|auto\|full-access/);
-  assert.match(help, /--instance hermes\|codex\|claudeAgent\|claude-openrouter\|grok\|cursor\|deepseek\|kimi\|pi\|opencode/);
+  assert.match(help, /--instance hermes\|codex\|claudeAgent\|grok\|cursor\|deepseek\|kimi\|pi\|opencode/);
+  assert.doesNotMatch(help, /claude-openrouter|install-claude-openrouter-provider/);
   assert.match(help, /--model MODEL/);
   assert.match(help, /--runtime-mode approval-required\|auto-accept-edits\|auto\|full-access/);
   assert.doesNotMatch(help, /\[--runtime-mode/);
-  assert.match(help, /Runtime mode invariant \(POL-036 \/ POL-GB-016\)/);
+  assert.match(help, /Runtime mode safety invariant/);
   assert.match(help, /Every originate and every non-empty continue runs full-access/);
   assert.match(help, /T3-native selections and every Tentacles-additive adapter/);
   assert.match(help, /Omitting the runtime mode fails closed/);
@@ -536,4 +537,34 @@ test("CLI originate rejects unknown options before applying the Hermes default",
   assert.equal(spawned.status, 1);
   assert.match(spawned.stderr, /Unknown originate option --provider/);
   assert.doesNotMatch(spawned.stderr, /Missing required option|openai-codex|ECONNREFUSED/);
+});
+
+test("CLI rejects removed and unknown lab routes before constructing a T3 client", () => {
+  for (const instance of ["claude-openrouter", "unknown-lab"]) {
+    const spawned = spawnSync(process.execPath, [
+      path.resolve("src/cli.mjs"), "originate",
+      "--workspace", "/tmp/tentacles-rejected-lab",
+      "--title", "Rejected lab",
+      "--message", "must not dispatch",
+      "--instance", instance,
+      "--model", "placeholder",
+      "--runtime-mode", "full-access",
+    ], { encoding: "utf8", env: { ...process.env, T3_HERMES_TOKEN_FILE: "/definitely/missing/token" } });
+    assert.equal(spawned.status, 1);
+    assert.match(spawned.stderr, /--instance must be an advertised Tentacles lab/);
+    assert.doesNotMatch(spawned.stderr, /token|ENOENT/i);
+  }
+
+  for (const command of [
+    "install-provider", "remove-provider", "install-pi-provider", "remove-pi-provider",
+    "install-deepseek-provider", "remove-deepseek-provider", "install-kimi-provider", "remove-kimi-provider",
+  ]) {
+    const spawned = spawnSync(process.execPath, [path.resolve("src/cli.mjs"), command, "--instance", "claude-openrouter"], {
+      encoding: "utf8",
+      env: { ...process.env, T3_HERMES_TOKEN_FILE: "/definitely/missing/token" },
+    });
+    assert.equal(spawned.status, 1, command);
+    assert.match(spawned.stderr, /reserved legacy state/, command);
+    assert.doesNotMatch(spawned.stderr, /ENOENT/, command);
+  }
 });

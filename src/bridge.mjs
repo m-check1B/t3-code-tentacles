@@ -4,8 +4,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   DEFAULT_BRIDGE_STATE_FILE,
-  DEFAULT_CLAUDE_OPENROUTER_INSTANCE_ID,
-  DEFAULT_CLAUDE_OPENROUTER_MODEL,
   DEFAULT_DEEPSEEK_INSTANCE_ID,
   DEFAULT_DEEPSEEK_MODEL,
   DEFAULT_HERMES_PROFILE,
@@ -40,13 +38,14 @@ const BRIDGE_HARNESS_VARIABLE = "T3_HERMES_BRIDGE_HARNESS";
 const PI_HARNESS_VALUE = "pi";
 export const DEEPSEEK_HARNESS_VALUE = "deepseek";
 export const KIMI_HARNESS_VALUE = "kimi";
-export const CLAUDE_OPENROUTER_HARNESS_VALUE = "claude-openrouter";
+const LEGACY_CLAUDE_OPENROUTER_HARNESS_VALUE = "claude-openrouter";
 const KNOWN_HARNESS_VALUES = new Set([
   PI_HARNESS_VALUE,
   DEEPSEEK_HARNESS_VALUE,
   KIMI_HARNESS_VALUE,
-  CLAUDE_OPENROUTER_HARNESS_VALUE,
+  LEGACY_CLAUDE_OPENROUTER_HARNESS_VALUE,
 ]);
+const RESERVED_REMOVED_INSTANCE_IDS = new Set(["claude-openrouter"]);
 const STATE_VERSION = 2;
 const PROCESSED_FALLBACK_LIMIT = 1_000;
 const PENDING_LIMIT = 1_000;
@@ -77,6 +76,12 @@ export function isBridgeOwnedProvider(instance) {
   return (instance.environment || []).some(
     (variable) => variable.name === BRIDGE_OWNER_VARIABLE && variable.value === BRIDGE_OWNER_VALUE,
   );
+}
+
+function assertSupportedProviderInstanceId(instanceId) {
+  if (RESERVED_REMOVED_INSTANCE_IDS.has(instanceId)) {
+    throw new Error(`Provider instance '${instanceId}' is reserved legacy state and cannot be installed, repurposed, or removed by Tentacles`);
+  }
 }
 
 export function hasRedactedSecrets(providerInstances) {
@@ -176,6 +181,7 @@ export async function installProvider(client, {
   hermesBin = "hermes",
   hermesProfile = DEFAULT_HERMES_PROFILE,
 } = {}) {
+  assertSupportedProviderInstanceId(instanceId);
   if (!wrapperPath || !path.isAbsolute(wrapperPath)) {
     throw new Error("install-provider requires an absolute ACP wrapper path");
   }
@@ -211,6 +217,7 @@ export async function installProvider(client, {
 }
 
 export async function removeProvider(client, { instanceId = DEFAULT_INSTANCE_ID } = {}) {
+  assertSupportedProviderInstanceId(instanceId);
   const settings = await client.getSettings();
   const current = settings.providerInstances || {};
   if (hasRedactedSecrets(current)) throw new Error("Refusing provider map replacement because T3 returned redacted provider secrets");
@@ -231,6 +238,7 @@ export async function installPiProvider(client, {
   piBin = "pi",
   piProvider = DEFAULT_PI_PROVIDER,
 } = {}) {
+  assertSupportedProviderInstanceId(instanceId);
   if (!wrapperPath || !path.isAbsolute(wrapperPath)) throw new Error("install-pi-provider requires an absolute ACP wrapper path");
   if (!piBin || !path.isAbsolute(piBin)) throw new Error("install-pi-provider requires an absolute Pi executable path");
   const settings = await client.getSettings();
@@ -263,6 +271,7 @@ export async function installPiProvider(client, {
 }
 
 export async function removePiProvider(client, { instanceId = DEFAULT_PI_INSTANCE_ID } = {}) {
+  assertSupportedProviderInstanceId(instanceId);
   const settings = await client.getSettings();
   const current = settings.providerInstances || {};
   if (hasRedactedSecrets(current)) throw new Error("Refusing provider map replacement because T3 returned redacted provider secrets");
@@ -282,6 +291,7 @@ export async function installDeepSeekProvider(client, {
   model = DEFAULT_DEEPSEEK_MODEL,
   dshAcpBin,
 } = {}) {
+  assertSupportedProviderInstanceId(instanceId);
   if (!wrapperPath || !path.isAbsolute(wrapperPath)) throw new Error("install-deepseek-provider requires an absolute ACP wrapper path");
   if (dshAcpBin !== undefined && (!dshAcpBin || !path.isAbsolute(dshAcpBin))) throw new Error("install-deepseek-provider requires an absolute dsh-acp executable path");
   const settings = await client.getSettings();
@@ -314,6 +324,7 @@ export async function installDeepSeekProvider(client, {
 }
 
 export async function removeDeepSeekProvider(client, { instanceId = DEFAULT_DEEPSEEK_INSTANCE_ID } = {}) {
+  assertSupportedProviderInstanceId(instanceId);
   const settings = await client.getSettings();
   const current = settings.providerInstances || {};
   if (hasRedactedSecrets(current)) throw new Error("Refusing provider map replacement because T3 returned redacted provider secrets");
@@ -336,6 +347,7 @@ async function installKimiCliProvider(client, {
   displayName,
   accentColor,
 } = {}) {
+  assertSupportedProviderInstanceId(instanceId);
   if (!wrapperPath || !path.isAbsolute(wrapperPath)) throw new Error("Kimi CLI provider install requires an absolute ACP wrapper path");
   if (!kimiBin || !path.isAbsolute(kimiBin)) throw new Error("Kimi CLI provider install requires an absolute Kimi executable path");
   const settings = await client.getSettings();
@@ -383,67 +395,14 @@ export async function installKimiProvider(client, {
   });
 }
 
-export async function installClaudeOpenRouterProvider(client, {
-  wrapperPath,
-  instanceId = DEFAULT_CLAUDE_OPENROUTER_INSTANCE_ID,
-  model = DEFAULT_CLAUDE_OPENROUTER_MODEL,
-  dshAcpBin,
-} = {}) {
-  if (!wrapperPath || !path.isAbsolute(wrapperPath)) throw new Error("install-claude-openrouter-provider requires an absolute ACP wrapper path");
-  if (dshAcpBin !== undefined && (!dshAcpBin || !path.isAbsolute(dshAcpBin))) throw new Error("install-claude-openrouter-provider requires an absolute dsh-acp executable path");
-  const settings = await client.getSettings();
-  const current = settings.providerInstances || {};
-  if (hasRedactedSecrets(current)) {
-    throw new Error("Refusing provider map replacement because T3 returned redacted provider secrets; use the T3 settings UI or remove those secrets first");
-  }
-  if (current[instanceId] && providerHarness(current[instanceId]) !== CLAUDE_OPENROUTER_HARNESS_VALUE) {
-    throw new Error(`Refusing to replace provider instance '${instanceId}' because it is not owned by the Claude via OpenRouter harness`);
-  }
-  const environment = [
-    { name: BRIDGE_OWNER_VARIABLE, value: BRIDGE_OWNER_VALUE, sensitive: false },
-    { name: BRIDGE_HARNESS_VARIABLE, value: CLAUDE_OPENROUTER_HARNESS_VALUE, sensitive: false },
-  ];
-  if (dshAcpBin) environment.push({ name: "DSH_ACP_BIN", value: dshAcpBin, sensitive: false });
-  environment.push(
-    { name: "DEEPSEEK_MODEL", value: model, sensitive: false },
-    { name: "DSH_MAX_TOKENS", value: "8192", sensitive: false },
-  );
-  const providerInstances = {
-    ...current,
-    [instanceId]: {
-      driver: "grok",
-      displayName: "Claude via OpenRouter",
-      accentColor: "#D97706",
-      enabled: true,
-      environment,
-      config: { binaryPath: wrapperPath, customModels: [model] },
-    },
-  };
-  await client.updateSettings({ providerInstances });
-  return await client.refreshProvider(instanceId);
-}
-
 export async function removeKimiProvider(client, { instanceId = DEFAULT_KIMI_INSTANCE_ID } = {}) {
+  assertSupportedProviderInstanceId(instanceId);
   const settings = await client.getSettings();
   const current = settings.providerInstances || {};
   if (hasRedactedSecrets(current)) throw new Error("Refusing provider map replacement because T3 returned redacted provider secrets");
   if (!(instanceId in current)) return { removed: false };
   if (providerHarness(current[instanceId]) !== KIMI_HARNESS_VALUE) {
     throw new Error(`Refusing to remove provider instance '${instanceId}' because it is not owned by the Kimi harness`);
-  }
-  const providerInstances = { ...current };
-  delete providerInstances[instanceId];
-  await client.updateSettings({ providerInstances });
-  return { removed: true };
-}
-
-export async function removeClaudeOpenRouterProvider(client, { instanceId = DEFAULT_CLAUDE_OPENROUTER_INSTANCE_ID } = {}) {
-  const settings = await client.getSettings();
-  const current = settings.providerInstances || {};
-  if (hasRedactedSecrets(current)) throw new Error("Refusing provider map replacement because T3 returned redacted provider secrets");
-  if (!(instanceId in current)) return { removed: false };
-  if (providerHarness(current[instanceId]) !== CLAUDE_OPENROUTER_HARNESS_VALUE) {
-    throw new Error(`Refusing to remove provider instance '${instanceId}' because it is not owned by the Claude OpenRouter harness`);
   }
   const providerInstances = { ...current };
   delete providerInstances[instanceId];
@@ -926,21 +885,40 @@ async function routeMentionsLocked(client, { stateFile, instanceId, model, maxMe
   return routed;
 }
 
-function modelSlugs(provider, limit = 8) {
+const DOCTOR_MODEL_LIMIT = 16;
+const DOCTOR_STATUS_VALUES = new Set(["absent", "configured", "disabled", "error", "installed", "ready", "unavailable"]);
+
+function normalizedModelSlugs(provider) {
   const models = Array.isArray(provider?.models) ? provider.models : [];
-  return models.slice(0, limit).map((model) => {
-    if (typeof model === "string") return model;
-    return model?.slug || model?.id || model?.model || model?.name || null;
-  }).filter((value) => typeof value === "string" && value.length > 0);
+  const seen = new Set();
+  const normalized = [];
+  for (const model of models) {
+    const value = typeof model === "string"
+      ? model
+      : model?.slug || model?.id || model?.model || model?.name || null;
+    if (typeof value !== "string") continue;
+    const slug = value.trim();
+    if (!/^[^\u0000-\u001f\u007f]{1,256}$/.test(slug) || seen.has(slug)) continue;
+    seen.add(slug);
+    normalized.push(slug);
+  }
+  return normalized;
 }
 
 function providerEnabled(settings, instanceId, configProvider) {
   const catalog = settings?.providers?.[instanceId];
-  if (catalog && typeof catalog === "object" && catalog.enabled === false) return false;
   const instance = settings?.providerInstances?.[instanceId];
+  if (!catalog && !instance && !configProvider) return false;
+  if (catalog && typeof catalog === "object" && catalog.enabled === false) return false;
   if (instance && instance.enabled === false) return false;
   if (configProvider?.status === "disabled") return false;
   return true;
+}
+
+function normalizedDoctorStatus(value, { installed, configured } = {}) {
+  if (typeof value === "string" && DOCTOR_STATUS_VALUES.has(value)) return value;
+  if (!installed && !configured) return "absent";
+  return configured ? "configured" : "unavailable";
 }
 
 async function probeHermesHealth(hermesUrl, fetchImpl) {
@@ -954,16 +932,37 @@ async function probeHermesHealth(hermesUrl, fetchImpl) {
   if (!health || typeof health !== "object" || Array.isArray(health)) {
     throw new Error("Hermes health check returned an invalid payload");
   }
-  return { reachable: true, status: health.status || "ok", version: health.version || null };
+  const status = ["healthy", "ok", "ready"].includes(health.status) ? health.status : "unknown";
+  const version = typeof health.version === "string" && /^[A-Za-z0-9._+-]{1,64}$/.test(health.version)
+    ? health.version
+    : null;
+  return { reachable: true, status, version };
 }
 
 function labRow({ instanceId, advertised, settings, configById }) {
   const configProvider = configById.get(instanceId);
   const instance = settings?.providerInstances?.[instanceId];
+  const configured = Boolean(instance);
   const enabled = providerEnabled(settings, instanceId, configProvider);
-  const installed = configProvider?.installed === true || Boolean(instance);
-  const ready = enabled && configProvider?.status === "ready";
+  const installed = configProvider?.installed === true || configured;
   const kind = labKind(instanceId);
+  const allModels = normalizedModelSlugs(configProvider);
+  const defaultModel = defaultModelForLab(instanceId);
+  const defaultAvailable = kind === "explicit" ? null : Boolean(defaultModel && allModels.includes(defaultModel));
+  const models = allModels.slice(0, DOCTOR_MODEL_LIMIT);
+  if (defaultAvailable && !models.includes(defaultModel)) {
+    models[models.length === DOCTOR_MODEL_LIMIT ? DOCTOR_MODEL_LIMIT - 1 : models.length] = defaultModel;
+  }
+  const upstreamReady = configProvider?.status === "ready";
+  const ready = enabled && installed && upstreamReady
+    && (kind === "explicit" ? allModels.length > 0 : defaultAvailable);
+  let code = null;
+  if (!enabled && !installed && !configProvider) code = "absent";
+  else if (!enabled) code = "disabled";
+  else if (!installed) code = "not_installed";
+  else if (!upstreamReady) code = configProvider?.status === "error" ? "provider_error" : "provider_not_ready";
+  else if (kind === "explicit" && allModels.length === 0) code = "model_unavailable";
+  else if (kind !== "explicit" && !defaultAvailable) code = "default_model_unavailable";
   const row = {
     instanceId,
     advertised,
@@ -971,17 +970,29 @@ function labRow({ instanceId, advertised, settings, configById }) {
     enabled,
     installed,
     ready,
-    status: configProvider?.status || (instance ? "configured" : "absent"),
-    modelCount: Array.isArray(configProvider?.models) ? configProvider.models.length : 0,
-    models: modelSlugs(configProvider),
-    defaultModel: defaultModelForLab(instanceId),
+    status: normalizedDoctorStatus(configProvider?.status, { installed, configured }),
+    code,
+    modelCount: allModels.length,
+    models,
+    modelsTruncated: allModels.length > models.length,
+    defaultModel,
+    defaultAvailable,
   };
-  if (typeof configProvider?.message === "string" && configProvider.message.trim()) {
-    row.message = configProvider.message.trim();
-  }
-  const install = labInstallHint(instanceId);
-  if (install && !ready) row.install = install;
   return row;
+}
+
+function doctorAction(lab) {
+  if (!lab.installed) return labInstallHint(lab.instanceId);
+  if (lab.code === "codex_auth_missing") return "Authenticate openai-codex through Hermes' normal local setup";
+  if (lab.code === "hermes_unreachable") return "Start or recover the loopback Hermes health endpoint";
+  if (lab.code === "openrouter_auth_unavailable") return "Repair the owner-controlled OpenRouter token file, then rerun doctor";
+  if (lab.code === "disabled") return lab.instanceId === "cursor"
+    ? "Enable Cursor in T3, then choose a model shown by doctor"
+    : `Enable the ${lab.instanceId} instance in T3`;
+  if (lab.code === "default_model_unavailable") return "Refresh the provider and install the documented default model";
+  if (lab.code === "model_unavailable") return "Refresh the provider and choose a model shown by doctor";
+  if (lab.code === "provider_error" || lab.code === "provider_not_ready") return "Inspect the upstream runtime locally, then rerun doctor";
+  return null;
 }
 
 function inspectOpenRouterAuth(tokenFile) {
@@ -989,10 +1000,10 @@ function inspectOpenRouterAuth(tokenFile) {
     readOpenRouterToken(tokenFile);
     return { constructable: true };
   } catch (error) {
+    void error;
     return {
       constructable: false,
       code: "openrouter_auth_unavailable",
-      message: error?.message || "OpenRouter API token is unavailable",
     };
   }
 }
@@ -1009,33 +1020,23 @@ export async function doctor(client, {
   const settings = await client.getSettings();
   const config = await client.rpc("server.getConfig", {});
   const providers = Array.isArray(config?.providers) ? config.providers : [];
+  const serverVersion = typeof config?.environment?.serverVersion === "string"
+    && /^[A-Za-z0-9._+-]{1,128}$/.test(config.environment.serverVersion)
+    ? config.environment.serverVersion
+    : null;
   const configById = new Map(providers.map((entry) => [entry.instanceId, entry]));
-  const seen = new Set();
   const labs = [];
   for (const labId of ORIGINATE_LABS) {
     labs.push(labRow({ instanceId: labId, advertised: true, settings, configById }));
-    seen.add(labId);
-  }
-  for (const entry of providers) {
-    if (!entry?.instanceId || seen.has(entry.instanceId)) continue;
-    labs.push(labRow({ instanceId: entry.instanceId, advertised: false, settings, configById }));
-    seen.add(entry.instanceId);
-  }
-  for (const extraId of Object.keys(settings?.providerInstances || {})) {
-    if (seen.has(extraId)) continue;
-    labs.push(labRow({ instanceId: extraId, advertised: ORIGINATE_LABS.includes(extraId), settings, configById }));
   }
 
   const openrouter = inspectOpenRouterAuth(openrouterTokenFile);
-  for (const labId of ["claude-openrouter", "kimi", "deepseek"]) {
+  for (const labId of ["kimi", "deepseek"]) {
     const lab = labs.find((entry) => entry.instanceId === labId);
     if (!lab) continue;
-    lab.openrouter = openrouter;
-    if (!openrouter.constructable) {
+    if (lab.installed && !openrouter.constructable) {
       lab.ready = false;
-      lab.message = [lab.message, "OpenRouter fail-closed: owner-only token file unavailable"]
-        .filter(Boolean)
-        .join("; ");
+      lab.code = "openrouter_auth_unavailable";
     }
   }
 
@@ -1043,7 +1044,8 @@ export async function doctor(client, {
   try {
     hermes = await probeHermesHealth(hermesUrl, fetchImpl);
   } catch (error) {
-    hermes = { reachable: false, errorType: error?.name || "Error", error: error?.message || "Hermes health check failed" };
+    void error;
+    hermes = { reachable: false, code: "hermes_unreachable" };
   }
   const openaiCodex = inspectHermesOpenaiCodexAuth(hermesHome === undefined ? undefined : { home: hermesHome });
   hermes.openaiCodex = openaiCodex;
@@ -1051,14 +1053,20 @@ export async function doctor(client, {
   if (hermesLab) {
     hermesLab.health = hermes.reachable ? { status: hermes.status, version: hermes.version } : { reachable: false };
     hermesLab.openaiCodex = openaiCodex;
-    if (!openaiCodex.constructable && typeof hermesLab.defaultModel === "string" && hermesLab.defaultModel.startsWith("openai-codex:")) {
-      hermesLab.message = [hermesLab.message, "openai-codex fail-closed without Codex auth (no provider fallback)"]
-        .filter(Boolean)
-        .join("; ");
+    if (hermesLab.installed && !openaiCodex.constructable && typeof hermesLab.defaultModel === "string" && hermesLab.defaultModel.startsWith("openai-codex:")) {
+      hermesLab.ready = false;
+      hermesLab.code = "codex_auth_missing";
+    } else if (hermesLab.installed && !hermes.reachable) {
+      hermesLab.ready = false;
+      hermesLab.code = "hermes_unreachable";
     }
   }
+  for (const lab of labs) {
+    const action = doctorAction(lab);
+    if (!lab.ready && action) lab.action = action;
+  }
 
-  const provider = configById.get(instanceId);
+  void instanceId;
   const nativeInstance = settings.providerInstances?.[NATIVE_GROK_INSTANCE_ID];
   const nativeConfig = nativeInstance && typeof nativeInstance.config === "object" && !Array.isArray(nativeInstance.config) ? nativeInstance.config : undefined;
   const nativeEnvelopeEnabled = nativeInstance ? nativeInstance.enabled ?? true : undefined;
@@ -1074,19 +1082,11 @@ export async function doctor(client, {
   const threads = Array.isArray(shell?.threads) ? shell.threads.filter((entry) => entry?.deletedAt == null && entry?.archivedAt == null) : [];
   return {
     product: "Tentacles",
-    t3: { reachable: true, projects: projects.length, threads: threads.length },
+    t3: { reachable: true, version: serverVersion, projects: projects.length, threads: threads.length },
     pairing: readPairPresence(pairStateFile),
     labs,
     openrouter,
     hermes,
-    provider: {
-      configured: Boolean(settings.providerInstances?.[instanceId]),
-      instanceId,
-      ready: provider?.status === "ready",
-      installed: provider?.installed === true,
-      status: provider?.status || null,
-      modelCount: provider?.models?.length || 0,
-    },
     nativeGrok,
   };
 }
@@ -1117,14 +1117,13 @@ export function formatDoctor(result = {}) {
     "Live local state only. Advertised is not proved. Ready is not a global compatibility claim.",
     "",
     `Product: ${result.product || "Tentacles"}`,
-    `T3: ${t3.reachable === false ? "unreachable" : "reachable"}  projects: ${t3.projects ?? 0}  threads: ${t3.threads ?? 0}`,
+    `T3: ${t3.reachable === false ? "unreachable" : "reachable"}  version: ${t3.version || "unknown"}  projects: ${t3.projects ?? 0}  threads: ${t3.threads ?? 0}`,
     `Remote pair: ${["paired", "unpaired", "expired"].includes(pairing.status) ? pairing.status : "unpaired"}`,
   ];
   if (hermes.reachable) {
     lines.push(`Hermes health: reachable  status: ${hermes.status || "ok"}  version: ${hermes.version || "unknown"}`);
   } else {
-    const detail = clipDoctorText(hermes.error || hermes.errorType || "unreachable");
-    lines.push(detail ? `Hermes health: unreachable  ${detail}` : "Hermes health: unreachable");
+    lines.push(`Hermes health: unreachable  code: ${hermes.code || "hermes_unreachable"}`);
   }
   const openaiCodex = hermes.openaiCodex && typeof hermes.openaiCodex === "object" ? hermes.openaiCodex : null;
   if (openaiCodex) {
@@ -1145,7 +1144,7 @@ export function formatDoctor(result = {}) {
   }
   lines.push("");
   const table = [
-    ["lab", "kind", "advertised", "enabled", "installed", "ready", "status", "models", "default"],
+    ["lab", "kind", "advertised", "enabled", "installed", "ready", "status", "count", "default", "models"],
   ];
   for (const lab of labs) {
     table.push([
@@ -1158,6 +1157,7 @@ export function formatDoctor(result = {}) {
       lab.status || "",
       String(lab.modelCount ?? (Array.isArray(lab.models) ? lab.models.length : 0)),
       lab.defaultModel || (lab.kind === "explicit" ? "(pass --model)" : ""),
+      Array.isArray(lab.models) ? `${lab.models.join(",")}${lab.modelsTruncated ? ",…" : ""}` : "",
     ]);
   }
   lines.push(formatDoctorTable(table));
@@ -1171,10 +1171,9 @@ export function formatDoctor(result = {}) {
     for (const lab of blocked) {
       const parts = [lab.instanceId || "unknown"];
       if (lab.status) parts.push(`status=${lab.status}`);
-      const message = clipDoctorText(lab.message);
-      if (message) parts.push(message);
-      const install = clipDoctorText(lab.install, 160);
-      if (install) parts.push(`install: ${install}`);
+      if (lab.code) parts.push(`code=${lab.code}`);
+      const action = clipDoctorText(lab.action, 160);
+      if (action) parts.push(`action: ${action}`);
       lines.push(`  - ${parts.join("  ")}`);
     }
   }

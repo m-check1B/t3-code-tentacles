@@ -1,4 +1,4 @@
-# KRA-5513 — canonical git identity for this repo.
+# Canonical git identity for this repo.
 # Sole human author/committer. Origin is the forge. Wired by scripts/setup-git.sh
 # via `git config --local include.path ../.gitidentity`.
 [user]

@@ -1,6 +1,6 @@
 # Agent contribution contract
 
-T3 Agent Bridge is a provider-neutral ACP integration component. Read
+Tentacles is a provider-neutral ACP integration component. Read
 [docs/README.md](docs/README.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
 [SECURITY.md](SECURITY.md) before changing it.
 
@@ -14,7 +14,7 @@ T3 Agent Bridge is a provider-neutral ACP integration component. Read
   credentials, routed prompts, customer data, or live state.
 - Source and documentation changes do not authorize installing, removing,
   restarting, booting out, or reconfiguring the live bridge, T3 Code, Hermes,
-  its watchdog, Orbit, or any LaunchAgent.
+  its watchdog, or any LaunchAgent.
 - Do not change runtime profiles, models, permissions, provider state, token
   files, or active watcher state during ordinary repository work.
 - Upstream compatibility claims require exact version and live-proof evidence;

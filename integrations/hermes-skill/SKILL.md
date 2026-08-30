@@ -81,7 +81,7 @@ Rules:
   into that tree while the first worker is active.
 - Never print or read bearer, provider, or OAuth tokens.
 - Every originate and every non-empty continue is `full-access`; omitted mode
-  fails closed under POL-036.
+  fails closed.
 - Do not originate a thread in response to another bridge-originated message.
 - `t3-hermes-bridge` and `~/.local/state/t3-hermes-bridge/` are Tentacles state,
   not a Grok Code hire path. Never substitute a `t3-hermes originate` command.

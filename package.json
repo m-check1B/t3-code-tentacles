@@ -28,12 +28,15 @@
     "config",
     "docs",
     "integrations",
+    "scripts/e2e-labs.mjs",
     "src",
     "CHANGELOG.md",
+    "CODE_OF_CONDUCT.md",
     "CONTRIBUTING.md",
     "LICENSE",
     "README.md",
-    "SECURITY.md"
+    "SECURITY.md",
+    "SUPPORT.md"
   ],
   "bin": {
     "t3-agent-bridge": "./bin/t3-agent-bridge",
@@ -45,8 +48,9 @@
     "node": ">=22"
   },
   "scripts": {
-    "check": "node --check src/cli.mjs && node --check src/t3-client.mjs && node --check src/bridge.mjs && node --check src/orchestrate.mjs && node --check src/model-selection.mjs && node --check src/pair-state.mjs && node --check src/outbound-pairer.mjs && node --check src/pi-acp.mjs && node --check src/service.mjs && node --check src/deepseek-acp-launch.mjs && node --check src/kimi-acp-launch.mjs && node --check src/grok-acp-launch.mjs && node --check src/hermes-acp-launch.mjs",
-    "test": "node --test"
+    "check": "node --check src/cli.mjs && node --check src/t3-client.mjs && node --check src/bridge.mjs && node --check src/orchestrate.mjs && node --check src/model-selection.mjs && node --check src/pair-state.mjs && node --check src/outbound-pairer.mjs && node --check src/pi-acp.mjs && node --check src/service.mjs && node --check src/deepseek-acp-launch.mjs && node --check src/kimi-acp-launch.mjs && node --check src/grok-acp-launch.mjs && node --check src/hermes-acp-launch.mjs && node --check scripts/e2e-labs.mjs",
+    "test": "node --test",
+    "e2e:labs": "node scripts/e2e-labs.mjs"
   },
   "license": "MIT"
 }

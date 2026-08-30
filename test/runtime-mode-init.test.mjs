@@ -81,11 +81,11 @@ function sessionStartCommands(commands) {
 test("session-init builders refuse an omitted runtime mode and accept only explicit values", () => {
   assert.throws(
     () => threadCreate({ commandId: "c1", threadId: "t1", projectId: "p1", title: "T", modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" } }),
-    /runtimeMode is required .*POL-036\/POL-GB-016.*full-access.*not a compliant operation/,
+    /runtimeMode is required .*full-access.*omitting it fails closed/,
   );
   assert.throws(
     () => threadTurnStart({ commandId: "c2", threadId: "t1", text: "hi" }),
-    /runtimeMode is required .*full-access.*not a compliant operation/,
+    /runtimeMode is required .*full-access.*omitting it fails closed/,
   );
   assert.equal(
     threadCreate({
@@ -246,7 +246,7 @@ test("idempotent originate retries keep full-access without duplicate session-in
 test("usage documents the required flag, every-lab coverage, and non-compliance of omission", () => {
   const help = usage();
   assert.match(help, /originate --workspace PATH --title TITLE --message TEXT --runtime-mode approval-required\|auto-accept-edits\|auto\|full-access/);
-  assert.match(help, /Runtime mode invariant \(POL-036 \/ POL-GB-016\)/);
+  assert.match(help, /Runtime mode safety invariant/);
   assert.match(help, /Every originate and every non-empty continue runs full-access/);
   assert.match(help, /T3-native selections and every Tentacles-additive adapter/);
   assert.match(help, /--runtime-mode full-access on originate and "runtimeMode":"full-access" on/);
@@ -269,7 +269,7 @@ test("CLI originate without --runtime-mode exits non-zero with the compliance er
     env: { ...process.env, T3_HERMES_TOKEN_FILE: tokenFile, T3_URL: "http://127.0.0.1:9" },
   });
   assert.equal(spawned.status, 1);
-  assert.match(`${spawned.stderr}`, /--runtime-mode is required .*POL-036\/POL-GB-016.*full-access/);
+  assert.match(`${spawned.stderr}`, /--runtime-mode is required .*full-access.*fails closed/);
 
   const helpSpawned = spawnSync(process.execPath, [CLI_PATH, "help"], { encoding: "utf8" });
   assert.equal(helpSpawned.status, 0);
