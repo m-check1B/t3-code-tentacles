@@ -517,3 +517,23 @@ test("CLI parseArgs collects repeatable --option and usage documents originate f
   assert.match(spawned.stdout, /--option id=value/);
   assert.match(spawned.stdout, /Every originate and every non-empty continue runs full-access/);
 });
+
+test("CLI originate rejects unknown options before applying the Hermes default", () => {
+  assert.throws(
+    () => parseArgs(["originate", "--provider", "grok"]),
+    /Unknown originate option --provider; run tentacles help for supported options/,
+  );
+  assert.throws(
+    () => parseArgs(["originate", "--provider"]),
+    /Unknown originate option --provider/,
+  );
+
+  const spawned = spawnSync(process.execPath, [
+    path.resolve("src/cli.mjs"),
+    "originate",
+    "--provider", "grok",
+  ], { encoding: "utf8" });
+  assert.equal(spawned.status, 1);
+  assert.match(spawned.stderr, /Unknown originate option --provider/);
+  assert.doesNotMatch(spawned.stderr, /Missing required option|openai-codex|ECONNREFUSED/);
+});
