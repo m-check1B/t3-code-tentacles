@@ -2,8 +2,7 @@
 
 Tentacles is an additive bridge for [T3 Code](https://github.com/pingdotgg/t3code).
 It gives chair CLIs a way to originate and continue T3 work without the GUI,
-adds adapters that T3 does not ship, and provides a Claude-via-OpenRouter path
-so a chair can talk to Claude without driving the T3-native Claude Code CLI.
+and adds adapters that T3 does not ship.
 The public command is `tentacles`; `t3-agent-bridge` is an exact compatibility
 alias.
 
@@ -78,12 +77,10 @@ different proof claims.
      T3 NATIVE — already                 TENTACLES ADDITIVE
       orchestrated by T3
                  |                             |
-  [Codex CLI] [Claude Code CLI]     [Claude via OpenRouter]
-  [Grok Build CLI] [OpenCode CLI]   extra path: chair talks to Claude
-  [Cursor CLI]                       without driving Claude Code CLI
+  [Codex CLI] [Claude Code CLI]     [Kimi CLI] [DeepSeek CLI]
+  [Grok Build CLI] [OpenCode CLI]   [Hermes lab] [Pi CLI]
+  [Cursor CLI]
   [t3 pair / app.t3.codes]
-                                     [Kimi CLI] [DeepSeek CLI]
-                                     [Hermes lab] [Pi CLI]
 ```
 
 The poster is the canonical visual. The mermaid below is a short text map of
@@ -100,7 +97,7 @@ flowchart TB
     Chairs --> ChairCLI["Tentacles chair CLI"]
     ChairCLI --> T3["T3 Code"]
     T3 --> Native["T3 native: Codex CLI, Claude Code CLI, Grok Build CLI, OpenCode CLI, Cursor CLI, t3 pair / app.t3.codes"]
-    T3 --> Additive["Tentacles additive: Claude via OpenRouter extra path, Kimi CLI, DeepSeek CLI, Hermes lab, Pi CLI"]
+    T3 --> Additive["Tentacles additive: Kimi CLI, DeepSeek CLI, Hermes lab, Pi CLI"]
 ```
 
 ![T3-native capabilities and Tentacles-additive chair and lab paths](docs/tentacles-vertical.png)
@@ -114,9 +111,9 @@ connection and pairing to be installed and configured. Chairs are not labs.
 Hermes chair ≠ Hermes lab.
 
 The additive lab adapters are Kimi CLI, DeepSeek CLI, Hermes lab, and Pi CLI.
-The separate Claude-via-OpenRouter path lets a chair talk to Claude without
-driving the T3-native Claude Code CLI; it does not replace that native lab.
 Each lab keeps its own runtime, model, authentication, and tools.
+A quiet extra adapter, `claude-openrouter`, lets a chair talk to Claude without
+driving Claude Code CLI. It does not replace that native lab.
 
 ## Quick start
 
@@ -164,7 +161,7 @@ T3-native reference rows:
 | T3-native lab | Tentacles relationship |
 |---|---|
 | Codex CLI | T3 ships it; a chair may select it through the Tentacles chair CLI |
-| Claude Code CLI | T3 ships it; distinct from the additive OpenRouter path |
+| Claude Code CLI | T3 ships it; this is the Claude lab T3 ships |
 | Grok Build CLI | T3 ships it; Grok Bot remains a chair, not this lab |
 | OpenCode CLI | T3 ships it |
 | Cursor CLI | T3 ships it |
@@ -174,9 +171,8 @@ Tentacles-additive rows:
 
 | Additive path | Default originate model | Setup |
 |---|---|---|
-| Claude via OpenRouter | `anthropic/claude-3-haiku` | Extra path through a distinct `claude-openrouter` adapter so a chair can talk to Claude without driving Claude Code CLI |
-| Kimi CLI | `moonshotai/kimi-k3` | Kimi CLI; its settings may use OpenRouter, a Kimi plan, or another configured route |
-| DeepSeek CLI | `deepseek/deepseek-v4-flash` | DeepSeek CLI; its settings may use OpenRouter, a DeepSeek plan, or another configured route |
+| Kimi CLI | `moonshotai/kimi-k3` | `tentacles install-kimi-provider` |
+| DeepSeek CLI | `deepseek/deepseek-v4-flash` | `tentacles install-deepseek-provider` |
 | Hermes lab | `openai-codex:gpt-5.6-sol` | `tentacles install-provider` |
 | Pi CLI | `gpt-5.6-terra` | `tentacles install-pi-provider` |
 
@@ -192,9 +188,8 @@ intentionally not counted as a Tentacles lab proof.
 | Additive path | E2E | Notes |
 |---|---|---|
 | Chair CLI | Proved from Grok Bot | Originate + continue without the T3 GUI; the selected Grok CLI lab remains T3-native |
-| Claude via OpenRouter | Proved | Fresh `claude-openrouter` originate + non-empty continue answered on `anthropic/claude-3-haiku`; T3-native Claude Code is not counted |
-| Kimi CLI | Proved | Fresh Kimi CLI originate + non-empty continue answered through OpenRouter on `moonshotai/kimi-k3` |
-| DeepSeek CLI | Proved | Fresh DeepSeek CLI originate + non-empty continue answered through OpenRouter on `deepseek/deepseek-v4-flash`; no official DeepSeek key was used |
+| Kimi CLI | Proved | Fresh Kimi CLI originate + non-empty continue answered on `moonshotai/kimi-k3` |
+| DeepSeek CLI | Proved | Fresh DeepSeek CLI originate + non-empty continue answered on `deepseek/deepseek-v4-flash` |
 | Hermes lab | Fail-closed proved; assistant blocked | Live `openai-codex:gpt-5.6-sol` returned the named `provider_identity_mismatch` error instead of falling through to DeepSeek; no assistant answer is claimed |
 | Pi CLI | Proved | Human-approved OpenAI-Codex OAuth re-login, then fresh Pi originate + non-empty continue answered on `gpt-5.6-terra` |
 
@@ -378,19 +373,22 @@ and a fresh `gpt-5.6-terra` originate plus non-empty continue both answered with
 `runtimeMode: full-access`. A future invalidated refresh still requires a human
 to run Pi's `/login openai-codex` flow; Tentacles never handles those credentials.
 
-### Adapter settings: Claude route, Kimi CLI, and DeepSeek CLI
+### Kimi CLI
 
-**OpenRouter credential.** Claude, Kimi, and DeepSeek share one owner-controlled
-runtime credential at
-`~/.local/state/t3-hermes-bridge/openrouter.token`. The file must be owned by
-the current user, mode `0600`, a regular file, and not a symlink. Tentacles
-reads it only at adapter startup and passes it only through the child
-environment; it is never stored in T3 settings, argv, doctor output, or this
-repository.
+Kimi is Kimi CLI. Register it after Kimi's normal local setup:
 
-**DeepSeek CLI.** This checkout's default settings route uses OpenRouter's
-OpenAI-compatible endpoint and fails closed if the owner-only token file is
-absent:
+```bash
+tentacles install-kimi-provider \
+  --instance kimi \
+  --model moonshotai/kimi-k3
+```
+
+Open T3 Code and select **Kimi CLI**. Remove the registration with
+`tentacles remove-kimi-provider --instance kimi`.
+
+### DeepSeek CLI
+
+DeepSeek is DeepSeek CLI. Register it after installing `dsh-acp`:
 
 ```bash
 npm i -g dsh-acp
@@ -410,32 +408,12 @@ while parallel T3 threads in different workspaces each get their own store.
 An explicit `DSH_SESSIONS_ROOT` replaces this default entirely and must then
 be unique per concurrent lane.
 
-**Kimi CLI.** This checkout's default settings route starts Kimi's native ACP
-mode against OpenRouter's OpenAI-compatible endpoint:
+Open T3 Code and select **DeepSeek CLI**. Remove the registration with
+`tentacles remove-deepseek-provider --instance deepseek`.
 
-```bash
-tentacles install-kimi-provider \
-  --instance kimi \
-  --model moonshotai/kimi-k3
-```
-
-**Claude via OpenRouter.** This is a separate Tentacles adapter that lets a
-chair talk to Claude without driving T3's native Claude Code CLI. It does not
-replace or change the normal Claude Code path. The adapter uses the bridge-owned
-`dsh-acp` compatibility transport with an 8,192-token output cap, which stays
-below Claude 3 Haiku's OpenRouter context window:
-
-```bash
-tentacles install-claude-openrouter-provider \
-  --instance claude-openrouter \
-  --model anthropic/claude-3-haiku
-```
-
-Remove registrations with the matching `remove-deepseek-provider`,
-`remove-kimi-provider`, or `remove-claude-openrouter-provider` command. Each
-instance carries its own ownership marker and the same foreign-instance refusal
-rules as the Hermes and Pi providers. A doctor `ready` row still does not replace
-an authenticated originate + continue proof.
+Each instance carries its own ownership marker and the same foreign-instance
+refusal rules as the Hermes and Pi providers. A doctor `ready` row still does
+not replace an authenticated originate + continue proof.
 
 ## Optional: `@hermes` mention routing
 

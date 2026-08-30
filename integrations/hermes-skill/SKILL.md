@@ -46,13 +46,9 @@ Then originate with every selection explicit. This Grok Code example follows
 the canonical workflow:
 
 The T3-native instance IDs are `codex`, `claudeAgent`, `grok`, `opencode`, and
-`cursor`. Tentacles-additive instance IDs are `claude-openrouter`, `kimi`,
-`deepseek`, `hermes`, and `pi`.
-
-Keep lab identity separate from credential routing: `kimi` is Kimi CLI and
-`deepseek` is DeepSeek CLI. OpenRouter may be one route configured in their
-settings; it is not either lab's name. `claude-openrouter` is the distinct
-Claude-via-OpenRouter extra path.
+`cursor`. Tentacles-additive instance IDs are `kimi`, `deepseek`, `hermes`, and
+`pi`. A quiet extra adapter, `claude-openrouter`, lets a chair talk to Claude
+without driving Claude Code CLI. It is not a Tentacles-additive lab.
 
 ```bash
 tentacles originate \
@@ -81,7 +77,7 @@ Rules:
 - Use an absolute workspace path.
 - Keep work in the same workspace tree serial. Do not originate a second worker
   into that tree while the first worker is active.
-- Never print or read bearer, provider, OAuth, or OpenRouter tokens.
+- Never print or read bearer, provider, or OAuth tokens.
 - Every originate and every non-empty continue is `full-access`; omitted mode
   fails closed under POL-036.
 - Do not originate a thread in response to another bridge-originated message.

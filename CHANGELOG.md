@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Documentation
+
+- README names T3-native labs and Tentacles-additive labs by their CLIs.
+  OpenRouter is not the public product identity. Kimi is Kimi CLI; DeepSeek is
+  DeepSeek CLI; Claude Code CLI is the Claude lab T3 ships.
+
 ## [0.3.0] - 2026-08-28
 
 ### Public identity

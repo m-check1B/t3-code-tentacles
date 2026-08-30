@@ -11,7 +11,7 @@ of driving the T3 GUI.
 
 ## Safety contract
 
-- Never read or print T3, provider, OAuth, or OpenRouter tokens.
+- Never read or print T3, provider, or OAuth tokens.
 - Every originate uses `--runtime-mode full-access`.
 - Every non-empty continue sends `"runtimeMode":"full-access"`.
 - An omitted runtime mode is a POL-036 failure. Do not retry with a weaker mode.
@@ -75,18 +75,13 @@ T3-native instances are `codex` (Codex CLI), `claudeAgent` (Claude Code CLI),
 `grok` (Grok Code), `opencode` (OpenCode CLI), and `cursor` (Cursor CLI). T3 also
 owns `t3 pair` / `app.t3.codes`; those are not Tentacles instances.
 
-Tentacles-additive instances are `claude-openrouter` (Claude via OpenRouter),
-`kimi` (Kimi CLI), `deepseek` (DeepSeek CLI), `hermes` (Hermes lab), and `pi`
-(Pi CLI). Cursor must already be enabled in T3 and always needs an explicit
-model.
+Tentacles-additive instances are `kimi` (Kimi CLI), `deepseek` (DeepSeek CLI),
+`hermes` (Hermes lab), and `pi` (Pi CLI). Cursor must already be enabled in T3
+and always needs an explicit model.
 
-Keep lab identity separate from credential routing: `kimi` is Kimi CLI and
-`deepseek` is DeepSeek CLI. OpenRouter may be one route configured in their
-settings; it is not either lab's name. `claude-openrouter` is the distinct
-Claude-via-OpenRouter extra path.
-
-`claude-openrouter` lets a chair talk to Claude without driving Claude Code
-CLI. It does not replace the T3-native Claude Code CLI.
+A quiet extra adapter, `claude-openrouter`, lets a chair talk to Claude without
+driving Claude Code CLI. It is not a Tentacles-additive lab and does not replace
+the T3-native Claude Code CLI.
 
 ## 3. Originate
 
