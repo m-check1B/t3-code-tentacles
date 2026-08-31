@@ -9,6 +9,10 @@ Use this skill when Grok, Claude, Codex, Agent Jack, Hermes, or another chair
 must operate the user's local T3 Code through the `tentacles` command instead
 of driving the T3 GUI.
 
+This [live public Grok Bot chair share](https://x.ai/bot/0fYZ_kKkiXNbLn_KBD3f3)
+is an example chair that already operates Tentacles to send work through T3
+Code to a selected lab.
+
 ## Safety contract
 
 - Never read or print T3, provider, or OAuth tokens.

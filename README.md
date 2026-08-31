@@ -37,6 +37,11 @@ choose an advertised instance and model, set a thought budget, originate with
 `--runtime-mode full-access`, continue with `runtimeMode: full-access`, observe,
 and stop the thread safely.
 
+See Tentacles in use through this
+[live public Grok Bot chair share](https://x.ai/bot/0fYZ_kKkiXNbLn_KBD3f3).
+The Grok Bot is the chair: Tentacles carries its work through T3 Code to the
+selected lab.
+
 If the chair loads skills from a filesystem directory, link the whole
 `integrations/tentacles-operate-skill` folder into that configured directory as
 `tentacles-operate`. Do not replace an existing skill path without inspecting
