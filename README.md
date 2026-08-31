@@ -203,7 +203,7 @@ assistant content are never published.
 
 | Lab | Instance | Default/model rule | Acceptance for the current receipt |
 |---|---|---|---|
-| Hermes | `hermes` | `deepseek:deepseek-v4-flash` when doctor advertises it | Originate + continue; exact provider identity required |
+| Hermes | `hermes` | `deepseek:deepseek-v4-flash` when doctor advertises it | Not proved on the current receipt. Construction and runtime identity gates are landed; exact identity plus an assistant reply is required. |
 | Codex CLI | `codex` | `gpt-5.6-luna` when doctor advertises it | Originate + continue |
 | Claude Code CLI | `claudeAgent` | `claude-sonnet-5`; skipped unless a bounded assistant proof exists | Originate + continue |
 | Grok Code CLI | `grok` | `grok-4.6` when doctor advertises it | Originate + continue |
@@ -387,9 +387,10 @@ If your installation exposes a different model identifier, pass it with
 Open T3 Code, select the **Hermes** provider, and send a message. The proxy
 rejects a missing Codex credential with the normalized `codex_auth_missing`
 code. It pins the requested provider identity across ACP initialization, model
-selection, prompt dispatch, and continue; a mismatch fails closed before the
-prompt reaches a fallback provider. Consult doctor and the current proof receipt
-for answering-assistant status.
+selection, prompt dispatch, and continue. A runtime mismatch returns the
+normalized `provider_identity_mismatch` error before the prompt reaches a
+fallback provider. Neither an installed adapter nor either fail-closed error is
+an assistant proof; consult doctor and the current receipt for answering status.
 
 ### Pi
 

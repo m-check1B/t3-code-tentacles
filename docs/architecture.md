@@ -54,7 +54,11 @@ invokes a configured wrapper as `t3-hermes-acp agent stdio` or
 `hermes --profile <profile> acp` and fails closed with a named
 `codex_auth_missing` error when T3 requests `openai-codex:*` and Codex
 credentials are not stored. It does not fall open to the profile's other
-providers. The Pi wrapper relays to `pi --acp` and lets
+providers. After construction, the proxy also verifies the exact qualified
+model identity reported by Hermes during session creation and model selection.
+An absent or different runtime identity returns `provider_identity_mismatch`
+and blocks prompt dispatch or continuation; a fallback answer is never accepted
+as the requested provider. The Pi wrapper relays to `pi --acp` and lets
 T3 control Pi's visible model through `session/set_model`.
 
 The Codex adapter is a different protocol boundary. It launches `codex
