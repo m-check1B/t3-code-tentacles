@@ -24,6 +24,9 @@ See the [changelog](CHANGELOG.md) and
 
 ## Use Tentacles
 
+Agent chairs should start with the
+[agent user manual](docs/AGENT-USER-MANUAL.md).
+
 Clone the public repository and link the command:
 
 ```bash

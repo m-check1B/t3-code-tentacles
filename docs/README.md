@@ -19,6 +19,7 @@ proved. The README lab matrix records which labs have a fresh e2e proof.
 ## Repository-owned documentation
 
 - Purpose, lab matrix, setup, operations, and uninstall: [README.md](../README.md)
+- Chair workflow and human takeover: [agent user manual](AGENT-USER-MANUAL.md)
 - Agent contribution and live-runtime boundary: [AGENTS.md](../AGENTS.md)
 - Component architecture: [architecture.md](architecture.md)
 - Outbound remote-pairing protocol: [remote-pairing.md](remote-pairing.md)

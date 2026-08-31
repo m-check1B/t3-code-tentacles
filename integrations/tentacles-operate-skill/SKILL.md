@@ -5,6 +5,9 @@ description: "Install and operate local T3 Code through the Tentacles chair CLI:
 
 # Operate Tentacles
 
+Read the [agent user manual](../../docs/AGENT-USER-MANUAL.md) before operating
+a live thread.
+
 Use this skill when Grok, Claude, Codex, Agent Jack, Hermes, or another chair
 must operate the user's local T3 Code through the `tentacles` command instead
 of driving the T3 GUI.
