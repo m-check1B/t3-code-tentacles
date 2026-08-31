@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Run the CLI correctly when a clone is reached through a symlinked parent
+  path, including the standard macOS `/tmp` alias.
+
+### Documentation
+
+- Add the agent user manual and truth-sync the landed Hermes runtime identity
+  gate without claiming an answering-assistant proof.
+
 ## [0.4.0] - 2026-08-31
 
 ### Documentation

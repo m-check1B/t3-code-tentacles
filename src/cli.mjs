@@ -515,7 +515,7 @@ async function main() {
 
 // Only run the CLI when executed directly (bin/t3-agent-bridge execs this
 // module); importing it for tests must not start a command.
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
   main().catch((error) => {
     const home = os.homedir();
     const message = String(error?.message || "command failed")

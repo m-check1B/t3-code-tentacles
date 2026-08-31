@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { PACKAGE_VERSION, parseArgs, usage } from "../src/cli.mjs";
@@ -529,6 +531,17 @@ test("both public CLI names print the package version", () => {
   const alias = spawnSync(path.resolve("bin/t3-agent-bridge"), ["--version"], { encoding: "utf8" });
   assert.equal(alias.status, 0);
   assert.equal(alias.stdout, "0.4.0\n");
+
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles-cli-symlink-"));
+  const linkedRoot = path.join(directory, "repo");
+  fs.symlinkSync(path.resolve("."), linkedRoot, "dir");
+  try {
+    const linked = spawnSync(process.execPath, [path.join(linkedRoot, "src/cli.mjs"), "--version"], { encoding: "utf8" });
+    assert.equal(linked.status, 0);
+    assert.equal(linked.stdout, "0.4.0\n");
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("CLI originate rejects unknown options before applying the Hermes default", () => {
