@@ -1,7 +1,7 @@
 # Tentacles
 
-Tentacles is a work in progress that is already used and usable. It is an
-additive bridge for [T3 Code](https://github.com/pingdotgg/t3code).
+Tentacles is an early macOS integration for
+[T3 Code](https://github.com/pingdotgg/t3code).
 It gives chair CLIs a way to originate and continue T3 work without the GUI,
 and adds adapters that T3 does not ship.
 The public command is `tentacles`; `t3-agent-bridge` is an exact compatibility
@@ -19,6 +19,8 @@ T3-native capabilities, not Tentacles inventions or Tentacles proof claims.
 Repository documentation and integration authority boundaries start at
 [docs/README.md](docs/README.md).
 This project is released under the permissive [MIT License](LICENSE).
+See the [changelog](CHANGELOG.md) and
+[GitHub releases](https://github.com/m-check1B/t3-code-tentacles/releases).
 
 ## Use Tentacles
 
@@ -28,6 +30,7 @@ Clone the public repository and link the command:
 git clone https://github.com/m-check1B/t3-code-tentacles.git
 cd t3-code-tentacles
 npm link
+tentacles --version
 ```
 
 Give your chair the copyable Operate Tentacles skill at
@@ -147,9 +150,8 @@ tentacles act --intent '{"action":"thread.continue","threadId":"<id>","text":"co
 Every originate and every non-empty continue must remain `full-access`. Doctor
 is this-machine truth; advertised does not mean proved.
 
-> **Project status:** the working package version is 0.3.0, but the latest tagged
-> release is v0.2.1. This is an early macOS integration with Node.js 22 and T3
-> Code 0.0.34.
+> **Project status:** version 0.4.0 is an early macOS integration with Node.js
+> 22 and T3 Code 0.0.35.
 > `tentacles doctor` prints the live lab matrix for *your* machine. Treat that
 > output as local truth. The source-bound receipt attached to each change is
 > the e2e record, not a promise that the same labs are ready on a fresh clone.

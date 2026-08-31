@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-31
+
 ### Documentation
 
 - README names T3-native labs and Tentacles-additive labs by their CLIs.
@@ -14,7 +16,7 @@ All notable changes to this project are documented here.
 
 ### Public identity
 
-- Publish the product as **Tentacles**. The GitHub repository is `tentacles`.
+- Publish the product as **Tentacles** in the `t3-code-tentacles` repository.
   The public command is `tentacles`; `t3-agent-bridge` remains an exact alias.
 - `doctor` prints an advertised lab matrix (ready / installed / explicit) and
   no longer fails the whole command when Hermes health is down.
@@ -30,8 +32,8 @@ All notable changes to this project are documented here.
 - `tentacles doctor` prints a human-readable lab matrix for this machine;
   `--json` keeps the machine-readable document. Advertised is not proved.
 - README separates advertised labs from a fresh, source-bound nine-lab e2e
-  receipt. Install docs lead with a ready native lab and document the shared
-  owner-controlled OpenRouter token used by Kimi and DeepSeek adapters.
+  receipt. Install docs lead with a ready native lab and keep adapter
+  credentials in owner-controlled runtime custody.
 
 ### Security and reliability
 
@@ -40,6 +42,18 @@ All notable changes to this project are documented here.
   adapter no longer lets Hermes fall open to another provider (including
   DeepSeek) while the turn still looks like Codex. `tentacles doctor`
   prints that fail-closed state without secrets.
+- Require explicit full-access runtime mode for originate and non-empty
+  continue operations across every advertised lab.
+- Add source-bound, ready-only two-turn e2e receipts with runtime immutability
+  attestations and fail-closed skips for unverified assistants.
+- Add the owner-controlled outbound pairing protocol without exposing the
+  loopback T3 service or persisting pair secrets.
+
+### Chair operation
+
+- Add the copyable Operate Tentacles skill and provider-neutral chair workflow.
+- Document the public Grok Bot chair example while keeping chairs distinct
+  from T3-native and Tentacles-additive labs.
 
 ## [0.2.1] - 2026-08-11
 
@@ -138,8 +152,10 @@ All notable changes to this project are documented here.
 - Compatibility documentation, architecture, demo recipe, and contribution and
   security policies.
 
-[0.1.0]: https://github.com/m-check1B/t3-agent-bridge/releases/tag/v0.1.0
-[0.1.1]: https://github.com/m-check1B/t3-agent-bridge/releases/tag/v0.1.1
-[0.2.0]: https://github.com/m-check1B/t3-agent-bridge/releases/tag/v0.2.0
-[0.2.1]: https://github.com/m-check1B/t3-agent-bridge/releases/tag/v0.2.1
+[Unreleased]: https://github.com/m-check1B/t3-code-tentacles/compare/v0.4.0...HEAD
+[0.1.0]: https://github.com/m-check1B/t3-code-tentacles/releases/tag/v0.1.0
+[0.1.1]: https://github.com/m-check1B/t3-code-tentacles/releases/tag/v0.1.1
+[0.2.0]: https://github.com/m-check1B/t3-code-tentacles/releases/tag/v0.2.0
+[0.2.1]: https://github.com/m-check1B/t3-code-tentacles/releases/tag/v0.2.1
 [0.3.0]: https://github.com/m-check1B/t3-code-tentacles/releases/tag/v0.3.0
+[0.4.0]: https://github.com/m-check1B/t3-code-tentacles/releases/tag/v0.4.0

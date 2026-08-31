@@ -57,6 +57,7 @@ import {
 } from "./service.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+export const PACKAGE_VERSION = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8")).version;
 const RESERVED_REMOVED_INSTANCE_IDS = new Set(["claude-openrouter"]);
 const PROVIDER_INSTANCE_COMMANDS = new Set([
   "install-provider", "remove-provider", "install-pi-provider", "remove-pi-provider",
@@ -184,6 +185,7 @@ export function usage() {
 Hermes was the first tentacle. The public command is tentacles; t3-agent-bridge is an exact alias.
 
 Usage:
+  tentacles --version | -V
   tentacles doctor [--json]
   tentacles pair --pair-file OWNER_ONLY_JSON --machine-id SPHERE_MACHINE_ID [--pair-state-file PATH]
   tentacles install-provider [--instance hermes] [--profile default] [--model MODEL]
@@ -278,6 +280,10 @@ async function main() {
   const { command, options } = parseArgs(process.argv.slice(2));
   if (command === "help" || command === "--help" || command === "-h") {
     console.log(usage());
+    return;
+  }
+  if (command === "--version" || command === "-V") {
+    console.log(PACKAGE_VERSION);
     return;
   }
   if (!KNOWN_COMMANDS.has(command)) throw new Error(`Unknown command: ${command}\n\n${usage()}`);

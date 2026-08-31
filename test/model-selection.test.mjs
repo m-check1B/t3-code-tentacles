@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
-import { parseArgs, usage } from "../src/cli.mjs";
+import { PACKAGE_VERSION, parseArgs, usage } from "../src/cli.mjs";
 import { DEFAULT_INSTANCE_ID } from "../src/config.mjs";
 import {
   continueThread,
@@ -517,6 +517,18 @@ test("CLI parseArgs collects repeatable --option and usage documents originate f
   assert.match(spawned.stdout, /--budget low\|medium\|high/);
   assert.match(spawned.stdout, /--option id=value/);
   assert.match(spawned.stdout, /Every originate and every non-empty continue runs full-access/);
+});
+
+test("both public CLI names print the package version", () => {
+  assert.equal(PACKAGE_VERSION, "0.4.0");
+  for (const flag of ["--version", "-V"]) {
+    const source = spawnSync(process.execPath, [path.resolve("src/cli.mjs"), flag], { encoding: "utf8" });
+    assert.equal(source.status, 0, flag);
+    assert.equal(source.stdout, "0.4.0\n", flag);
+  }
+  const alias = spawnSync(path.resolve("bin/t3-agent-bridge"), ["--version"], { encoding: "utf8" });
+  assert.equal(alias.status, 0);
+  assert.equal(alias.stdout, "0.4.0\n");
 });
 
 test("CLI originate rejects unknown options before applying the Hermes default", () => {
