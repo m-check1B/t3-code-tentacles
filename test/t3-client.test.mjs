@@ -7,11 +7,14 @@ import { T3Client, T3HttpError } from "../src/t3-client.mjs";
 import {
   ALLOW_ALL_MENTION_POLICY,
   hasRedactedSecrets,
+  installCodexAppProvider,
   installProvider,
   isBridgeOwnedProvider,
   isNativeGrokInstance,
+  isTentaclesCodexAppProvider,
   NATIVE_GROK_INSTANCE_ID,
   readBridgeState,
+  removeCodexAppProvider,
   removeProvider,
   restoreNativeGrok,
   routeMentionsOnce,
@@ -20,7 +23,14 @@ import {
   useNativeGrokCachedAuth,
   writeBridgeState,
 } from "../src/bridge.mjs";
-import { readOpenRouterToken, readToken, requireLoopbackUrl, resolveExecutable } from "../src/config.mjs";
+import {
+  isCodexAppBundleExecutablePath,
+  readOpenRouterToken,
+  readToken,
+  requireLoopbackUrl,
+  resolveCodexAppExecutable,
+  resolveExecutable,
+} from "../src/config.mjs";
 import {
   LAUNCH_AGENT_LABEL,
   assertBridgeOwnedLaunchAgentFile,
@@ -76,6 +86,18 @@ test("token, origin, and executable validation fail closed at their boundaries",
   fs.writeFileSync(executable, "#!/bin/sh\n", { mode: 0o700 });
   assert.equal(resolveExecutable("bridge-bin", `${directory}${path.delimiter}/missing`), fs.realpathSync(executable));
   assert.throws(() => resolveExecutable("missing-bin", directory), /Executable not found/);
+});
+
+test("Codex app executable resolution accepts only an executable inside an app bundle", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles-codex-app-bin-"));
+  const binary = path.join(directory, "ChatGPT.app", "Contents", "Resources", "codex");
+  fs.mkdirSync(path.dirname(binary), { recursive: true });
+  fs.writeFileSync(binary, "#!/bin/sh\n", { mode: 0o700 });
+  assert.equal(isCodexAppBundleExecutablePath(binary), true);
+  assert.equal(resolveCodexAppExecutable(binary), path.resolve(binary));
+  assert.equal(isCodexAppBundleExecutablePath(path.join(directory, "codex")), false);
+  assert.throws(() => resolveCodexAppExecutable("relative/codex"), /absolute path/);
+  assert.throws(() => resolveCodexAppExecutable(path.join(directory, "codex")), /must point to/);
 });
 
 test("OpenRouter token uses the same owner-only file contract without leaking material", () => {
@@ -214,6 +236,46 @@ test("provider install merges existing instances and uses the ACP wrapper", asyn
   assert.deepEqual(patch.providerInstances.hermes.config.customModels, ["model-x"]);
   assert.equal(patch.providerInstances.hermes.environment[0].name, "T3_HERMES_BRIDGE_OWNER");
   assert.equal(isBridgeOwnedProvider(patch.providerInstances.hermes), true);
+});
+
+test("Codex app install creates a separate native Codex instance and removal preserves CLI", async () => {
+  const cli = { driver: "codex", displayName: "Codex CLI", config: { binaryPath: "/usr/local/bin/codex" } };
+  let providerInstances = { codex: cli };
+  const refreshed = [];
+  const client = {
+    getSettings: async () => ({ providerInstances }),
+    updateSettings: async (patch) => { providerInstances = patch.providerInstances; },
+    refreshProvider: async (instanceId) => {
+      refreshed.push(instanceId);
+      return { provider: { instanceId } };
+    },
+  };
+  const binaryPath = "/Applications/ChatGPT.app/Contents/Resources/codex";
+  const installed = await installCodexAppProvider(client, { binaryPath });
+  assert.equal(installed.provider.instanceId, "codex-app");
+  assert.equal(providerInstances.codex, cli);
+  assert.equal(providerInstances["codex-app"].driver, "codex");
+  assert.equal(providerInstances["codex-app"].config.binaryPath, binaryPath);
+  assert.equal(isTentaclesCodexAppProvider(providerInstances["codex-app"]), true);
+  assert.deepEqual(refreshed, ["codex-app"]);
+
+  assert.deepEqual(await removeCodexAppProvider(client), { removed: true });
+  assert.equal(providerInstances.codex, cli);
+  assert.equal(providerInstances["codex-app"], undefined);
+});
+
+test("Codex app provider mutations refuse foreign instances and non-app binaries", async () => {
+  const foreign = { driver: "codex", config: { binaryPath: "/tmp/codex" }, environment: [] };
+  const client = { getSettings: async () => ({ providerInstances: { "codex-app": foreign } }) };
+  await assert.rejects(
+    installCodexAppProvider(client, { binaryPath: "/Applications/ChatGPT.app/Contents/Resources/codex" }),
+    /not owned by the Tentacles Codex app route/,
+  );
+  await assert.rejects(removeCodexAppProvider(client), /not owned by the Tentacles Codex app route/);
+  await assert.rejects(
+    installCodexAppProvider({ getSettings: async () => ({ providerInstances: {} }) }, { binaryPath: "/usr/local/bin/codex" }),
+    /app binary must be an absolute/,
+  );
 });
 
 test("provider install preserves a disabled native Grok connector verbatim", async () => {

@@ -1,6 +1,7 @@
 export const ORIGINATE_LABS = Object.freeze([
   "hermes",
   "codex",
+  "codex-app",
   "claudeAgent",
   "grok",
   "cursor",
@@ -20,6 +21,7 @@ export const LAB_DEFAULT_MODELS = Object.freeze({
   kimi: process.env.T3_KIMI_MODEL || "moonshotai/kimi-k3",
   grok: process.env.T3_GROK_MODEL || "grok-4.6",
   codex: process.env.T3_CODEX_MODEL || "gpt-5.6-luna",
+  "codex-app": process.env.T3_CODEX_APP_MODEL || process.env.T3_CODEX_MODEL || "gpt-5.6-luna",
   claudeAgent: process.env.T3_CLAUDE_MODEL || "claude-sonnet-5",
   opencode: process.env.T3_OPENCODE_MODEL || "opencode/big-pickle",
 });
@@ -49,6 +51,8 @@ export function labInstallHint(instanceId) {
       return "tentacles install-kimi-provider --instance kimi";
     case "cursor":
       return "Enable the T3 Cursor instance, then originate with --instance cursor --model <advertised>";
+    case "codex-app":
+      return "tentacles install-codex-app-provider --instance codex-app";
     default:
       return null;
   }
@@ -145,7 +149,7 @@ export function normalizeModelOptions(options, label = "modelSelection.options")
 // only — do not invent option ids T3 has not advertised for that lab.
 export function budgetOptionId(instanceId, model) {
   if (instanceId === "claudeAgent") return "effort";
-  if (instanceId === "codex") return "reasoningEffort";
+  if (instanceId === "codex" || instanceId === "codex-app") return "reasoningEffort";
   if (instanceId === "hermes" && typeof model === "string" && model.startsWith("openai-codex:")) {
     return "reasoningEffort";
   }

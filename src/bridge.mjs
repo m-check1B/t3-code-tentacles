@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   DEFAULT_BRIDGE_STATE_FILE,
+  DEFAULT_CODEX_APP_INSTANCE_ID,
   DEFAULT_DEEPSEEK_INSTANCE_ID,
   DEFAULT_DEEPSEEK_MODEL,
   DEFAULT_HERMES_PROFILE,
@@ -16,6 +17,7 @@ import {
   DEFAULT_PI_MODEL,
   DEFAULT_PI_PROVIDER,
   ensurePrivateDirectory,
+  isCodexAppBundleExecutablePath,
   readOpenRouterToken,
   requireLoopbackUrl,
 } from "./config.mjs";
@@ -35,6 +37,8 @@ const HERMES_MENTION = /(^|\s)@hermes\b/i;
 const BRIDGE_OWNER_VARIABLE = "T3_HERMES_BRIDGE_OWNER";
 const BRIDGE_OWNER_VALUE = "t3-hermes-bridge/v1";
 const BRIDGE_HARNESS_VARIABLE = "T3_HERMES_BRIDGE_HARNESS";
+const CODEX_APP_OWNER_VARIABLE = "T3_TENTACLES_CODEX_APP_OWNER";
+const CODEX_APP_OWNER_VALUE = "tentacles/codex-app/v1";
 const PI_HARNESS_VALUE = "pi";
 export const DEEPSEEK_HARNESS_VALUE = "deepseek";
 export const KIMI_HARNESS_VALUE = "kimi";
@@ -90,6 +94,61 @@ export function hasRedactedSecrets(providerInstances) {
       (variable) => variable.sensitive === true && variable.valueRedacted === true,
     ),
   );
+}
+
+export function isTentaclesCodexAppProvider(instance) {
+  return instance?.driver === "codex" && (instance.environment || []).some(
+    (variable) => variable.name === CODEX_APP_OWNER_VARIABLE && variable.value === CODEX_APP_OWNER_VALUE,
+  );
+}
+
+export async function installCodexAppProvider(client, {
+  binaryPath,
+  instanceId = DEFAULT_CODEX_APP_INSTANCE_ID,
+} = {}) {
+  if (!path.isAbsolute(binaryPath || "") || !isCodexAppBundleExecutablePath(binaryPath)) {
+    throw new Error("Codex app binary must be an absolute <App>.app/Contents/Resources/codex path");
+  }
+  const settings = await client.getSettings();
+  const current = settings.providerInstances || {};
+  if (hasRedactedSecrets(current)) {
+    throw new Error("Refusing to update provider instances while T3 returned redacted provider secrets");
+  }
+  if (current[instanceId] && !isTentaclesCodexAppProvider(current[instanceId])) {
+    throw new Error(`Refusing to replace provider instance '${instanceId}' because it is not owned by the Tentacles Codex app route`);
+  }
+  const providerInstances = {
+    ...current,
+    [instanceId]: {
+      driver: "codex",
+      displayName: "Codex app",
+      enabled: true,
+      environment: [
+        { name: CODEX_APP_OWNER_VARIABLE, value: CODEX_APP_OWNER_VALUE, sensitive: false },
+      ],
+      config: { binaryPath, customModels: [] },
+    },
+  };
+  await client.updateSettings({ providerInstances });
+  return await client.refreshProvider(instanceId);
+}
+
+export async function removeCodexAppProvider(client, {
+  instanceId = DEFAULT_CODEX_APP_INSTANCE_ID,
+} = {}) {
+  const settings = await client.getSettings();
+  const current = settings.providerInstances || {};
+  if (!(instanceId in current)) return { removed: false };
+  if (!isTentaclesCodexAppProvider(current[instanceId])) {
+    throw new Error(`Refusing to remove provider instance '${instanceId}' because it is not owned by the Tentacles Codex app route`);
+  }
+  if (hasRedactedSecrets(current)) {
+    throw new Error("Refusing to update provider instances while T3 returned redacted provider secrets");
+  }
+  const providerInstances = { ...current };
+  delete providerInstances[instanceId];
+  await client.updateSettings({ providerInstances });
+  return { removed: true };
 }
 
 // The native Grok connector is T3 Code's built-in `grok` provider instance.
@@ -978,6 +1037,29 @@ function labRow({ instanceId, advertised, settings, configById }) {
     defaultModel,
     defaultAvailable,
   };
+  if (instanceId === "codex" || instanceId === DEFAULT_CODEX_APP_INSTANCE_ID) {
+    const legacyConfig = settings?.providers?.codex;
+    const instanceConfig = instance?.config && typeof instance.config === "object" && !Array.isArray(instance.config)
+      ? instance.config
+      : null;
+    const binaryPath = instanceConfig?.binaryPath || (instanceId === "codex" ? legacyConfig?.binaryPath : null);
+    const appBundled = isCodexAppBundleExecutablePath(binaryPath);
+    const expectedAppBundle = instanceId === DEFAULT_CODEX_APP_INSTANCE_ID;
+    const driver = instance?.driver || configProvider?.driver || "codex";
+    row.runtime = {
+      id: expectedAppBundle ? "codex-app" : "codex-cli",
+      label: expectedAppBundle ? "Codex app" : "Codex CLI",
+      integration: "t3-native",
+      driver,
+      transport: "app-server",
+      binarySource: expectedAppBundle ? "app-bundled" : "standalone-cli",
+      configuredBinarySource: installed ? (appBundled ? "app-bundled" : "standalone-cli") : null,
+    };
+    if (installed && (driver !== "codex" || appBundled !== expectedAppBundle)) {
+      row.ready = false;
+      row.code = "runtime_misconfigured";
+    }
+  }
   return row;
 }
 
@@ -993,6 +1075,9 @@ function doctorAction(lab) {
   if (lab.code === "default_model_unavailable") return "Refresh the provider and install the documented default model";
   if (lab.code === "model_unavailable") return "Refresh the provider and choose a model shown by doctor";
   if (lab.code === "provider_error" || lab.code === "provider_not_ready") return "Inspect the upstream runtime locally, then rerun doctor";
+  if (lab.code === "runtime_misconfigured") return lab.instanceId === DEFAULT_CODEX_APP_INSTANCE_ID
+    ? "codex-app must use T3's codex driver with an app-bundled <App>.app/Contents/Resources/codex binary"
+    : "codex must use T3's codex driver with a standalone Codex CLI binary";
   return null;
 }
 
@@ -1169,7 +1254,7 @@ export function formatDoctor(result = {}) {
   }
   lines.push("");
   const table = [
-    ["lab", "kind", "advertised", "enabled", "installed", "ready", "status", "count", "default", "models"],
+    ["lab", "kind", "advertised", "enabled", "installed", "ready", "status", "count", "default", "runtime", "models"],
   ];
   for (const lab of labs) {
     table.push([
@@ -1182,6 +1267,7 @@ export function formatDoctor(result = {}) {
       lab.status || "",
       String(lab.modelCount ?? (Array.isArray(lab.models) ? lab.models.length : 0)),
       lab.defaultModel || (lab.kind === "explicit" ? "(pass --model)" : ""),
+      lab.runtime?.id || "",
       Array.isArray(lab.models) ? `${lab.models.join(",")}${lab.modelsTruncated ? ",…" : ""}` : "",
     ]);
   }

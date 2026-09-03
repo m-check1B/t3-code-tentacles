@@ -68,6 +68,7 @@ function recordingClient({ projectWorkspace } = {}) {
 
 test("budgetOptionId maps only known lab effort knobs", () => {
   assert.equal(budgetOptionId("codex", "gpt-5.6-sol"), "reasoningEffort");
+  assert.equal(budgetOptionId("codex-app", "gpt-5.6-sol"), "reasoningEffort");
   assert.equal(budgetOptionId("hermes", "openai-codex:gpt-5.6-sol"), "reasoningEffort");
   assert.equal(budgetOptionId("hermes", "some-other-model"), null);
   assert.equal(budgetOptionId("claudeAgent", "claude-opus-4-6"), "effort");
@@ -78,11 +79,13 @@ test("budgetOptionId maps only known lab effort knobs", () => {
 
 test("each advertised lab has a kind and only Cursor omits a default model", () => {
   assert.equal(labKind("grok"), "native");
+  assert.equal(labKind("codex-app"), "native");
   assert.equal(labKind("hermes"), "adapter");
   assert.equal(labKind("cursor"), "explicit");
   assert.equal(defaultModelForLab("grok"), "grok-4.6");
   assert.equal(defaultModelForLab("hermes"), "deepseek:deepseek-v4-flash");
   assert.equal(defaultModelForLab("codex"), "gpt-5.6-luna");
+  assert.equal(defaultModelForLab("codex-app"), "gpt-5.6-luna");
   assert.equal(defaultModelForLab("claudeAgent"), "claude-sonnet-5");
   assert.equal(defaultModelForLab("opencode"), "opencode/big-pickle");
   assert.equal(defaultModelForLab("cursor"), null);
@@ -119,6 +122,44 @@ test("Cursor is an explicit non-default originate lab with no invented budget op
   ], { encoding: "utf8", env: { ...process.env, T3_URL: "http://127.0.0.1:9" } });
   assert.equal(missingModel.status, 1);
   assert.match(`${missingModel.stderr}`, /cursor is an explicit lab; pass --model/);
+});
+
+test("Codex CLI and Codex app preserve distinct T3-native instance ids", async () => {
+  assert.equal(ORIGINATE_LABS.includes("codex"), true);
+  assert.equal(ORIGINATE_LABS.includes("codex-app"), true);
+  assert.deepEqual(
+    resolveModelSelection({ instanceId: "codex", model: "gpt-5.6-sol", budget: "high" }),
+    { instanceId: "codex", model: "gpt-5.6-sol", options: [{ id: "reasoningEffort", value: "high" }] },
+  );
+  assert.deepEqual(
+    resolveModelSelection({ instanceId: "codex-app", model: "gpt-5.6-sol", budget: "high" }),
+    { instanceId: "codex-app", model: "gpt-5.6-sol", options: [{ id: "reasoningEffort", value: "high" }] },
+  );
+
+  const client = recordingClient();
+  await startThread(client, {
+    projectId: "p-codex",
+    threadId: "t-cli",
+    title: "Codex CLI",
+    message: "standalone",
+    instanceId: "codex",
+    model: "gpt-5.6-sol",
+    budget: "high",
+    runtimeMode: "full-access",
+  });
+  await startThread(client, {
+    projectId: "p-codex",
+    threadId: "t-app",
+    title: "Codex app",
+    message: "app bundled",
+    instanceId: "codex-app",
+    model: "gpt-5.6-sol",
+    budget: "high",
+    runtimeMode: "full-access",
+  });
+  const creates = client.commands.filter((command) => command.type === "thread.create");
+  assert.deepEqual(creates.map((command) => command.modelSelection.instanceId), ["codex", "codex-app"]);
+  assert.deepEqual(creates.map((command) => command.runtimeMode), ["full-access", "full-access"]);
 });
 
 test("Cursor session-init commands preserve the explicit lab and full-access mode", async () => {
@@ -501,8 +542,11 @@ test("CLI parseArgs collects repeatable --option and usage documents originate f
   assert.match(help, /Never pass a token on the\s+command line/);
   assert.match(help, /Advertised is not proved/);
   assert.match(help, /originate --workspace PATH --title TITLE --message TEXT --runtime-mode approval-required\|auto-accept-edits\|auto\|full-access/);
-  assert.match(help, /--instance hermes\|codex\|claudeAgent\|grok\|cursor\|deepseek\|kimi\|pi\|opencode/);
+  assert.match(help, /--instance hermes\|codex\|codex-app\|claudeAgent\|grok\|cursor\|deepseek\|kimi\|pi\|opencode/);
   assert.doesNotMatch(help, /claude-openrouter|install-claude-openrouter-provider/);
+  assert.match(help, /install-codex-app-provider \[--instance codex-app\] \[--codex-app-bin PATH\]/);
+  assert.match(help, /--instance codex uses T3's standalone CLI runtime/);
+  assert.match(help, /--instance codex-app uses the separately configured Codex app-bundled runtime/);
   assert.match(help, /--model MODEL/);
   assert.match(help, /--runtime-mode approval-required\|auto-accept-edits\|auto\|full-access/);
   assert.doesNotMatch(help, /\[--runtime-mode/);

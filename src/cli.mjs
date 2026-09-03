@@ -9,12 +9,14 @@ import {
   ALLOW_ALL_MENTION_POLICY,
   doctor,
   formatDoctor,
+  installCodexAppProvider,
   installDeepSeekProvider,
   installKimiProvider,
   installProvider,
   installPiProvider,
   originate,
   removeDeepSeekProvider,
+  removeCodexAppProvider,
   removeKimiProvider,
   removeProvider,
   removePiProvider,
@@ -25,6 +27,7 @@ import {
 import {
   DEFAULT_DEEPSEEK_INSTANCE_ID,
   DEFAULT_DEEPSEEK_MODEL,
+  DEFAULT_CODEX_APP_INSTANCE_ID,
   DEFAULT_HERMES_PROFILE,
   DEFAULT_INSTANCE_ID,
   DEFAULT_KIMI_INSTANCE_ID,
@@ -33,6 +36,7 @@ import {
   DEFAULT_PI_INSTANCE_ID,
   DEFAULT_PI_MODEL,
   DEFAULT_PI_PROVIDER,
+  resolveCodexAppExecutable,
   resolveExecutable,
 } from "./config.mjs";
 import { requireRequestedProviderConstructable } from "./hermes-acp-launch.mjs";
@@ -190,6 +194,8 @@ Usage:
   tentacles pair --pair-file OWNER_ONLY_JSON --machine-id SPHERE_MACHINE_ID [--pair-state-file PATH]
   tentacles install-provider [--instance hermes] [--profile default] [--model MODEL]
   tentacles remove-provider [--instance hermes]
+  tentacles install-codex-app-provider [--instance codex-app] [--codex-app-bin PATH]
+  tentacles remove-codex-app-provider [--instance codex-app]
   tentacles install-pi-provider [--instance pi] [--model gpt-5.6-terra] [--pi-provider openai-codex]
   tentacles remove-pi-provider [--instance pi]
   tentacles install-deepseek-provider [--instance deepseek] [--model deepseek/deepseek-v4-flash] [--dsh-acp-bin PATH]
@@ -215,6 +221,10 @@ Run doctor to print the advertised lab matrix for this machine
 (ready / installed / explicit). Advertised is not proved. Use --json for the
 machine-readable document. Doctor never prints tokens or secrets.
 
+Codex routes are explicit: --instance codex uses T3's standalone CLI runtime;
+--instance codex-app uses the separately configured Codex app-bundled runtime.
+Both use T3's native codex driver and its app-server transport.
+
 Remote pairing is opt-in. The pair command opens one outbound WSS connection;
 T3 remains on loopback. The one-shot pair offer is read from a 0600 file and
 removed only after the relay acknowledges the bind. Never pass a token on the
@@ -239,6 +249,7 @@ Environment:
   T3_URL                    default http://127.0.0.1:3773
   T3_HERMES_TOKEN_FILE      default ~/.local/state/t3-hermes-bridge/t3.token
   T3_HERMES_MODEL           default deepseek:deepseek-v4-flash
+  CODEX_APP_BIN             optional absolute <App>.app/Contents/Resources/codex path
   HERMES_URL                default http://127.0.0.1:8642
   HERMES_PROFILE            used by bin/t3-hermes-acp; default default`;
 }
@@ -370,6 +381,25 @@ async function main() {
   }
   if (command === "remove-provider") {
     console.log(JSON.stringify(await removeProvider(client, { instanceId }), null, 2));
+    return;
+  }
+  if (command === "install-codex-app-provider") {
+    const codexAppInstanceId = options.instance || DEFAULT_CODEX_APP_INSTANCE_ID;
+    const binaryPath = resolveCodexAppExecutable(options["codex-app-bin"]);
+    const result = await installCodexAppProvider(client, { binaryPath, instanceId: codexAppInstanceId });
+    console.log(JSON.stringify({
+      installed: true,
+      instanceId: codexAppInstanceId,
+      runtime: "codex-app",
+      integration: "t3-native",
+      provider: result.provider?.instanceId || codexAppInstanceId,
+    }, null, 2));
+    return;
+  }
+  if (command === "remove-codex-app-provider") {
+    console.log(JSON.stringify(await removeCodexAppProvider(client, {
+      instanceId: options.instance || DEFAULT_CODEX_APP_INSTANCE_ID,
+    }), null, 2));
     return;
   }
   if (command === "install-pi-provider") {

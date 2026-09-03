@@ -68,6 +68,8 @@ Keep these two lab identities explicit:
 | Lab | `--instance` | `--model` | Meaning |
 | --- | --- | --- | --- |
 | Grok Code | `grok` | `grok-4.6` | The Grok Code hire path. |
+| Codex CLI | `codex` | A model advertised by doctor | T3-native standalone CLI runtime. |
+| Codex app | `codex-app` | A model advertised by doctor | T3-native app-bundled runtime; install with `tentacles install-codex-app-provider`. |
 | Hermes | `hermes` | A model advertised by doctor, when ready | Its own worker. Never a route to another lab. |
 
 - Hermes (`--instance hermes`) is its own worker at the same layer as codex, grok, pi, and the rest.
@@ -78,9 +80,12 @@ Keep these two lab identities explicit:
 If you want Grok Code and are about to type `--instance hermes`, stop. Originate
 `--instance grok` instead.
 
-T3-native instances are `codex` (Codex CLI), `claudeAgent` (Claude Code CLI),
-`grok` (Grok Code), `opencode` (OpenCode CLI), and `cursor` (Cursor CLI). T3 also
-owns `t3 pair` / `app.t3.codes`; those are not Tentacles instances.
+T3-native instances are `codex` (standalone Codex CLI), `codex-app` (the
+separately configured Codex app-bundled runtime), `claudeAgent` (Claude Code
+CLI), `grok` (Grok Code), `opencode` (OpenCode CLI), and `cursor` (Cursor CLI).
+Both Codex ids use T3's native `codex` driver and `app-server` transport;
+`codex-app` is not a protocol wrapper and does not control an open app window.
+T3 also owns `t3 pair` / `app.t3.codes`; those are not Tentacles instances.
 
 Tentacles-additive instances are `kimi` (Kimi CLI), `deepseek` (DeepSeek CLI),
 `hermes` (Hermes), and `pi` (Pi CLI). Cursor must already be enabled in T3

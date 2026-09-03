@@ -10,6 +10,10 @@ alias.
 T3 Code already orchestrates Codex CLI, Claude Code CLI, Grok Code CLI, OpenCode CLI,
 and Cursor CLI, plus its own `t3 pair` / `app.t3.codes` remote path. Those are
 T3-native capabilities, not Tentacles inventions or Tentacles proof claims.
+T3's native `codex` driver can host multiple named instances with different
+Codex binaries. Tentacles uses that existing seam to keep the standalone CLI
+and the runtime bundled with the Codex app separately selectable; it does not
+wrap or emulate another Codex.
 
 [![CI](https://github.com/m-check1B/t3-code-tentacles/actions/workflows/ci.yml/badge.svg)](https://github.com/m-check1B/t3-code-tentacles/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/m-check1B/t3-code-tentacles)](https://github.com/m-check1B/t3-code-tentacles/releases)
@@ -172,6 +176,7 @@ T3-native reference rows:
 | T3-native lab | Tentacles relationship |
 |---|---|
 | Codex CLI | T3 ships it; a chair may select it through the Tentacles chair CLI |
+| Codex app-bundled runtime | T3's native `codex` driver hosts it as the separately configured `codex-app` instance; Tentacles adds no protocol wrapper |
 | Claude Code CLI | T3 ships it. A chair selects `--instance claudeAgent`. Independent of Tentacles. Advertised is not proved |
 | Grok Code CLI | T3 ships it. A chair selects `--instance grok --model grok-4.6`. Grok Bot remains a chair, not this lab |
 | OpenCode CLI | T3 ships it |
@@ -192,6 +197,68 @@ instance is enabled and installed, its upstream status is ready, and its
 default model is available (Cursor remains explicit). That is local readiness,
 not a compatibility certificate.
 
+### Choose Codex CLI or the Codex app runtime
+
+The two routing ids are deliberately different:
+
+This decision was checked against T3 Code 0.0.38 at upstream commit
+[`4b8b5d9`](https://github.com/pingdotgg/t3code/tree/4b8b5d9e0177002c84a6f55837670aa0ef816915):
+its native `codex` driver supports multiple provider instances and accepts a
+per-instance binary path; its launch builder prepends the `app-server`
+subcommand. Tentacles therefore configures that native seam instead of adding a
+Codex protocol adapter.
+
+| Destination | `--instance` | Runtime source | T3 transport |
+|---|---|---|---|
+| Codex CLI | `codex` | The standalone `codex` binary configured in T3 | Native `codex` driver, `app-server` subcommand |
+| Codex app | `codex-app` | The `codex` executable bundled inside the installed desktop app | Native `codex` driver, `app-server` subcommand |
+
+Install the second native T3 instance once, then verify both rows. On macOS,
+Tentacles detects the standard `ChatGPT.app` and `Codex.app` locations. An
+explicit override must still point inside an app bundle.
+
+```bash
+tentacles install-codex-app-provider
+# Or: tentacles install-codex-app-provider \
+#   --codex-app-bin /absolute/ChatGPT.app/Contents/Resources/codex
+tentacles doctor --json
+```
+
+The doctor JSON gives each row a `runtime` object. `codex` reports
+`runtime.id: "codex-cli"`, while `codex-app` reports
+`runtime.id: "codex-app"`; both report `integration: "t3-native"` and
+`transport: "app-server"`. The app route starts its own T3-owned app-server
+process from the app-bundled executable. It does not remote-control an already
+open Codex app window.
+
+Originate the same GPT model through either runtime on purpose:
+
+```bash
+tentacles originate \
+  --workspace "$PWD" \
+  --title "Codex CLI" \
+  --message "Run through the standalone Codex CLI runtime." \
+  --instance codex \
+  --model gpt-5.6-sol \
+  --budget high \
+  --runtime-mode full-access
+
+tentacles originate \
+  --workspace "$PWD" \
+  --title "Codex app" \
+  --message "Run through the Codex app-bundled runtime." \
+  --instance codex-app \
+  --model gpt-5.6-sol \
+  --budget high \
+  --runtime-mode full-access
+```
+
+Removal is ownership-safe and leaves the canonical `codex` instance alone:
+
+```bash
+tentacles remove-codex-app-provider
+```
+
 ### Lab proof status
 
 Each passing row requires a fresh originate and non-empty continue through the
@@ -205,6 +272,7 @@ assistant content are never published.
 |---|---|---|---|
 | Hermes | `hermes` | `deepseek:deepseek-v4-flash` when doctor advertises it | Not proved on the current receipt. Construction and runtime identity gates are landed; exact identity plus an assistant reply is required. |
 | Codex CLI | `codex` | `gpt-5.6-luna` when doctor advertises it | Originate + continue |
+| Codex app | `codex-app` | `gpt-5.6-luna` when doctor advertises it | Not proved on the current receipt. Originate + continue required. |
 | Claude Code CLI | `claudeAgent` | `claude-sonnet-5`; skipped unless a bounded assistant proof exists | Originate + continue |
 | Grok Code CLI | `grok` | `grok-4.6` when doctor advertises it | Originate + continue |
 | Cursor CLI | `cursor` | always pass a model shown by doctor | Originate + continue |
@@ -312,6 +380,8 @@ tentacles doctor
 Doctor prints advertised, enabled, installed, ready, and default model for each
 lab on this machine. Originate a lab that doctor marks `ready`. Cursor is
 explicit: it must already be enabled in T3, and originate needs `--model`.
+The `codex` and `codex-app` rows additionally identify whether the configured
+binary is standalone or app-bundled, without printing its local path.
 
 ### 4. Originate a ready lab
 

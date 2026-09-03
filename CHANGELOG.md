@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Distinguish T3's standalone Codex CLI instance (`codex`) from a separately
+  selectable app-bundled runtime (`codex-app`). The latter is an ownership-safe
+  second instance of T3's native `codex` driver, not a Tentacles protocol
+  wrapper. Doctor exposes both identities and originate preserves the selected
+  instance and normal Codex reasoning budget mapping.
+
 ### Fixed
 
 - Run the CLI correctly when a clone is reached through a symlinked parent

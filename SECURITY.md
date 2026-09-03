@@ -57,6 +57,13 @@ Treat Hermes profiles and Pi Agent as privileged local processes: the bridge
 does not reduce or expand the filesystem, shell, network, or tool permissions
 already granted to the selected runtime.
 
+The optional `codex-app` route is a second instance of T3's native `codex`
+driver, pointed directly at an executable inside a macOS app bundle. Tentacles
+does not proxy Codex traffic or attach to a running app process. Installation
+requires an absolute `<App>.app/Contents/Resources/codex` path, refuses foreign
+instance collisions or redacted settings, and marks its own instance so removal
+cannot delete the canonical `codex` instance or another owner's configuration.
+
 Pi authentication remains exclusively in Pi's normal local configuration. The
 Pi provider stores only non-secret absolute executable, provider, initial model,
 and ownership metadata in T3. The ACP relay never logs protocol payloads, does
