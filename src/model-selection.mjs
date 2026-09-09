@@ -70,6 +70,13 @@ export const BUDGETS = Object.freeze(["low", "medium", "high"]);
 const RUNTIME_MODE_SET = new Set(RUNTIME_MODES);
 const BUDGET_SET = new Set(BUDGETS);
 
+const CURSOR_PARAMETERIZED_MODEL_ALIASES = Object.freeze({
+  "composer-2.5-fast": {
+    model: "composer-2.5",
+    options: [{ id: "fastMode", value: true }],
+  },
+});
+
 function requireNonEmptyString(value, label) {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error(`${label} must be a non-empty string`);
@@ -158,8 +165,21 @@ export function budgetOptionId(instanceId, model) {
 
 export function resolveModelSelection({ instanceId, model, options, budget } = {}) {
   const resolvedInstanceId = requireNonEmptyString(instanceId, "modelSelection.instanceId");
-  const resolvedModel = requireNonEmptyString(model, "modelSelection.model");
+  let resolvedModel = requireNonEmptyString(model, "modelSelection.model");
   const explicit = normalizeModelOptions(options) ?? [];
+  const cursorAlias = resolvedInstanceId === "cursor"
+    ? CURSOR_PARAMETERIZED_MODEL_ALIASES[resolvedModel]
+    : undefined;
+  if (cursorAlias) {
+    resolvedModel = cursorAlias.model;
+    for (const requiredOption of cursorAlias.options) {
+      const configured = explicit.find((entry) => entry.id === requiredOption.id);
+      if (configured && configured.value !== requiredOption.value) {
+        throw new Error(`Cursor model alias ${model} conflicts with option ${requiredOption.id}`);
+      }
+      if (!configured) explicit.push({ ...requiredOption });
+    }
+  }
   if (budget !== undefined && budget !== null && budget !== "") {
     const resolvedBudget = requireNonEmptyString(budget, "budget");
     if (!BUDGET_SET.has(resolvedBudget)) {

@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import {
   grokChildEnvironment,
+  normalizeGrokChildArgs,
   startGrokAcpProxy,
 } from "../src/grok-acp-launch.mjs";
 
@@ -20,6 +24,22 @@ test("Grok child environment forces cached OIDC and removes inherited API keys",
   assert.equal(env.PATH, "/synthetic/bin");
 });
 
+test("Grok launcher preserves only T3's known runtime-mode argv", () => {
+  assert.deepEqual(normalizeGrokChildArgs([]), ["agent", "stdio"]);
+  assert.deepEqual(
+    normalizeGrokChildArgs(["agent", "--always-approve", "stdio"]),
+    ["agent", "--always-approve", "stdio"],
+  );
+  assert.deepEqual(
+    normalizeGrokChildArgs(["--permission-mode", "acceptEdits", "agent", "stdio"]),
+    ["--permission-mode", "acceptEdits", "agent", "stdio"],
+  );
+  assert.throws(
+    () => normalizeGrokChildArgs(["agent", "--unknown", "stdio"]),
+    /unsupported Grok ACP launch arguments/,
+  );
+});
+
 test("Grok proxy intercepts T3 authentication and starts agent stdio", async () => {
   const fakeGrok = `
 import readline from "node:readline";
@@ -32,6 +52,8 @@ rl.on("line", (line) => {
     process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, error: { code: -32000, message: "Authentication required" } }) + "\\n");
   } else if (message.method === "session/new") {
     process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { sessionId: "grok-session" } }) + "\\n");
+  } else if (message.method === "session/set_model") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { selected: message.params.modelId } }) + "\\n");
   }
 });
 setInterval(() => {}, 1000);
@@ -40,10 +62,11 @@ setInterval(() => {}, 1000);
   const stdout = new PassThrough();
   const child = startGrokAcpProxy({
     grokBin: process.execPath,
+    childArgs: ["agent", "--always-approve", "stdio"],
     env: { ...process.env, XAI_API_KEY: "synthetic-stale-key" },
     spawnImpl: (binary, args, options) => {
       assert.equal(binary, process.execPath);
-      assert.deepEqual(args, ["agent", "stdio"]);
+      assert.deepEqual(args, ["agent", "--always-approve", "stdio"]);
       assert.equal(options.env.XAI_API_KEY, undefined);
       assert.equal(options.env.GROK_DISABLE_API_KEY_AUTH, "true");
       return spawn(binary, ["--input-type=module", "-e", fakeGrok], options);
@@ -71,8 +94,35 @@ setInterval(() => {}, 1000);
     assert.deepEqual(await nextLine(2), { jsonrpc: "2.0", id: 2, result: {} });
     stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "session/new", params: { cwd: "/repo", mcpServers: [] } }) + "\n");
     assert.equal((await nextLine(3)).result.sessionId, "grok-session");
+    stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 4, method: "session/set_model", params: { sessionId: "grok-session", modelId: "grok-4.6" } }) + "\n");
+    assert.equal((await nextLine(4)).result.selected, "grok-4.6");
   } finally {
     child.kill("SIGTERM");
     await once(child, "exit");
+  }
+});
+
+test("CLI and Grok launcher execute through a symlinked repository path", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles-symlink-entry-"));
+  const linkedRepo = path.join(directory, "linked-repo");
+  const fakeBin = path.join(directory, "bin");
+  fs.symlinkSync(path.resolve("."), linkedRepo, "dir");
+  fs.mkdirSync(fakeBin);
+  const fakeGrok = path.join(fakeBin, "grok");
+  fs.writeFileSync(fakeGrok, "#!/bin/sh\nprintf '%s\\n' \"$*\"\n", { mode: 0o700 });
+  try {
+    const cli = spawnSync(process.execPath, [path.join(linkedRepo, "src", "cli.mjs"), "help"], { encoding: "utf8" });
+    assert.equal(cli.status, 0);
+    assert.match(cli.stdout, /Tentacles — chair CLI/);
+
+    const launcher = spawnSync(
+      process.execPath,
+      [path.join(linkedRepo, "src", "grok-acp-launch.mjs"), "agent", "--always-approve", "stdio"],
+      { encoding: "utf8", env: { ...process.env, PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ""}` } },
+    );
+    assert.equal(launcher.status, 0);
+    assert.equal(launcher.stdout.trim(), "agent --always-approve stdio");
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
   }
 });

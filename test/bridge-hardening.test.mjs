@@ -184,6 +184,7 @@ test("doctor prints an advertised lab matrix without secrets and keeps Cursor ex
   assert.equal(byId.codex.runtime.id, "codex-cli");
   assert.equal(byId.codex.runtime.transport, "app-server");
   assert.equal(byId["codex-app"].ready, false);
+  assert.equal(byId["codex-app"].enabled, false);
   assert.equal(byId["codex-app"].runtime.id, "codex-app");
   assert.equal(byId["codex-app"].runtime.integration, "t3-native");
   assert.match(byId["codex-app"].action, /install-codex-app-provider/);
