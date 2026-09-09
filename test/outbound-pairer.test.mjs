@@ -173,13 +173,30 @@ test("loopback adapter keeps the relay surface honest about full-access", async 
   const calls = [];
   const adapter = new LoopbackRuntimeAdapter({
     client: { isLoopback: true },
-    observeImpl: async (client) => ({ seats: [client.isLoopback] }),
+    observeImpl: async (client) => ({
+      activeTurns: [{ threadId: "t1", providerInstanceId: client.isLoopback ? "codex" : "other", prompt: "private" }],
+      threads: [
+        { id: "t1", projectId: "p1", title: "private", session: { status: "running", lastError: "stale private error" } },
+        { id: "t2", projectId: "p1", session: { status: "ready", lastError: null } },
+        { id: "t3", projectId: "p1", hasPendingUserInput: true, session: { status: "ready", lastError: null } },
+        { id: "t4", projectId: "p1", settledAt: "2026-09-09T12:00:00.000Z", session: { status: "ready", lastError: null } },
+      ],
+      projects: [{ id: "p1", workspaceRoot: "/private/workspace" }],
+    }),
     originateImpl: async (client, params) => { calls.push(["originate", client, params]); return { threadId: "t1" }; },
     continueImpl: async (client, params) => { calls.push(["continue", client, params]); return { threadId: params.threadId }; },
     doctorImpl: async (_client, params) => ({ pairing: params.pairStateFile }),
     pairStateFile: "/tmp/synthetic-pair-presence.json",
   });
-  assert.deepEqual(await adapter.seats(), { seats: [true] });
+  assert.deepEqual(await adapter.seats(), {
+    activeTurns: [{ threadId: "t1", providerInstanceId: "codex" }],
+    threads: [
+      { id: "t1", projectId: "p1", report: { status: "generating" } },
+      { id: "t2", projectId: "p1", report: { status: "ready/idle" } },
+      { id: "t3", projectId: "p1", report: { status: "blocked" } },
+      { id: "t4", projectId: "p1", report: { status: "Done" } },
+    ],
+  });
   assert.deepEqual(await adapter.originate({ workspace: "/tmp/work", title: "T", message: "M" }), { threadId: "t1" });
   assert.deepEqual(await adapter.continue({ threadId: "t1", message: "again", runtimeMode: "full-access" }), { threadId: "t1" });
   assert.deepEqual(await adapter.doctorStatus(), { pairing: "/tmp/synthetic-pair-presence.json" });

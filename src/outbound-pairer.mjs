@@ -122,6 +122,40 @@ function fullAccessParams(params, label, allowedKeys) {
   return { ...input, runtimeMode: "full-access" };
 }
 
+function pairedThreadReportStatus(thread) {
+  const session = isRecord(thread.session) ? thread.session : {};
+  const settled = typeof thread.settledAt === "string" && thread.settledAt.length > 0;
+  if (settled) return "Done";
+  if (thread.hasPendingApprovals === true || thread.hasPendingUserInput === true) return "blocked";
+  if (session.status === "starting" || session.status === "running") return "generating";
+  if (session.status === "error"
+    || (session.lastError !== null && session.lastError !== undefined && session.lastError !== "")) return "blocked";
+  if ([undefined, null, "ready", "idle", "stopped"].includes(session.status)) return "ready/idle";
+  return "blocked";
+}
+
+function remoteSeatsProjection(observed) {
+  requireRecord(observed, "Observed Tentacles state");
+  const activeTurns = Array.isArray(observed.activeTurns)
+    ? observed.activeTurns
+      .filter(isRecord)
+      .map((turn) => ({
+        ...(typeof turn.threadId === "string" ? { threadId: turn.threadId } : {}),
+        ...(typeof turn.providerInstanceId === "string" ? { providerInstanceId: turn.providerInstanceId } : {}),
+      }))
+    : [];
+  const threads = Array.isArray(observed.threads)
+    ? observed.threads
+      .filter(isRecord)
+      .map((thread) => ({
+        ...(typeof thread.id === "string" ? { id: thread.id } : {}),
+        ...(typeof thread.projectId === "string" ? { projectId: thread.projectId } : {}),
+        report: { status: pairedThreadReportStatus(thread) },
+      }))
+    : [];
+  return { activeTurns, threads };
+}
+
 export class LoopbackRuntimeAdapter {
   constructor({
     client,
@@ -140,8 +174,8 @@ export class LoopbackRuntimeAdapter {
     this.doctorImpl = doctorImpl;
   }
 
-  seats() {
-    return this.observeImpl(this.client);
+  async seats() {
+    return remoteSeatsProjection(await this.observeImpl(this.client));
   }
 
   originate(params) {
