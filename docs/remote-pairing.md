@@ -59,6 +59,12 @@ relay that accepts the re-announcement restores the pair in place; a v1 relay
 that rejects the consumed credential returns `pair.unpaired`, which is treated
 as unrecoverable authorization so a launchd `KeepAlive` wrapper can mint a fresh
 offer. `pair.expired` and `pair.revoked` are terminal authorization results too.
+The advertised `expiresAt` gates only the initial bind. Once `pair.bound` consumes
+the offer, Tentacles retires that local expiry timer: it does not tear down a
+healthy socket, and a later reconnect may re-announce the memory-only credential
+after the original offer timestamp. The relay remains authoritative and can end
+that attempt with an explicit terminal `pair.expired`, `pair.revoked`, or
+`pair.unpaired` result.
 
 ## Wire surface
 
@@ -89,11 +95,14 @@ without reflecting local error text:
 }
 ```
 
-Request IDs are unique within a connection and bounded by a 1,000-request replay
-window. `originate` and `continue` always execute locally with
-`runtimeMode: full-access`; any conflicting requested mode fails closed. Remote
-parameters are allowlisted per method and cannot select local state or token
-file paths.
+Across reconnect generations, accepted request IDs are checked against every
+pending operation and a bounded history of the 1,000 most recently accepted IDs.
+The 16-operation capacity is also pairer-wide: socket loss does not release a
+locally running operation, and over-cap refusals do not enter or churn the replay
+window. A pending ID stays replay-protected until its local operation settles.
+`originate` and `continue` always execute locally with `runtimeMode: full-access`;
+any conflicting requested mode fails closed. Remote parameters are allowlisted
+per method and cannot select local state or token file paths.
 
 `tentacles doctor` reports only `paired`, `unpaired`, or `expired`. Its presence
 lease contains no token, endpoint, machine identity, prompt, or RPC payload.

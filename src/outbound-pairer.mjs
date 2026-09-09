@@ -337,6 +337,7 @@ export class OutboundPairer {
     }
     const seenRpcIds = new Set();
     const rpcIdWindow = [];
+    const inFlightRpcIds = new Set();
     let offerConsumed = false;
     let everBound = false;
     let reconnectAttempt = 0;
@@ -361,7 +362,7 @@ export class OutboundPairer {
           this.emit({ event: "pair.unpaired", status: "unpaired", staleReason: "stopped" });
           return { status: "unpaired" };
         }
-        if (Date.parse(offer.expiresAt) <= this.now()) {
+        if (!everBound && Date.parse(offer.expiresAt) <= this.now()) {
           writePairPresence("expired", {
             file: this.pairStateFile,
             now: this.now(),
@@ -381,6 +382,7 @@ export class OutboundPairer {
           signal,
           seenRpcIds,
           rpcIdWindow,
+          inFlightRpcIds,
           consumeOfferOnce,
           reconnected: everBound,
         });
@@ -444,6 +446,7 @@ export class OutboundPairer {
     signal,
     seenRpcIds,
     rpcIdWindow,
+    inFlightRpcIds,
     consumeOfferOnce,
     reconnected,
   }) {
@@ -454,7 +457,6 @@ export class OutboundPairer {
       return { kind: "transient", bound: false, staleReason: "relay_connection_error" };
     }
     const bindRequestId = randomUUID();
-    const inFlightRpcIds = new Set();
     let bound = false;
     let settled = false;
     let handshakeTimer;
@@ -504,7 +506,7 @@ export class OutboundPairer {
         this.handshakeTimeoutMs,
       );
       const offerRemainingMs = Date.parse(offer.expiresAt) - this.now();
-      if (offerRemainingMs <= MAX_TIMER_MS) {
+      if (!reconnected && offerRemainingMs <= MAX_TIMER_MS) {
         offerExpiryTimer = setTimeout(
           () => authorizationFailure("expired", "authorization_expired", "Pair authorization expired"),
           Math.max(0, offerRemainingMs),
@@ -546,6 +548,7 @@ export class OutboundPairer {
         messageQueue = messageQueue.then(async () => {
           if (settled) return;
           const raw = await readBoundedWebSocketData(event.data, this.maxFrameBytes, "Pair relay frame");
+          if (settled) return;
           let message;
           try { message = JSON.parse(raw); } catch { throw new Error("Invalid pair relay JSON"); }
           requireRecord(message, "Pair relay message");
@@ -553,7 +556,7 @@ export class OutboundPairer {
 
           if (message.type === "pair.bound") {
             if (bound || message.requestId !== bindRequestId) throw new Error("Invalid pair bind acknowledgement");
-            if (Date.parse(offer.expiresAt) <= this.now()) {
+            if (!reconnected && Date.parse(offer.expiresAt) <= this.now()) {
               authorizationFailure("expired", "authorization_expired", "Pair authorization expired");
               return;
             }
@@ -561,6 +564,7 @@ export class OutboundPairer {
               consumeOfferOnce();
               bound = true;
               clearTimeout(handshakeTimer);
+              clearTimeout(offerExpiryTimer);
               refreshPresence();
             } catch {
               finish({ kind: "fatal", error: new Error("Pair presence activation failed") });
@@ -590,10 +594,10 @@ export class OutboundPairer {
           if (message.type !== "rpc.request") throw new Error("Unsupported pair relay message");
           const id = requireSafeId(message.id, "RPC request id");
           if (seenRpcIds.has(id) || inFlightRpcIds.has(id)) throw new Error("RPC replay window failed closed");
+          if (inFlightRpcIds.size >= 16) { send(unavailable(id)); return; }
           seenRpcIds.add(id);
           rpcIdWindow.push(id);
           if (rpcIdWindow.length > 1_000) seenRpcIds.delete(rpcIdWindow.shift());
-          if (inFlightRpcIds.size >= 16) { send(unavailable(id)); return; }
           inFlightRpcIds.add(id);
           void this.shim.handle(message).then((result) => {
             if (settled) return;

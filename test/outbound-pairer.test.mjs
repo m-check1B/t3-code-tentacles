@@ -84,6 +84,15 @@ class FakeWebSocket {
   }
 }
 
+function delayedBlob(value) {
+  const encoded = JSON.stringify(value);
+  const blob = new Blob([encoded]);
+  let release;
+  const decoded = new Promise((resolve) => { release = () => resolve(encoded); });
+  Object.defineProperty(blob, "text", { value: () => decoded });
+  return { blob, release };
+}
+
 test("pair offers are owner-only WSS files and never serialize their secret", () => {
   const directory = temporaryDirectory("pair-offer");
   const file = writeOffer(directory);
@@ -350,6 +359,216 @@ test("fake relay socket drop reconnects, re-announces, and refreshes presence on
   assert.equal(JSON.parse(fs.readFileSync(stateFile, "utf8")).staleReason, "stopped");
   assert.equal(events.some((event) => event.event === "pair.reannouncing"), true);
   assert.equal(JSON.stringify(events).includes(PAIR_TOKEN), false);
+});
+
+test("a bound pair outlives its consumed offer TTL and can reconnect after it", async () => {
+  FakeWebSocket.instances = [];
+  const directory = temporaryDirectory("pair-consumed-expiry");
+  const expiresAtMs = Date.now() + 500;
+  const pairFile = writeOffer(directory, { expiresAt: new Date(expiresAtMs).toISOString() });
+  const stateFile = path.join(directory, "presence.json");
+  const events = [];
+  const runtime = { seats: async () => null, originate: async () => null, continue: async () => null, doctorStatus: async () => null };
+  const pairer = new OutboundPairer({
+    runtime,
+    WebSocketImpl: FakeWebSocket,
+    pairStateFile: stateFile,
+    leaseMs: 2_000,
+    heartbeatTimeoutMs: 2_000,
+    reconnectBaseMs: 1,
+    reconnectCapMs: 1,
+    random: () => 0,
+    onEvent: (event) => events.push(event),
+  });
+  let finished = false;
+  const runResult = pairer.run({ pairFile, machineId: "sphere-machine-1" })
+    .then((value) => ({ value }), (error) => ({ error }))
+    .finally(() => { finished = true; });
+  const first = await waitFor(() => FakeWebSocket.instances[0], "near-expiry socket");
+  first.emit("open");
+  const firstBind = await waitFor(() => first.sent.find((message) => message.type === "pair.bind"), "near-expiry bind");
+  first.message({ version: 1, type: "pair.bound", requestId: firstBind.requestId });
+  await waitFor(() => !fs.existsSync(pairFile), "near-expiry offer consumption");
+
+  await new Promise((resolve) => setTimeout(resolve, Math.max(0, expiresAtMs - Date.now() + 75)));
+  assert.equal(finished, false);
+  assert.deepEqual(readPairPresence(stateFile), { status: "paired" });
+
+  first.emit("close");
+  const second = await waitFor(() => FakeWebSocket.instances[1], "post-expiry reconnect socket");
+  second.emit("open");
+  const secondBind = await waitFor(() => second.sent.find((message) => message.type === "pair.bind"), "post-expiry rebind");
+  second.message({ version: 1, type: "pair.bound", requestId: secondBind.requestId });
+  await waitFor(() => events.some((event) => event.event === "pair.paired" && event.reconnected), "post-expiry rebound pair");
+  assert.deepEqual(readPairPresence(stateFile), { status: "paired" });
+
+  second.message({ version: 1, type: "pair.expired" });
+  const outcome = await runResult;
+  assert.match(outcome.error.message, /authorization expired/);
+  assert.deepEqual(readPairPresence(stateFile), { status: "expired" });
+});
+
+test("RPC capacity and pending replay protection span reconnects without over-cap churn", async () => {
+  FakeWebSocket.instances = [];
+  const directory = temporaryDirectory("pair-global-rpc-cap");
+  const pairFile = writeOffer(directory);
+  const stateFile = path.join(directory, "presence.json");
+  const controller = new AbortController();
+  const resolvers = [];
+  let calls = 0;
+  let active = 0;
+  let maxActive = 0;
+  const runtime = {
+    seats: async () => {
+      calls += 1;
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      return await new Promise((resolve) => {
+        resolvers.push(() => { active -= 1; resolve(null); });
+      });
+    },
+    originate: async () => null,
+    continue: async () => null,
+    doctorStatus: async () => null,
+  };
+  const pairer = new OutboundPairer({
+    runtime,
+    WebSocketImpl: FakeWebSocket,
+    pairStateFile: stateFile,
+    reconnectBaseMs: 1,
+    reconnectCapMs: 1,
+    random: () => 0,
+  });
+  const runResult = pairer.run({ pairFile, machineId: "sphere-machine-1", signal: controller.signal });
+  const first = await waitFor(() => FakeWebSocket.instances[0], "global-cap first socket");
+  first.emit("open");
+  const firstBind = await waitFor(() => first.sent.find((message) => message.type === "pair.bind"), "global-cap first bind");
+  first.message({ version: 1, type: "pair.bound", requestId: firstBind.requestId });
+  for (let index = 0; index < 16; index += 1) {
+    first.message({ version: 1, type: "rpc.request", id: `pending-${index}`, method: "seats", params: {} });
+  }
+  await waitFor(() => calls === 16, "sixteen pairer-wide RPCs");
+
+  for (let index = 0; index < 1_000; index += 1) {
+    first.message({ version: 1, type: "rpc.request", id: `over-cap-${index}`, method: "seats", params: {} });
+  }
+  await waitFor(
+    () => first.sent.some((message) => message.type === "rpc.error" && message.id === "over-cap-999"),
+    "over-cap churn refusal",
+  );
+  assert.equal(calls, 16);
+
+  first.emit("close");
+  const second = await waitFor(() => FakeWebSocket.instances[1], "global-cap reconnect socket");
+  second.emit("open");
+  const secondBind = await waitFor(() => second.sent.find((message) => message.type === "pair.bind"), "global-cap reconnect bind");
+  second.message({ version: 1, type: "pair.bound", requestId: secondBind.requestId });
+  second.message({ version: 1, type: "rpc.request", id: "pending-0", method: "seats", params: {} });
+  const third = await waitFor(() => FakeWebSocket.instances[2], "pending replay rejection reconnect");
+  assert.equal(calls, 16);
+  assert.equal(maxActive, 16);
+
+  resolvers.shift()();
+  await waitFor(() => active === 15, "one global RPC slot release");
+  third.emit("open");
+  const thirdBind = await waitFor(() => third.sent.find((message) => message.type === "pair.bind"), "post-replay reconnect bind");
+  third.message({ version: 1, type: "pair.bound", requestId: thirdBind.requestId });
+  third.message({ version: 1, type: "rpc.request", id: "over-cap-999", method: "seats", params: {} });
+  await waitFor(() => calls === 17, "previously refused ID admission");
+  assert.equal(maxActive, 16);
+
+  controller.abort();
+  assert.deepEqual(await runResult, { status: "unpaired" });
+  for (const resolve of resolvers) resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(first.sent.some((message) => message.type === "rpc.result"), false);
+  assert.equal(second.sent.some((message) => message.type === "rpc.result"), false);
+  assert.equal(third.sent.some((message) => message.type === "rpc.result"), false);
+});
+
+test("a delayed bind frame from a closed socket cannot restore paired state", async () => {
+  FakeWebSocket.instances = [];
+  const directory = temporaryDirectory("pair-stale-close-frame");
+  const pairFile = writeOffer(directory);
+  const stateFile = path.join(directory, "presence.json");
+  const controller = new AbortController();
+  const events = [];
+  const runtime = { seats: async () => null, originate: async () => null, continue: async () => null, doctorStatus: async () => null };
+  const pairer = new OutboundPairer({ runtime, WebSocketImpl: FakeWebSocket, pairStateFile: stateFile, reconnectBaseMs: 1, reconnectCapMs: 1, random: () => 0, onEvent: (event) => events.push(event) });
+  const runResult = pairer.run({ pairFile, machineId: "sphere-machine-1", signal: controller.signal });
+  const first = await waitFor(() => FakeWebSocket.instances[0], "delayed-close socket");
+  first.emit("open");
+  const bind = await waitFor(() => first.sent.find((message) => message.type === "pair.bind"), "delayed-close bind");
+  const delayed = delayedBlob({ version: 1, type: "pair.bound", requestId: bind.requestId });
+  first.emit("message", delayed.blob);
+  first.emit("close");
+  await waitFor(() => FakeWebSocket.instances[1], "delayed-close reconnect");
+  delayed.release();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(fs.existsSync(pairFile), true);
+  assert.equal(JSON.parse(fs.readFileSync(stateFile, "utf8")).staleReason, "relay_connection_closed");
+  assert.equal(events.some((event) => event.event === "pair.paired"), false);
+  controller.abort();
+  assert.deepEqual(await runResult, { status: "unpaired" });
+});
+
+test("a delayed bind frame from an aborted socket has no post-abort side effects", async () => {
+  FakeWebSocket.instances = [];
+  const directory = temporaryDirectory("pair-stale-abort-frame");
+  const pairFile = writeOffer(directory);
+  const stateFile = path.join(directory, "presence.json");
+  const controller = new AbortController();
+  const events = [];
+  const runtime = { seats: async () => null, originate: async () => null, continue: async () => null, doctorStatus: async () => null };
+  const pairer = new OutboundPairer({ runtime, WebSocketImpl: FakeWebSocket, pairStateFile: stateFile, onEvent: (event) => events.push(event) });
+  const runResult = pairer.run({ pairFile, machineId: "sphere-machine-1", signal: controller.signal });
+  const socket = await waitFor(() => FakeWebSocket.instances[0], "delayed-abort socket");
+  socket.emit("open");
+  const bind = await waitFor(() => socket.sent.find((message) => message.type === "pair.bind"), "delayed-abort bind");
+  const delayed = delayedBlob({ version: 1, type: "pair.bound", requestId: bind.requestId });
+  socket.emit("message", delayed.blob);
+  controller.abort();
+  assert.deepEqual(await runResult, { status: "unpaired" });
+  delayed.release();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(fs.existsSync(pairFile), true);
+  assert.deepEqual(readPairPresence(stateFile), { status: "unpaired" });
+  assert.equal(events.some((event) => event.event === "pair.paired"), false);
+});
+
+test("a delayed RPC frame from a lost bound socket cannot start local work", async () => {
+  FakeWebSocket.instances = [];
+  const directory = temporaryDirectory("pair-stale-rpc-frame");
+  const pairFile = writeOffer(directory);
+  const stateFile = path.join(directory, "presence.json");
+  const controller = new AbortController();
+  let calls = 0;
+  const runtime = {
+    seats: async () => { calls += 1; return null; },
+    originate: async () => null,
+    continue: async () => null,
+    doctorStatus: async () => null,
+  };
+  const pairer = new OutboundPairer({ runtime, WebSocketImpl: FakeWebSocket, pairStateFile: stateFile, reconnectBaseMs: 1, reconnectCapMs: 1, random: () => 0 });
+  const runResult = pairer.run({ pairFile, machineId: "sphere-machine-1", signal: controller.signal });
+  const first = await waitFor(() => FakeWebSocket.instances[0], "delayed-RPC socket");
+  first.emit("open");
+  const bind = await waitFor(() => first.sent.find((message) => message.type === "pair.bind"), "delayed-RPC bind");
+  first.message({ version: 1, type: "pair.bound", requestId: bind.requestId });
+  await waitFor(() => !fs.existsSync(pairFile), "delayed-RPC offer consumption");
+  const delayed = delayedBlob({ version: 1, type: "rpc.request", id: "stale-rpc", method: "seats", params: {} });
+  first.emit("message", delayed.blob);
+  first.emit("close");
+  await waitFor(() => FakeWebSocket.instances[1], "delayed-RPC reconnect");
+  delayed.release();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(calls, 0);
+  assert.equal(first.sent.some((message) => message.id === "stale-rpc"), false);
+  controller.abort();
+  assert.deepEqual(await runResult, { status: "unpaired" });
 });
 
 test("missed relay heartbeat marks presence stale and reconnects", async () => {
