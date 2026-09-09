@@ -16,6 +16,7 @@ export const REMOTE_RPC_METHODS = Object.freeze(["seats", "originate", "continue
 
 const offerSecrets = new WeakMap();
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,128}$/;
+const MAX_TIMER_MS = 2_147_483_647;
 const ORIGINATE_PARAM_KEYS = new Set([
   "workspace", "title", "message", "instanceId", "model", "options", "budget", "runtimeMode", "idempotencyKey",
 ]);
@@ -109,7 +110,6 @@ function consumePairOffer(offer) {
     throw new Error("Pair offer changed before one-shot consumption");
   }
   fs.unlinkSync(offer.sourceFile);
-  offerSecrets.delete(offer);
 }
 
 function fullAccessParams(params, label, allowedKeys) {
@@ -196,6 +196,38 @@ function encodeBounded(message, maxBytes) {
   return encoded;
 }
 
+export function reconnectDelayMs(attempt, {
+  baseMs = 500,
+  capMs = 30_000,
+  random = Math.random,
+} = {}) {
+  if (!Number.isInteger(attempt) || attempt < 0) throw new Error("Reconnect attempt must be a non-negative integer");
+  if (!Number.isInteger(baseMs) || baseMs < 1 || baseMs > 60_000) throw new Error("Reconnect base must be between 1ms and 60000ms");
+  if (!Number.isInteger(capMs) || capMs < baseMs || capMs > 60_000) throw new Error("Reconnect cap must be between the base and 60000ms");
+  const sample = random();
+  if (!Number.isFinite(sample) || sample < 0 || sample >= 1) throw new Error("Reconnect jitter source must return a value in [0, 1)");
+  const ceiling = Math.min(capMs, baseMs * (2 ** Math.min(attempt, 30)));
+  const floor = Math.ceil(ceiling / 2);
+  return Math.min(capMs, floor + Math.floor(sample * (ceiling - floor + 1)));
+}
+
+function waitForReconnect(delayMs, signal) {
+  if (signal?.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    let timer;
+    const abort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      resolve(false);
+    };
+    timer = setTimeout(() => {
+      signal?.removeEventListener("abort", abort);
+      resolve(true);
+    }, delayMs);
+    signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+
 export class OutboundPairer {
   constructor({
     runtime,
@@ -204,6 +236,10 @@ export class OutboundPairer {
     handshakeTimeoutMs = 15_000,
     maxFrameBytes = 1024 * 1024,
     leaseMs = 30_000,
+    heartbeatTimeoutMs = leaseMs,
+    reconnectBaseMs = 500,
+    reconnectCapMs = 30_000,
+    random = Math.random,
     now = Date.now,
     onEvent = () => {},
   }) {
@@ -217,12 +253,21 @@ export class OutboundPairer {
     if (!Number.isInteger(leaseMs) || leaseMs < 1_000 || leaseMs > 300_000) {
       throw new Error("Pair lease must be between 1000ms and 300000ms");
     }
+    if (!Number.isInteger(heartbeatTimeoutMs) || heartbeatTimeoutMs < 1_000 || heartbeatTimeoutMs > 300_000) {
+      throw new Error("Pair heartbeat timeout must be between 1000ms and 300000ms");
+    }
+    reconnectDelayMs(0, { baseMs: reconnectBaseMs, capMs: reconnectCapMs, random: () => 0 });
+    if (typeof random !== "function") throw new Error("Reconnect jitter source must be a function");
     this.shim = new RemoteRpcShim(runtime);
     this.WebSocketImpl = WebSocketImpl;
     this.pairStateFile = pairStateFile;
     this.handshakeTimeoutMs = handshakeTimeoutMs;
     this.maxFrameBytes = maxFrameBytes;
     this.leaseMs = leaseMs;
+    this.heartbeatTimeoutMs = heartbeatTimeoutMs;
+    this.reconnectBaseMs = reconnectBaseMs;
+    this.reconnectCapMs = reconnectCapMs;
+    this.random = random;
     this.now = now;
     this.onEvent = onEvent;
   }
@@ -244,69 +289,193 @@ export class OutboundPairer {
     };
     if (offer.expired) {
       try {
-        writePairPresence("expired", { file: this.pairStateFile, now: this.now() });
+        writePairPresence("expired", {
+          file: this.pairStateFile,
+          now: this.now(),
+          staleReason: "authorization_expired",
+        });
         this.emit({ event: "pair.expired", status: "expired" });
       } finally {
+        offerSecrets.delete(offer);
         releasePairStateOnce();
       }
       throw new Error("Pair offer has expired");
     }
-    let socket;
-    try {
-      writePairPresence("unpaired", { file: this.pairStateFile, now: this.now() });
-      this.emit({ event: "pair.connecting", status: "unpaired" });
-      socket = new this.WebSocketImpl(offer.endpoint);
-    } catch {
-      releasePairStateOnce();
-      throw new Error("Pair relay connection failed");
-    }
-    const bindRequestId = randomUUID();
     const seenRpcIds = new Set();
     const rpcIdWindow = [];
+    let offerConsumed = false;
+    let everBound = false;
+    let reconnectAttempt = 0;
+    const consumeOfferOnce = () => {
+      if (offerConsumed) return;
+      consumePairOffer(offer);
+      offerConsumed = true;
+    };
+    try {
+      writePairPresence("unpaired", {
+        file: this.pairStateFile,
+        now: this.now(),
+        staleReason: "relay_connecting",
+      });
+      while (true) {
+        if (signal?.aborted) {
+          writePairPresence("unpaired", {
+            file: this.pairStateFile,
+            now: this.now(),
+            staleReason: "stopped",
+          });
+          this.emit({ event: "pair.unpaired", status: "unpaired", staleReason: "stopped" });
+          return { status: "unpaired" };
+        }
+        if (Date.parse(offer.expiresAt) <= this.now()) {
+          writePairPresence("expired", {
+            file: this.pairStateFile,
+            now: this.now(),
+            staleReason: "authorization_expired",
+          });
+          this.emit({ event: "pair.expired", status: "expired", staleReason: "authorization_expired" });
+          throw new Error("Pair authorization expired");
+        }
+        this.emit({
+          event: everBound ? "pair.reannouncing" : "pair.connecting",
+          status: "unpaired",
+          attempt: reconnectAttempt + 1,
+        });
+        const outcome = await this.connectOnce({
+          offer,
+          machineId,
+          signal,
+          seenRpcIds,
+          rpcIdWindow,
+          consumeOfferOnce,
+          reconnected: everBound,
+        });
+        if (outcome.kind === "stopped") {
+          writePairPresence("unpaired", {
+            file: this.pairStateFile,
+            now: this.now(),
+            staleReason: "stopped",
+          });
+          this.emit({ event: "pair.unpaired", status: "unpaired", staleReason: "stopped" });
+          return { status: "unpaired" };
+        }
+        if (outcome.kind === "fatal") throw outcome.error;
+        if (outcome.kind === "authorization") {
+          writePairPresence(outcome.status, {
+            file: this.pairStateFile,
+            now: this.now(),
+            staleReason: outcome.staleReason,
+          });
+          this.emit({
+            event: `pair.${outcome.status}`,
+            status: outcome.status,
+            staleReason: outcome.staleReason,
+          });
+          throw new Error(outcome.message);
+        }
+        if (outcome.bound) {
+          everBound = true;
+          reconnectAttempt = 0;
+        }
+        writePairPresence("unpaired", {
+          file: this.pairStateFile,
+          now: this.now(),
+          staleReason: outcome.staleReason,
+        });
+        this.emit({ event: "pair.stale", status: "unpaired", staleReason: outcome.staleReason });
+        const delayMs = reconnectDelayMs(reconnectAttempt, {
+          baseMs: this.reconnectBaseMs,
+          capMs: this.reconnectCapMs,
+          random: this.random,
+        });
+        reconnectAttempt += 1;
+        this.emit({
+          event: "pair.reconnecting",
+          status: "unpaired",
+          staleReason: outcome.staleReason,
+          attempt: reconnectAttempt,
+          delayMs,
+        });
+        if (!await waitForReconnect(delayMs, signal)) continue;
+      }
+    } finally {
+      offerSecrets.delete(offer);
+      releasePairStateOnce();
+    }
+  }
+
+  async connectOnce({
+    offer,
+    machineId,
+    signal,
+    seenRpcIds,
+    rpcIdWindow,
+    consumeOfferOnce,
+    reconnected,
+  }) {
+    let socket;
+    try {
+      socket = new this.WebSocketImpl(offer.endpoint);
+    } catch {
+      return { kind: "transient", bound: false, staleReason: "relay_connection_error" };
+    }
+    const bindRequestId = randomUUID();
     const inFlightRpcIds = new Set();
     let bound = false;
     let settled = false;
-    let stopping = false;
-    let heartbeat = null;
-    let offerExpiryTimer = null;
+    let handshakeTimer;
+    let heartbeatTimer;
+    let offerExpiryTimer;
     let messageQueue = Promise.resolve();
 
-    return await new Promise((resolve, reject) => {
+    return await new Promise((resolve) => {
       const cleanup = () => {
         clearTimeout(handshakeTimer);
-        if (offerExpiryTimer) clearTimeout(offerExpiryTimer);
-        if (heartbeat) clearInterval(heartbeat);
+        clearTimeout(heartbeatTimer);
+        clearTimeout(offerExpiryTimer);
         signal?.removeEventListener("abort", abort);
       };
       const closeSocket = () => { try { socket.close(); } catch {} };
-      const finish = (status, error = null) => {
+      const finish = (outcome) => {
         if (settled) return;
         settled = true;
-        bound = false;
         cleanup();
-        let stateError = null;
-        try { writePairPresence(status, { file: this.pairStateFile, now: this.now() }); }
-        catch { stateError = new Error("Pair presence state update failed"); }
-        this.emit({ event: `pair.${status}`, status });
         closeSocket();
-        releasePairStateOnce();
-        if (error || stateError) reject(error || stateError); else resolve({ status });
+        resolve({ ...outcome, bound });
       };
-      const protocolFailure = () => finish("unpaired", new Error("Pair relay protocol failed closed"));
+      const transient = (staleReason) => finish({ kind: "transient", staleReason });
+      const protocolFailure = () => transient("relay_protocol_error");
+      const authorizationFailure = (status, staleReason, message) => finish({
+        kind: "authorization",
+        status,
+        staleReason,
+        message,
+      });
       const send = (message) => socket.send(encodeBounded(message, this.maxFrameBytes));
-      const abort = () => {
-        stopping = true;
-        finish("unpaired");
+      const refreshPresence = () => {
+        writePairPresence("paired", {
+          file: this.pairStateFile,
+          now: this.now(),
+          leaseMs: this.leaseMs,
+        });
+        clearTimeout(heartbeatTimer);
+        heartbeatTimer = setTimeout(
+          () => transient("relay_heartbeat_timeout"),
+          this.heartbeatTimeoutMs,
+        );
       };
-      const handshakeTimer = setTimeout(
-        () => finish("unpaired", new Error("Pair relay handshake timed out")),
+      const abort = () => finish({ kind: "stopped" });
+      handshakeTimer = setTimeout(
+        () => transient("relay_handshake_timeout"),
         this.handshakeTimeoutMs,
       );
       const offerRemainingMs = Date.parse(offer.expiresAt) - this.now();
-      offerExpiryTimer = setTimeout(
-        () => finish("expired", new Error("Pair offer has expired")),
-        Math.max(0, Math.min(offerRemainingMs, this.handshakeTimeoutMs)),
-      );
+      if (offerRemainingMs <= MAX_TIMER_MS) {
+        offerExpiryTimer = setTimeout(
+          () => authorizationFailure("expired", "authorization_expired", "Pair authorization expired"),
+          Math.max(0, offerRemainingMs),
+        );
+      }
       signal?.addEventListener("abort", abort, { once: true });
       if (signal?.aborted) {
         abort();
@@ -316,7 +485,10 @@ export class OutboundPairer {
       socket.addEventListener("open", () => {
         if (settled) return;
         const pairToken = offerSecrets.get(offer);
-        if (!pairToken) { protocolFailure(); return; }
+        if (!pairToken) {
+          finish({ kind: "fatal", error: new Error("Pair credential is unavailable") });
+          return;
+        }
         try {
           send({
             version: PAIR_PROTOCOL_VERSION,
@@ -332,7 +504,7 @@ export class OutboundPairer {
             },
           });
         } catch {
-          protocolFailure();
+          transient("relay_connection_error");
         }
       });
 
@@ -347,34 +519,41 @@ export class OutboundPairer {
 
           if (message.type === "pair.bound") {
             if (bound || message.requestId !== bindRequestId) throw new Error("Invalid pair bind acknowledgement");
-            if (Date.parse(offer.expiresAt) <= this.now()) { finish("expired", new Error("Pair offer has expired")); return; }
-            consumePairOffer(offer);
-            bound = true;
-            clearTimeout(handshakeTimer);
-            clearTimeout(offerExpiryTimer);
-            writePairPresence("paired", { file: this.pairStateFile, now: this.now(), leaseMs: this.leaseMs });
-            heartbeat = setInterval(() => {
-              try {
-                writePairPresence("paired", { file: this.pairStateFile, now: this.now(), leaseMs: this.leaseMs });
-              } catch {
-                protocolFailure();
-              }
-            }, Math.max(500, Math.floor(this.leaseMs / 3)));
-            heartbeat.unref?.();
-            this.emit({ event: "pair.paired", status: "paired" });
+            if (Date.parse(offer.expiresAt) <= this.now()) {
+              authorizationFailure("expired", "authorization_expired", "Pair authorization expired");
+              return;
+            }
+            try {
+              consumeOfferOnce();
+              bound = true;
+              clearTimeout(handshakeTimer);
+              refreshPresence();
+            } catch {
+              finish({ kind: "fatal", error: new Error("Pair presence activation failed") });
+              return;
+            }
+            this.emit({ event: "pair.paired", status: "paired", reconnected });
             return;
           }
-          if (message.type === "pair.expired") { finish("expired", new Error("Pair expired")); return; }
-          if (message.type === "pair.revoked" || message.type === "pair.unpaired") {
-            finish("unpaired", new Error("Pair is no longer authorized"));
+          if (message.type === "pair.expired") {
+            authorizationFailure("expired", "authorization_expired", "Pair authorization expired");
             return;
           }
+          if (message.type === "pair.revoked") {
+            authorizationFailure("unpaired", "authorization_revoked", "Pair authorization was revoked");
+            return;
+          }
+          if (message.type === "pair.unpaired") {
+            authorizationFailure("unpaired", "authorization_denied", "Pair authorization was denied");
+            return;
+          }
+          if (!bound) throw new Error("Relay message arrived before a valid pair bind");
+          refreshPresence();
           if (message.type === "ping") {
-            if (!bound) throw new Error("Pair ping arrived before bind");
             send({ version: PAIR_PROTOCOL_VERSION, type: "pong" });
             return;
           }
-          if (message.type !== "rpc.request" || !bound) throw new Error("RPC arrived before a valid pair bind");
+          if (message.type !== "rpc.request") throw new Error("Unsupported pair relay message");
           const id = requireSafeId(message.id, "RPC request id");
           if (seenRpcIds.has(id) || inFlightRpcIds.has(id)) throw new Error("RPC replay window failed closed");
           seenRpcIds.add(id);
@@ -384,21 +563,19 @@ export class OutboundPairer {
           inFlightRpcIds.add(id);
           void this.shim.handle(message).then((result) => {
             if (settled) return;
-            let response = result;
             try {
-              send(response);
+              send(result);
             } catch {
-              response = unavailable(id);
-              send(response);
+              send(unavailable(id));
             }
           }).catch(() => protocolFailure()).finally(() => inFlightRpcIds.delete(id));
         }).catch(() => protocolFailure());
       });
       socket.addEventListener("error", () => {
-        if (!settled) finish("unpaired", new Error("Pair relay connection failed"));
+        if (!settled) transient("relay_connection_error");
       });
       socket.addEventListener("close", () => {
-        if (!settled) finish("unpaired", stopping ? null : new Error("Pair relay connection closed"));
+        if (!settled) transient("relay_connection_closed");
       });
     });
   }

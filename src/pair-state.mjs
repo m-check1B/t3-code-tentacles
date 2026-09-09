@@ -5,6 +5,18 @@ import { DEFAULT_STATE_DIR } from "./config.mjs";
 
 export const DEFAULT_PAIR_STATE_FILE = path.join(DEFAULT_STATE_DIR, "pair-presence.json");
 export const PAIR_PRESENCE_STATUSES = Object.freeze(["paired", "unpaired", "expired"]);
+export const PAIR_STALE_REASONS = Object.freeze([
+  "authorization_denied",
+  "authorization_expired",
+  "authorization_revoked",
+  "relay_connecting",
+  "relay_connection_closed",
+  "relay_connection_error",
+  "relay_handshake_timeout",
+  "relay_heartbeat_timeout",
+  "relay_protocol_error",
+  "stopped",
+]);
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -82,11 +94,18 @@ export function writePairPresence(status, {
   file = DEFAULT_PAIR_STATE_FILE,
   now = Date.now(),
   leaseMs = 30_000,
+  staleReason = null,
 } = {}) {
   if (!PAIR_PRESENCE_STATUSES.includes(status)) throw new Error("Invalid pair presence status");
   if (!Number.isFinite(now)) throw new Error("Pair presence time must be finite");
   if (status === "paired" && (!Number.isInteger(leaseMs) || leaseMs < 1_000 || leaseMs > 300_000)) {
     throw new Error("Pair presence lease must be between 1000ms and 300000ms");
+  }
+  if (staleReason !== null && !PAIR_STALE_REASONS.includes(staleReason)) {
+    throw new Error("Invalid pair presence stale reason");
+  }
+  if (status === "paired" && staleReason !== null) {
+    throw new Error("Paired presence cannot carry a stale reason");
   }
   const destination = path.resolve(file);
   const directory = path.dirname(destination);
@@ -97,6 +116,7 @@ export function writePairPresence(status, {
     status,
     updatedAt: new Date(now).toISOString(),
     ...(status === "paired" ? { leaseExpiresAt: new Date(now + leaseMs).toISOString() } : {}),
+    ...(staleReason !== null ? { staleReason } : {}),
   };
   const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
   try {

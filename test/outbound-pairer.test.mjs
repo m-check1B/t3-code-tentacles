@@ -8,11 +8,17 @@ import {
   OutboundPairer,
   PAIR_PROTOCOL_VERSION,
   readPairOffer,
+  reconnectDelayMs,
   RemoteRpcShim,
   SPHERE_ABILITY,
   SPHERE_PRODUCT_ID,
 } from "../src/outbound-pairer.mjs";
-import { acquirePairStateLock, readPairPresence, writePairPresence } from "../src/pair-state.mjs";
+import {
+  acquirePairStateLock,
+  PAIR_STALE_REASONS,
+  readPairPresence,
+  writePairPresence,
+} from "../src/pair-state.mjs";
 
 const PAIR_TOKEN = "pair-secret-never-print-123456";
 
@@ -106,8 +112,29 @@ test("pair presence is a secret-free lease with paired, unpaired, and expired st
   assert.deepEqual(readPairPresence(file, { now: 1_040_000 }), { status: "unpaired" });
   writePairPresence("expired", { file, now: 1_050_000 });
   assert.deepEqual(readPairPresence(file, { now: 1_050_001 }), { status: "expired" });
+  writePairPresence("unpaired", { file, now: 1_060_000, staleReason: "relay_connection_closed" });
+  assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).staleReason, "relay_connection_closed");
+  assert.deepEqual(readPairPresence(file, { now: 1_060_001 }), { status: "unpaired" });
+  assert.equal(PAIR_STALE_REASONS.includes("relay_heartbeat_timeout"), true);
+  assert.throws(
+    () => writePairPresence("unpaired", { file, staleReason: "private relay failure text" }),
+    /Invalid pair presence stale reason/,
+  );
+  assert.throws(
+    () => writePairPresence("paired", { file, staleReason: "relay_connection_closed" }),
+    /cannot carry a stale reason/,
+  );
   assert.equal(fs.readFileSync(file, "utf8").includes(PAIR_TOKEN), false);
   assert.equal(fs.statSync(file).mode & 0o077, 0);
+});
+
+test("reconnect delay is capped exponential backoff with bounded jitter", () => {
+  assert.equal(reconnectDelayMs(0, { baseMs: 100, capMs: 800, random: () => 0 }), 50);
+  assert.equal(reconnectDelayMs(1, { baseMs: 100, capMs: 800, random: () => 0 }), 100);
+  assert.equal(reconnectDelayMs(2, { baseMs: 100, capMs: 800, random: () => 0.999 }), 400);
+  assert.equal(reconnectDelayMs(30, { baseMs: 100, capMs: 800, random: () => 0.999 }), 800);
+  assert.throws(() => reconnectDelayMs(-1), /non-negative integer/);
+  assert.throws(() => reconnectDelayMs(0, { random: () => 1 }), /in \[0, 1\)/);
 });
 
 test("pair state refuses broad custom directories and serializes pairer ownership", () => {
@@ -235,9 +262,106 @@ test("outbound pair binds one Sphere machine, consumes the offer once, and serve
   assert.deepEqual(calls.map(([method]) => method), ["seats", "originate", "continue", "doctor-status"]);
 
   socket.message({ version: 1, type: "rpc.request", id: "rpc-4", method: "doctor-status", params: {} });
+  const reconnectSocket = await waitFor(() => FakeWebSocket.instances[1], "protocol-failure reconnect");
+  assert.equal(JSON.parse(fs.readFileSync(stateFile, "utf8")).staleReason, "relay_protocol_error");
+  // This run has no controller, so an unrecoverable authorization response ends it.
+  reconnectSocket.emit("open");
+  const reconnectBind = await waitFor(
+    () => reconnectSocket.sent.find((message) => message.type === "pair.bind"),
+    "protocol-failure rebind",
+  );
+  assert.equal(reconnectBind.pairToken, PAIR_TOKEN);
+  reconnectSocket.message({ version: 1, type: "pair.unpaired" });
   const outcome = await runResult;
-  assert.match(outcome.error.message, /protocol failed closed/);
+  assert.match(outcome.error.message, /authorization was denied/);
   assert.deepEqual(readPairPresence(stateFile), { status: "unpaired" });
+});
+
+test("fake relay socket drop reconnects, re-announces, and refreshes presence on heartbeat", async () => {
+  FakeWebSocket.instances = [];
+  const directory = temporaryDirectory("pair-reconnect");
+  const pairFile = writeOffer(directory);
+  const stateFile = path.join(directory, "presence.json");
+  const controller = new AbortController();
+  const events = [];
+  let now = Date.parse("2026-09-09T12:00:00.000Z");
+  const runtime = { seats: async () => null, originate: async () => null, continue: async () => null, doctorStatus: async () => null };
+  const pairer = new OutboundPairer({
+    runtime,
+    WebSocketImpl: FakeWebSocket,
+    pairStateFile: stateFile,
+    leaseMs: 3_000,
+    heartbeatTimeoutMs: 2_000,
+    reconnectBaseMs: 1,
+    reconnectCapMs: 1,
+    random: () => 0,
+    now: () => now,
+    onEvent: (event) => events.push(event),
+  });
+  const runResult = pairer.run({ pairFile, machineId: "sphere-machine-1", signal: controller.signal });
+  const first = await waitFor(() => FakeWebSocket.instances[0], "first relay socket");
+  first.emit("open");
+  const firstBind = await waitFor(() => first.sent.find((message) => message.type === "pair.bind"), "first relay bind");
+  first.message({ version: 1, type: "pair.bound", requestId: firstBind.requestId });
+  await waitFor(() => readPairPresence(stateFile, { now }).status === "paired", "first paired presence");
+  const initialUpdatedAt = JSON.parse(fs.readFileSync(stateFile, "utf8")).updatedAt;
+
+  now += 1_000;
+  first.message({ version: 1, type: "ping" });
+  await waitFor(
+    () => JSON.parse(fs.readFileSync(stateFile, "utf8")).updatedAt !== initialUpdatedAt,
+    "heartbeat-refreshed presence",
+  );
+  assert.equal(first.sent.some((message) => message.type === "pong"), true);
+
+  first.emit("close");
+  await waitFor(
+    () => JSON.parse(fs.readFileSync(stateFile, "utf8")).staleReason === "relay_connection_closed",
+    "stale close reason",
+  );
+  const second = await waitFor(() => FakeWebSocket.instances[1], "reconnected relay socket");
+  second.emit("open");
+  const secondBind = await waitFor(() => second.sent.find((message) => message.type === "pair.bind"), "presence re-announce");
+  assert.equal(secondBind.pairToken, PAIR_TOKEN);
+  assert.notEqual(secondBind.requestId, firstBind.requestId);
+  second.message({ version: 1, type: "pair.bound", requestId: secondBind.requestId });
+  await waitFor(() => events.some((event) => event.event === "pair.paired" && event.reconnected), "reconnected event");
+  assert.deepEqual(readPairPresence(stateFile, { now }), { status: "paired" });
+
+  controller.abort();
+  assert.deepEqual(await runResult, { status: "unpaired" });
+  assert.equal(JSON.parse(fs.readFileSync(stateFile, "utf8")).staleReason, "stopped");
+  assert.equal(events.some((event) => event.event === "pair.reannouncing"), true);
+  assert.equal(JSON.stringify(events).includes(PAIR_TOKEN), false);
+});
+
+test("missed relay heartbeat marks presence stale and reconnects", async () => {
+  FakeWebSocket.instances = [];
+  const directory = temporaryDirectory("pair-heartbeat-timeout");
+  const pairFile = writeOffer(directory);
+  const stateFile = path.join(directory, "presence.json");
+  const controller = new AbortController();
+  const runtime = { seats: async () => null, originate: async () => null, continue: async () => null, doctorStatus: async () => null };
+  const pairer = new OutboundPairer({
+    runtime,
+    WebSocketImpl: FakeWebSocket,
+    pairStateFile: stateFile,
+    leaseMs: 1_000,
+    heartbeatTimeoutMs: 1_000,
+    reconnectBaseMs: 1,
+    reconnectCapMs: 1,
+    random: () => 0,
+  });
+  const runResult = pairer.run({ pairFile, machineId: "sphere-machine-1", signal: controller.signal });
+  const first = await waitFor(() => FakeWebSocket.instances[0], "heartbeat socket");
+  first.emit("open");
+  const bind = await waitFor(() => first.sent.find((message) => message.type === "pair.bind"), "heartbeat bind");
+  first.message({ version: 1, type: "pair.bound", requestId: bind.requestId });
+  const second = await waitFor(() => FakeWebSocket.instances[1], "heartbeat-timeout reconnect");
+  assert.equal(JSON.parse(fs.readFileSync(stateFile, "utf8")).staleReason, "relay_heartbeat_timeout");
+  controller.abort();
+  assert.deepEqual(await runResult, { status: "unpaired" });
+  assert.equal(second.closed, true);
 });
 
 test("Sphere revoke is handled while a local RPC remains in flight", async () => {
@@ -270,7 +394,7 @@ test("Sphere revoke is handled while a local RPC remains in flight", async () =>
   await waitFor(() => rpcStarted, "slow RPC start");
   socket.message({ version: 1, type: "pair.revoked" });
   const outcome = await runResult;
-  assert.match(outcome.error.message, /no longer authorized/);
+  assert.match(outcome.error.message, /authorization was revoked/);
   assert.deepEqual(readPairPresence(stateFile), { status: "unpaired" });
   resolveRpc({ seats: ["must-not-send-after-revoke"] });
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -296,7 +420,7 @@ test("bind acknowledgement refuses to consume a replaced offer path", async () =
   writeOffer(directory, { pairToken: "different-one-shot-secret-1234" });
   socket.message({ version: 1, type: "pair.bound", requestId: bind.requestId });
   const outcome = await runResult;
-  assert.match(outcome.error.message, /protocol failed closed/);
+  assert.match(outcome.error.message, /presence activation failed/);
   assert.equal(fs.existsSync(pairFile), true);
   assert.equal(fs.existsSync(originalFile), true);
   assert.equal(outcome.error.message.includes(PAIR_TOKEN), false);

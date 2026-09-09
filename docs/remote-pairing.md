@@ -52,9 +52,13 @@ tentacles pair \
 Tentacles sends the token only in the initial `pair.bind` frame. It removes the
 exact file inode only after the endpoint acknowledges `pair.bound`. Expired or
 rejected offers remain available for operator audit and replacement; they are
-never printed. A successful pair lives for the outbound connection. Disconnect,
-expiry, or `pair.revoked` makes the computer unavailable and requires a fresh
-one-shot offer.
+never printed. After a transient socket loss, the same process reconnects with
+capped exponential backoff plus jitter and re-announces the host contract. The
+one-shot credential remains memory-only after the offer file is consumed. A
+relay that accepts the re-announcement restores the pair in place; a v1 relay
+that rejects the consumed credential returns `pair.unpaired`, which is treated
+as unrecoverable authorization so a launchd `KeepAlive` wrapper can mint a fresh
+offer. `pair.expired` and `pair.revoked` are terminal authorization results too.
 
 ## Wire surface
 
@@ -93,3 +97,8 @@ file paths.
 
 `tentacles doctor` reports only `paired`, `unpaired`, or `expired`. Its presence
 lease contains no token, endpoint, machine identity, prompt, or RPC payload.
+`pair-presence.json` is refreshed by valid relay traffic, including every
+application-level `ping`, instead of by an independent local timer. Socket loss
+or a missed relay heartbeat immediately writes `unpaired` with a closed
+`staleReason` value before retrying; a later `pair.bound` clears that reason and
+restores the lease.
