@@ -72,7 +72,8 @@ test("budgetOptionId maps only known lab effort knobs", () => {
   assert.equal(budgetOptionId("hermes", "openai-codex:gpt-5.6-sol"), "reasoningEffort");
   assert.equal(budgetOptionId("hermes", "some-other-model"), null);
   assert.equal(budgetOptionId("claudeAgent", "claude-opus-4-6"), "effort");
-  for (const lab of ["grok", "cursor", "deepseek", "kimi", "pi", "opencode"]) {
+  assert.equal(budgetOptionId("grok", "grok-4.7"), "reasoningEffort");
+  for (const lab of ["cursor", "deepseek", "kimi", "pi", "opencode"]) {
     assert.equal(budgetOptionId(lab, "any"), null, lab);
   }
 });
@@ -223,13 +224,46 @@ test("resolveModelSelection maps budget unless an overlapping option is present"
     },
   );
   assert.deepEqual(
-    resolveModelSelection({ instanceId: "grok", model: "grok-build", budget: "high" }),
-    { instanceId: "grok", model: "grok-build" },
+    resolveModelSelection({ instanceId: "grok", model: "grok-build", budget: "medium" }),
+    { instanceId: "grok", model: "grok-build", options: [{ id: "reasoningEffort", value: "medium" }] },
+  );
+  // No budget: Grok must not inherit the global xhigh default from ~/.grok/config.toml.
+  assert.deepEqual(
+    resolveModelSelection({ instanceId: "grok", model: "grok-4.7" }),
+    { instanceId: "grok", model: "grok-4.7", options: [{ id: "reasoningEffort", value: "high" }] },
   );
   assert.deepEqual(
     resolveModelSelection({ instanceId: "hermes", model: "openai-codex:gpt-5.6-sol" }),
-    { instanceId: "hermes", model: "openai-codex:gpt-5.6-sol" },
+    { instanceId: "hermes", model: "openai-codex:gpt-5.6-sol", options: [{ id: "reasoningEffort", value: "high" }] },
   );
+});
+
+test("effort policy: every knobbed seat pins an effort, Opus/Astra start medium, never above high", () => {
+  assert.deepEqual(
+    resolveModelSelection({ instanceId: "claudeAgent", model: "claude-opus-5-5" }).options,
+    [{ id: "effort", value: "medium" }],
+  );
+  assert.deepEqual(
+    resolveModelSelection({ instanceId: "codex", model: "gpt-6-astra" }).options,
+    [{ id: "reasoningEffort", value: "medium" }],
+  );
+  assert.deepEqual(
+    resolveModelSelection({ instanceId: "codex", model: "gpt-6-astra", budget: "high" }).options,
+    [{ id: "reasoningEffort", value: "high" }],
+  );
+  assert.deepEqual(
+    resolveModelSelection({ instanceId: "codex", model: "gpt-6-sol" }).options,
+    [{ id: "reasoningEffort", value: "high" }],
+  );
+  for (const [instanceId, model, id] of [["grok", "grok-4.7", "reasoningEffort"], ["codex", "gpt-6-astra", "reasoningEffort"], ["claudeAgent", "claude-opus-5-5", "effort"]]) {
+    for (const value of ["xhigh", "max"]) {
+      assert.throws(
+        () => resolveModelSelection({ instanceId, model, options: [{ id, value }] }),
+        /above high is Founder-manual only/,
+        `${instanceId} ${value}`,
+      );
+    }
+  }
 });
 
 test("resolveModelSelection and option flags fail closed on invalid input", () => {
@@ -301,6 +335,7 @@ test("continueThread preserves an existing non-Hermes selection when lab/model a
   assert.deepEqual(client.threads.get("grok-thread").modelSelection, {
     instanceId: "grok",
     model: "grok-build",
+    options: [{ id: "reasoningEffort", value: "high" }],
   });
 
   await continueThread(client, {
@@ -315,12 +350,14 @@ test("continueThread preserves an existing non-Hermes selection when lab/model a
   assert.notDeepEqual(continued.modelSelection, {
     instanceId: "hermes",
     model: "openai-codex:gpt-5.6-sol",
+    options: [{ id: "reasoningEffort", value: "high" }],
   });
   assert.equal(continued.runtimeMode, "auto-accept-edits");
   assert.equal(continued.message.messageId, "m2");
   assert.deepEqual(client.threads.get("grok-thread").modelSelection, {
     instanceId: "grok",
     model: "grok-build",
+    options: [{ id: "reasoningEffort", value: "high" }],
   });
   assert.equal(client.threads.get("grok-thread").messages.some((entry) => entry.id === "m2"), true);
 
@@ -373,6 +410,7 @@ test("continueThread resolves a partial legacy selection and omits only the all-
   assert.deepEqual(client.commands[2].modelSelection, {
     instanceId: "hermes",
     model: "openai-codex:gpt-5.6-sol",
+    options: [{ id: "reasoningEffort", value: "high" }],
   });
 
   await continueThread(client, {
@@ -440,10 +478,11 @@ test("continueThread rejects explicit null lab/model instead of substituting Her
   assert.deepEqual(client.threads.get("null-thread").modelSelection, {
     instanceId: "grok",
     model: "grok-build",
+    options: [{ id: "reasoningEffort", value: "high" }],
   });
 });
 
-test("startThread omits options when none are provided", async () => {
+test("startThread omits options for a lab without an effort knob", async () => {
   const client = recordingClient();
   await startThread(client, {
     projectId: "p1",
@@ -451,11 +490,11 @@ test("startThread omits options when none are provided", async () => {
     title: "Watch",
     message: "hello",
     messageId: "watch-message",
-    instanceId: "hermes",
-    model: "openai-codex:gpt-5.6-sol",
+    instanceId: "kimi",
+    model: "moonshotai/kimi-k3",
     runtimeMode: "full-access",
   });
-  assert.deepEqual(client.commands[0].modelSelection, { instanceId: "hermes", model: "openai-codex:gpt-5.6-sol" });
+  assert.deepEqual(client.commands[0].modelSelection, { instanceId: "kimi", model: "moonshotai/kimi-k3" });
   assert.equal("options" in client.commands[0].modelSelection, false);
   assert.equal("options" in client.commands[1].modelSelection, false);
 });

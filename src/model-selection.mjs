@@ -156,11 +156,15 @@ export function normalizeModelOptions(options, label = "modelSelection.options")
 // only — do not invent option ids T3 has not advertised for that lab.
 export function budgetOptionId(instanceId, model) {
   if (instanceId === "claudeAgent") return "effort";
-  if (instanceId === "codex" || instanceId === "codex-app") return "reasoningEffort";
+  if (instanceId === "codex" || instanceId === "codex-app" || instanceId === "grok") return "reasoningEffort";
   if (instanceId === "hermes" && typeof model === "string" && model.startsWith("openai-codex:")) {
     return "reasoningEffort";
   }
   return null;
+}
+
+export function defaultBudget(model) {
+  return typeof model === "string" && /(^|[-:/])(claude-opus|gpt-[\d.]+-astra)/.test(model) ? "medium" : "high";
 }
 
 export function resolveModelSelection({ instanceId, model, options, budget } = {}) {
@@ -188,6 +192,18 @@ export function resolveModelSelection({ instanceId, model, options, budget } = {
     const optionId = budgetOptionId(resolvedInstanceId, resolvedModel);
     if (optionId && !explicit.some((entry) => entry.id === optionId)) {
       explicit.push({ id: optionId, value: resolvedBudget });
+    }
+  }
+  // Founder effort policy: every seat with an effort knob pins one, so no lab
+  // inherits a local default (e.g. ~/.grok/config.toml xhigh). Default high;
+  // Opus and Astra start at medium. Above high is Founder-manual only.
+  const effortId = budgetOptionId(resolvedInstanceId, resolvedModel);
+  if (effortId) {
+    const effort = explicit.find((entry) => entry.id === effortId);
+    if (!effort) {
+      explicit.push({ id: effortId, value: defaultBudget(resolvedModel) });
+    } else if (!BUDGET_SET.has(effort.value)) {
+      throw new Error(`${effortId} must be one of ${BUDGETS.join(", ")}; above high is Founder-manual only`);
     }
   }
   const selection = { instanceId: resolvedInstanceId, model: resolvedModel };

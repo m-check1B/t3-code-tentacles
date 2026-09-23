@@ -223,7 +223,7 @@ test("idempotent originate retries keep full-access without duplicate session-in
     message: "hello",
     instanceId: "codex",
     model: "gpt-5.6-sol",
-    options: [{ id: "reasoningEffort", value: "xhigh" }],
+    options: [{ id: "reasoningEffort", value: "high" }],
     runtimeMode: "full-access",
     idempotencyKey: "origin-mode-1",
     stateFile,
