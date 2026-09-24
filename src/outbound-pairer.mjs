@@ -122,6 +122,9 @@ function fullAccessParams(params, label, allowedKeys) {
   return { ...input, runtimeMode: "full-access" };
 }
 
+const EFFORT_PIN = /^[A-Za-z][A-Za-z0-9-]{0,31}$/;
+const MODEL_LABEL = /^[A-Za-z0-9._:+-]{1,80}$/;
+
 function pairedThreadReportStatus(thread) {
   const session = isRecord(thread.session) ? thread.session : {};
   const settled = typeof thread.settledAt === "string" && thread.settledAt.length > 0;
@@ -132,6 +135,67 @@ function pairedThreadReportStatus(thread) {
     || (session.lastError !== null && session.lastError !== undefined && session.lastError !== "")) return "blocked";
   if ([undefined, null, "ready", "idle", "stopped"].includes(session.status)) return "ready/idle";
   return "blocked";
+}
+
+function canonicalIso(value) {
+  if (typeof value !== "string") return null;
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return null;
+  return new Date(parsed).toISOString() === value ? value : null;
+}
+
+function pairedThreadLastActivity(thread) {
+  const stamps = [];
+  for (const value of [thread.lastActivity, thread.updatedAt]) {
+    const stamp = canonicalIso(value);
+    if (stamp) stamps.push(stamp);
+  }
+  if (Array.isArray(thread.activities)) {
+    for (const activity of thread.activities) {
+      if (!isRecord(activity)) continue;
+      const created = canonicalIso(activity.createdAt);
+      if (created) stamps.push(created);
+    }
+  }
+  stamps.sort();
+  return stamps.at(-1) ?? null;
+}
+
+function pairedThreadEffort(thread) {
+  const selection = isRecord(thread.modelSelection) ? thread.modelSelection : {};
+  const options = Array.isArray(selection.options) ? selection.options : [];
+  for (const option of options) {
+    if (!isRecord(option)) continue;
+    if (option.id !== "reasoningEffort" && option.id !== "effort" && option.id !== "budget") continue;
+    if (typeof option.value === "string" && EFFORT_PIN.test(option.value)) return option.value;
+  }
+  for (const key of ["budget", "effort", "reasoningEffort"]) {
+    const raw = selection[key];
+    if (typeof raw === "string" && EFFORT_PIN.test(raw)) return raw;
+  }
+  return null;
+}
+
+function pairedThreadModel(thread) {
+  const selection = isRecord(thread.modelSelection) ? thread.modelSelection : {};
+  return typeof selection.model === "string" && MODEL_LABEL.test(selection.model) ? selection.model : null;
+}
+
+function pairedThreadSummary(status, model, effort) {
+  const modelLabel = model ?? "model unset";
+  const effortLabel = effort ? `effort ${effort}` : "effort unset";
+  return `${status}. ${modelLabel}, ${effortLabel}.`;
+}
+
+function pairedThreadReport(thread) {
+  const status = pairedThreadReportStatus(thread);
+  const effort = pairedThreadEffort(thread);
+  return {
+    status,
+    lastActivity: pairedThreadLastActivity(thread),
+    summary: pairedThreadSummary(status, pairedThreadModel(thread), effort),
+    effort,
+  };
 }
 
 function remoteSeatsProjection(observed) {
@@ -150,7 +214,7 @@ function remoteSeatsProjection(observed) {
       .map((thread) => ({
         ...(typeof thread.id === "string" ? { id: thread.id } : {}),
         ...(typeof thread.projectId === "string" ? { projectId: thread.projectId } : {}),
-        report: { status: pairedThreadReportStatus(thread) },
+        report: pairedThreadReport(thread),
       }))
     : [];
   return { activeTurns, threads };

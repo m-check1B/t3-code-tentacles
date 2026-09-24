@@ -200,12 +200,51 @@ test("loopback adapter keeps the relay surface honest about full-access", async 
   assert.deepEqual(await adapter.seats(), {
     activeTurns: [{ threadId: "t1", providerInstanceId: "codex" }],
     threads: [
-      { id: "t1", projectId: "p1", report: { status: "generating" } },
-      { id: "t2", projectId: "p1", report: { status: "ready/idle" } },
-      { id: "t3", projectId: "p1", report: { status: "blocked" } },
-      { id: "t4", projectId: "p1", report: { status: "Done" } },
+      {
+        id: "t1",
+        projectId: "p1",
+        report: {
+          status: "generating",
+          lastActivity: null,
+          summary: "generating. model unset, effort unset.",
+          effort: null,
+        },
+      },
+      {
+        id: "t2",
+        projectId: "p1",
+        report: {
+          status: "ready/idle",
+          lastActivity: null,
+          summary: "ready/idle. model unset, effort unset.",
+          effort: null,
+        },
+      },
+      {
+        id: "t3",
+        projectId: "p1",
+        report: {
+          status: "blocked",
+          lastActivity: null,
+          summary: "blocked. model unset, effort unset.",
+          effort: null,
+        },
+      },
+      {
+        id: "t4",
+        projectId: "p1",
+        report: {
+          status: "Done",
+          lastActivity: null,
+          summary: "Done. model unset, effort unset.",
+          effort: null,
+        },
+      },
     ],
   });
+  const projected = JSON.stringify(await adapter.seats());
+  assert.equal(projected.includes("private"), false);
+  assert.equal(projected.includes("stale private error"), false);
   assert.deepEqual(await adapter.originate({ workspace: "/tmp/work", title: "T", message: "M" }), { threadId: "t1" });
   assert.deepEqual(await adapter.continue({ threadId: "t1", message: "again", runtimeMode: "full-access" }), { threadId: "t1" });
   assert.deepEqual(await adapter.doctorStatus(), { pairing: "/tmp/synthetic-pair-presence.json" });
@@ -213,6 +252,51 @@ test("loopback adapter keeps the relay surface honest about full-access", async 
   assert.throws(() => adapter.originate({ runtimeMode: "approval-required" }), /requires runtimeMode full-access/);
   assert.throws(() => adapter.continue({ runtimeMode: "auto" }), /requires runtimeMode full-access/);
   assert.throws(() => adapter.originate({ stateFile: "/tmp/remote-controlled.json" }), /does not accept remote parameter stateFile/);
+});
+
+test("seats projection keeps a compact report and drops transcript text", async () => {
+  const secret = "transcript-secret-must-not-project";
+  const token = "pair-token-must-not-project";
+  const adapter = new LoopbackRuntimeAdapter({
+    client: { isLoopback: true },
+    observeImpl: async () => ({
+      activeTurns: [{ threadId: "t1", providerInstanceId: "grok", prompt: secret }],
+      threads: [{
+        id: "t1",
+        projectId: "p1",
+        title: secret,
+        messages: [{ role: "assistant", text: secret }],
+        activities: [
+          { kind: "turn.completed", createdAt: "2026-09-24T20:00:00.000Z", payload: { text: secret } },
+          { kind: "turn.completed", createdAt: "2026-09-24T21:15:00.000Z", payload: { text: token } },
+        ],
+        modelSelection: {
+          instanceId: "grok",
+          model: "grok-4.7",
+          options: [{ id: "reasoningEffort", value: "high" }, { id: "fastMode", value: true }],
+        },
+        session: { status: "running", lastError: token, providerInstanceId: "grok" },
+      }],
+    }),
+  });
+  const projected = await adapter.seats();
+  assert.deepEqual(projected, {
+    activeTurns: [{ threadId: "t1", providerInstanceId: "grok" }],
+    threads: [{
+      id: "t1",
+      projectId: "p1",
+      report: {
+        status: "generating",
+        lastActivity: "2026-09-24T21:15:00.000Z",
+        summary: "generating. grok-4.7, effort high.",
+        effort: "high",
+      },
+    }],
+  });
+  const encoded = JSON.stringify(projected);
+  assert.equal(encoded.includes(secret), false);
+  assert.equal(encoded.includes(token), false);
+  assert.equal(encoded.includes("fastMode"), false);
 });
 
 test("RPC shim exposes exactly the loopback surface and fails closed without error details", async () => {
