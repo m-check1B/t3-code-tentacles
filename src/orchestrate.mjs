@@ -355,6 +355,28 @@ function projectSession(session) {
   };
 }
 
+function canonicalActivityStamp(value) {
+  if (typeof value !== "string") return null;
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return null;
+  const canonical = new Date(parsed).toISOString();
+  return canonical === value ? value : null;
+}
+
+function sanitizedLastActivity(thread) {
+  const stamps = [];
+  for (const value of [thread.lastActivity, thread.updatedAt]) {
+    const stamp = canonicalActivityStamp(value);
+    if (stamp) stamps.push(stamp);
+  }
+  for (const activity of recordArray(thread.activities)) {
+    const created = canonicalActivityStamp(activity.createdAt);
+    if (created) stamps.push(created);
+  }
+  stamps.sort();
+  return stamps.at(-1) ?? null;
+}
+
 function projectThreadSummary(thread) {
   const hasPendingApprovals = typeof thread.hasPendingApprovals === "boolean"
     ? thread.hasPendingApprovals
@@ -371,6 +393,7 @@ function projectThreadSummary(thread) {
     archivedAt: thread.archivedAt ?? null,
     settledAt: thread.settledAt ?? null,
     snoozedUntil: thread.snoozedUntil ?? null,
+    lastActivity: sanitizedLastActivity(thread),
     session: projectSession(thread.session),
     hasPendingApprovals,
     hasPendingUserInput,

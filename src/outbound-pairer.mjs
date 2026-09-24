@@ -132,9 +132,11 @@ function pairedThreadReportStatus(thread) {
   if (thread.hasPendingApprovals === true || thread.hasPendingUserInput === true) return "blocked";
   if (session.status === "starting" || session.status === "running") return "generating";
   if (session.status === "error"
-    || (session.lastError !== null && session.lastError !== undefined && session.lastError !== "")) return "blocked";
-  if ([undefined, null, "ready", "idle", "stopped"].includes(session.status)) return "ready/idle";
-  return "blocked";
+    || (typeof session.lastError === "string" && session.lastError !== "")) return "blocked";
+  if (session.status === "ready" || session.status === "idle" || session.status === "stopped") {
+    return "ready/idle";
+  }
+  return null;
 }
 
 function canonicalIso(value) {
@@ -189,6 +191,7 @@ function pairedThreadSummary(status, model, effort) {
 
 function pairedThreadReport(thread) {
   const status = pairedThreadReportStatus(thread);
+  if (status == null) return null;
   const effort = pairedThreadEffort(thread);
   return {
     status,
@@ -211,11 +214,14 @@ function remoteSeatsProjection(observed) {
   const threads = Array.isArray(observed.threads)
     ? observed.threads
       .filter(isRecord)
-      .map((thread) => ({
-        ...(typeof thread.id === "string" ? { id: thread.id } : {}),
-        ...(typeof thread.projectId === "string" ? { projectId: thread.projectId } : {}),
-        report: pairedThreadReport(thread),
-      }))
+      .map((thread) => {
+        const report = pairedThreadReport(thread);
+        return {
+          ...(typeof thread.id === "string" ? { id: thread.id } : {}),
+          ...(typeof thread.projectId === "string" ? { projectId: thread.projectId } : {}),
+          ...(report ? { report } : {}),
+        };
+      })
     : [];
   return { activeTurns, threads };
 }

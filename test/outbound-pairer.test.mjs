@@ -299,6 +299,55 @@ test("seats projection keeps a compact report and drops transcript text", async 
   assert.equal(encoded.includes("fastMode"), false);
 });
 
+test("real observe carries a sanitized timestamp and an id-only thread stays unreported", async () => {
+  const secret = "activity-payload-must-not-project";
+  const adapter = new LoopbackRuntimeAdapter({
+    client: {
+      isLoopback: true,
+      snapshot: async () => ({
+        threads: [
+          {
+            id: "t1",
+            projectId: "p1",
+            updatedAt: "2026-09-24T21:00:00.000Z",
+            lastActivity: "not-iso",
+            activities: [
+              { createdAt: "2026-09-24T21:15:00.000Z", payload: { text: secret } },
+              { createdAt: "yesterday", payload: { text: secret } },
+            ],
+            modelSelection: {
+              model: "grok-4.7",
+              options: [{ id: "reasoningEffort", value: "high" }],
+            },
+            session: { status: "running" },
+          },
+          { id: "bare", projectId: "p1" },
+        ],
+      }),
+      archivedShell: async () => ({ threads: [] }),
+    },
+  });
+  const projected = await adapter.seats();
+  assert.deepEqual(projected, {
+    activeTurns: [{ threadId: "t1" }],
+    threads: [
+      {
+        id: "t1",
+        projectId: "p1",
+        report: {
+          status: "generating",
+          lastActivity: "2026-09-24T21:15:00.000Z",
+          summary: "generating. grok-4.7, effort high.",
+          effort: "high",
+        },
+      },
+      { id: "bare", projectId: "p1" },
+    ],
+  });
+  assert.equal(JSON.stringify(projected).includes(secret), false);
+  assert.equal(Object.hasOwn(projected.threads[1], "report"), false);
+});
+
 test("RPC shim exposes exactly the loopback surface and fails closed without error details", async () => {
   const runtime = {
     seats: async () => ({ seats: ["codex"] }),
