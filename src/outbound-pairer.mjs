@@ -163,19 +163,29 @@ function pairedThreadLastActivity(thread) {
   return stamps.at(-1) ?? null;
 }
 
+const OMIT_REPORT = Symbol("omit-report");
+const EFFORT_KEYS = ["budget", "effort", "reasoningEffort"];
+
+function effortRawRefused(raw) {
+  if (typeof raw !== "string") return true;
+  if (raw.toLowerCase().includes("xhigh")) return true;
+  return !EFFORT_PIN.test(raw);
+}
+
 function pairedThreadEffort(thread) {
   const selection = isRecord(thread.modelSelection) ? thread.modelSelection : {};
   const options = Array.isArray(selection.options) ? selection.options : [];
+  const raws = [];
   for (const option of options) {
     if (!isRecord(option)) continue;
-    if (option.id !== "reasoningEffort" && option.id !== "effort" && option.id !== "budget") continue;
-    if (typeof option.value === "string" && EFFORT_PIN.test(option.value)) return option.value;
+    if (!EFFORT_KEYS.includes(option.id)) continue;
+    if (option.value !== undefined && option.value !== null) raws.push(option.value);
   }
-  for (const key of ["budget", "effort", "reasoningEffort"]) {
-    const raw = selection[key];
-    if (typeof raw === "string" && EFFORT_PIN.test(raw)) return raw;
+  for (const key of EFFORT_KEYS) {
+    if (selection[key] !== undefined && selection[key] !== null) raws.push(selection[key]);
   }
-  return null;
+  if (raws.some(effortRawRefused)) return OMIT_REPORT;
+  return raws.find((raw) => typeof raw === "string" && EFFORT_PIN.test(raw)) ?? null;
 }
 
 function pairedThreadModel(thread) {
@@ -193,6 +203,7 @@ function pairedThreadReport(thread) {
   const status = pairedThreadReportStatus(thread);
   if (status == null) return null;
   const effort = pairedThreadEffort(thread);
+  if (effort === OMIT_REPORT) return null;
   return {
     status,
     lastActivity: pairedThreadLastActivity(thread),

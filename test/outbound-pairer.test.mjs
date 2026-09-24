@@ -348,6 +348,38 @@ test("real observe carries a sanitized timestamp and an id-only thread stays unr
   assert.equal(Object.hasOwn(projected.threads[1], "report"), false);
 });
 
+test("real observe omits the report when raw effort is prohibited or malformed", async () => {
+  const cases = [
+    { label: "xhigh option", selection: { model: "grok-4.7", options: [{ id: "reasoningEffort", value: "xhigh" }] } },
+    { label: "xhigh space", selection: { model: "grok-4.7", options: [{ id: "reasoningEffort", value: "xhigh " }] } },
+    { label: "XHIGH", selection: { model: "grok-4.7", options: [{ id: "effort", value: "XHIGH" }] } },
+    { label: "empty", selection: { model: "grok-4.7", options: [{ id: "budget", value: "" }] } },
+    { label: "key", selection: { model: "grok-4.7", effort: "xhigh " } },
+  ];
+  for (const entry of cases) {
+    const adapter = new LoopbackRuntimeAdapter({
+      client: {
+        isLoopback: true,
+        snapshot: async () => ({
+          threads: [{
+            id: "t1",
+            projectId: "p1",
+            modelSelection: entry.selection,
+            session: { status: "running" },
+          }],
+        }),
+        archivedShell: async () => ({ threads: [] }),
+      },
+    });
+    const projected = await adapter.seats();
+    assert.equal(projected.threads.length, 1, entry.label);
+    assert.equal(Object.hasOwn(projected.threads[0], "report"), false, entry.label);
+    const encoded = JSON.stringify(projected);
+    assert.equal(encoded.includes("effort unset"), false, entry.label);
+    assert.equal(encoded.toLowerCase().includes("xhigh"), false, entry.label);
+  }
+});
+
 test("RPC shim exposes exactly the loopback surface and fails closed without error details", async () => {
   const runtime = {
     seats: async () => ({ seats: ["codex"] }),
