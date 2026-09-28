@@ -66,11 +66,13 @@ const RESERVED_REMOVED_INSTANCE_IDS = new Set(["claude-openrouter"]);
 const PROVIDER_INSTANCE_COMMANDS = new Set([
   "install-provider", "remove-provider", "install-pi-provider", "remove-pi-provider",
   "install-deepseek-provider", "remove-deepseek-provider", "install-kimi-provider", "remove-kimi-provider",
+  "install-codex-app-provider", "remove-codex-app-provider",
 ]);
-const KNOWN_COMMANDS = new Set([
+export const KNOWN_COMMANDS = new Set([
   "doctor", "pair", "install-provider", "remove-provider", "install-pi-provider", "remove-pi-provider",
   "install-deepseek-provider", "remove-deepseek-provider", "install-kimi-provider", "remove-kimi-provider",
-  "restore-native-grok", "use-native-grok-cached-auth", "observe", "act", "orchestrate", "originate", "watch",
+  "install-codex-app-provider", "remove-codex-app-provider",
+  "restore-native-grok", "use-native-grok-cached-auth", "observe", "report", "act", "orchestrate", "originate", "watch",
   "install-service", "service-status", "restart-service", "uninstall-service",
 ]);
 

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { PACKAGE_VERSION, parseArgs, usage } from "../src/cli.mjs";
+import { KNOWN_COMMANDS, PACKAGE_VERSION, parseArgs, usage } from "../src/cli.mjs";
 import { DEFAULT_INSTANCE_ID } from "../src/config.mjs";
 import {
   continueThread,
@@ -677,5 +677,18 @@ test("CLI rejects removed and unknown lab routes before constructing a T3 client
     assert.equal(spawned.status, 1, command);
     assert.match(spawned.stderr, /reserved legacy state/, command);
     assert.doesNotMatch(spawned.stderr, /ENOENT/, command);
+  }
+});
+
+test("every command the usage advertises is dispatchable", () => {
+  const advertised = new Set();
+  for (const line of usage().split("\n")) {
+    const match = /^  tentacles ([a-z][a-z-]*)\b/.exec(line);
+    if (match) advertised.add(match[1]);
+  }
+  assert.equal(advertised.has("report"), true);
+  assert.equal(advertised.has("install-codex-app-provider"), true);
+  for (const command of advertised) {
+    assert.equal(KNOWN_COMMANDS.has(command), true, `usage advertises ${command} but the CLI rejects it`);
   }
 });
