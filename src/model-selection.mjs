@@ -144,10 +144,13 @@ export function normalizeModelOptions(options, label = "modelSelection.options")
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
       throw new Error(`${label} entries must be objects with id and value`);
     }
-    normalized.push({
-      id: requireNonEmptyString(entry.id, `${label} id`),
-      value: normalizeOptionValue(entry.value, `${label} value`),
-    });
+    const id = requireNonEmptyString(entry.id, `${label} id`);
+    // Ambiguous duplicates would let a later entry bypass first-match
+    // validation (e.g. high then xhigh), and provider precedence is unproven.
+    if (normalized.some((existing) => existing.id === id)) {
+      throw new Error(`${label} must not repeat option id ${id}`);
+    }
+    normalized.push({ id, value: normalizeOptionValue(entry.value, `${label} value`) });
   }
   return normalized.length > 0 ? normalized : undefined;
 }
@@ -184,6 +187,10 @@ export function resolveModelSelection({ instanceId, model, options, budget } = {
       if (!configured) explicit.push({ ...requiredOption });
     }
   }
+  return pinSelection(resolvedInstanceId, resolvedModel, explicit, budget);
+}
+
+function pinSelection(resolvedInstanceId, resolvedModel, explicit, budget) {
   if (budget !== undefined && budget !== null && budget !== "") {
     const resolvedBudget = requireNonEmptyString(budget, "budget");
     if (!BUDGET_SET.has(resolvedBudget)) {
@@ -209,4 +216,35 @@ export function resolveModelSelection({ instanceId, model, options, budget } = {
   const selection = { instanceId: resolvedInstanceId, model: resolvedModel };
   if (explicit.length > 0) selection.options = explicit;
   return selection;
+}
+
+// A continue or restart either keeps the retained selection (every selection
+// field omitted) or names a complete new one. Partial input (budget or options
+// alone, or only one of instanceId/model, including null/empty values) fails
+// closed instead of falling back to Hermes defaults or being silently dropped.
+// Returns true for an explicit selection, false for the retained path.
+export function requireContinueSelection(fields) {
+  const supplied = Object.keys(fields).filter((key) => fields[key] !== undefined);
+  if (supplied.length === 0) return false;
+  if (fields.instanceId !== undefined && fields.model !== undefined) return true;
+  throw new Error(`Partial continue selection (${supplied.join(", ")}): pass both instanceId and model, or omit instanceId, model, options and budget to keep the retained selection`);
+}
+
+// Omitted-selection continues keep the thread's retained lab and model, but
+// still pass the effort policy: a missing known knob is pinned, and an
+// above-high or ambiguous retained effort fails closed before dispatch.
+// Returns undefined when the retained selection is already valid as-is, so
+// the turn dispatches without a selection exactly as before.
+export function retainedSelectionPin(retained) {
+  if (!retained || typeof retained !== "object" || Array.isArray(retained)) {
+    throw new Error("Retained thread model selection is unproven; pass instanceId and model explicitly");
+  }
+  const instanceId = requireNonEmptyString(retained.instanceId, "retained modelSelection.instanceId");
+  const model = requireNonEmptyString(retained.model, "retained modelSelection.model");
+  const options = normalizeModelOptions(retained.options, "retained modelSelection.options") ?? [];
+  const pinned = pinSelection(instanceId, model, options, undefined);
+  const unchanged = pinned.instanceId === retained.instanceId
+    && pinned.model === retained.model
+    && JSON.stringify(pinned.options ?? []) === JSON.stringify(retained.options ?? []);
+  return unchanged ? undefined : pinned;
 }

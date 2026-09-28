@@ -19,9 +19,13 @@ import {
   ORIGINATE_LABS,
   parseModelOptionFlag,
   parseModelOptionFlags,
+  requireContinueSelection,
   requireRuntimeMode,
   resolveModelSelection,
+  retainedSelectionPin,
 } from "../src/model-selection.mjs";
+import { applyIntent } from "../src/orchestrate.mjs";
+import { LoopbackRuntimeAdapter } from "../src/outbound-pairer.mjs";
 import { T3HttpError } from "../src/t3-client.mjs";
 
 function recordingClient({ projectWorkspace } = {}) {
@@ -387,7 +391,7 @@ test("continueThread preserves an existing non-Hermes selection when lab/model a
   });
 });
 
-test("continueThread resolves a partial legacy selection and omits only the all-absent case", async () => {
+test("continueThread refuses partial selections instead of falling back to Hermes defaults", async () => {
   const client = recordingClient();
   await startThread(client, {
     projectId: "p1",
@@ -399,31 +403,20 @@ test("continueThread resolves a partial legacy selection and omits only the all-
     model: "grok-build",
     runtimeMode: "full-access",
   });
+  const beforePartials = client.commands.length;
 
-  await continueThread(client, {
-    threadId: "partial-thread",
-    message: "only-model",
-    messageId: "m2",
-    model: "openai-codex:gpt-5.6-sol",
-    runtimeMode: "full-access",
-  });
-  assert.deepEqual(client.commands[2].modelSelection, {
-    instanceId: "hermes",
-    model: "openai-codex:gpt-5.6-sol",
-    options: [{ id: "reasoningEffort", value: "high" }],
-  });
-
-  await continueThread(client, {
-    threadId: "partial-thread",
-    message: "only-budget",
-    messageId: "m3",
-    budget: "high",
-    runtimeMode: "full-access",
-  });
-  assert.deepEqual(client.commands[3].modelSelection, {
-    instanceId: "hermes",
-    model: "deepseek:deepseek-v4-flash",
-  });
+  for (const [messageId, partial] of [
+    ["only-model", { model: "openai-codex:gpt-5.6-sol" }],
+    ["only-instance", { instanceId: "codex" }],
+    ["only-budget", { budget: "high" }],
+    ["only-options", { options: [{ id: "serviceTier", value: "default" }] }],
+  ]) {
+    await assert.rejects(
+      () => continueThread(client, { threadId: "partial-thread", message: messageId, messageId, runtimeMode: "full-access", ...partial }),
+      /Partial continue selection/,
+    );
+  }
+  assert.equal(client.commands.length, beforePartials);
 
   await continueThread(client, {
     threadId: "partial-thread",
@@ -431,7 +424,12 @@ test("continueThread resolves a partial legacy selection and omits only the all-
     messageId: "m4",
     runtimeMode: "full-access",
   });
-  assert.equal("modelSelection" in client.commands[4], false);
+  assert.equal("modelSelection" in client.commands[beforePartials], false);
+  assert.deepEqual(client.threads.get("partial-thread").modelSelection, {
+    instanceId: "grok",
+    model: "grok-build",
+    options: [{ id: "reasoningEffort", value: "high" }],
+  });
 });
 
 test("continueThread rejects explicit null lab/model instead of substituting Hermes defaults", async () => {
@@ -456,7 +454,7 @@ test("continueThread rejects explicit null lab/model instead of substituting Her
       instanceId: null,
       runtimeMode: "full-access",
     }),
-    /modelSelection\.instanceId must be a non-empty string/,
+    /Partial continue selection \(instanceId\)/,
   );
   await assert.rejects(
     () => continueThread(client, {
@@ -466,7 +464,18 @@ test("continueThread rejects explicit null lab/model instead of substituting Her
       model: null,
       runtimeMode: "full-access",
     }),
-    /modelSelection\.model must be a non-empty string/,
+    /Partial continue selection \(model\)/,
+  );
+  await assert.rejects(
+    () => continueThread(client, {
+      threadId: "null-thread",
+      message: "null-both",
+      messageId: "m4",
+      instanceId: null,
+      model: null,
+      runtimeMode: "full-access",
+    }),
+    /modelSelection\.instanceId must be a non-empty string/,
   );
 
   assert.equal(client.commands.length, beforeNulls);
@@ -691,4 +700,411 @@ test("every command the usage advertises is dispatchable", () => {
   for (const command of advertised) {
     assert.equal(KNOWN_COMMANDS.has(command), true, `usage advertises ${command} but the CLI rejects it`);
   }
+});
+
+// ── KRA-6202 Gate 4: F2 ambiguous duplicate options ─────────────────────────
+
+test("duplicate option IDs are rejected in either order, for xhigh/max and conflicting legal values", () => {
+  const efforts = [
+    ["high", "xhigh"],
+    ["xhigh", "high"],
+    ["high", "max"],
+    ["max", "high"],
+    ["high", "low"],
+    ["high", "high"],
+  ];
+  for (const [first, second] of efforts) {
+    for (const [instanceId, model] of [["grok", "grok-4.7"], ["codex", "gpt-5.6-sol"], ["codex-app", "gpt-5.6-luna"]]) {
+      assert.throws(
+        () => resolveModelSelection({
+          instanceId,
+          model,
+          options: [{ id: "reasoningEffort", value: first }, { id: "reasoningEffort", value: second }],
+        }),
+        /must not repeat option id reasoningEffort/,
+        `${instanceId} ${first},${second}`,
+      );
+    }
+    assert.throws(
+      () => resolveModelSelection({
+        instanceId: "claudeAgent",
+        model: "claude-opus-5-5",
+        options: [{ id: "effort", value: first }, { id: "effort", value: second }],
+      }),
+      /must not repeat option id effort/,
+    );
+  }
+  // Budget cannot hide a duplicate either.
+  assert.throws(
+    () => resolveModelSelection({
+      instanceId: "grok",
+      model: "grok-4.7",
+      budget: "high",
+      options: [{ id: "reasoningEffort", value: "high" }, { id: "reasoningEffort", value: "xhigh" }],
+    }),
+    /must not repeat option id reasoningEffort/,
+  );
+});
+
+test("conflicting Cursor fast-mode duplicates are rejected with and without the alias", () => {
+  for (const model of ["composer-2.5-fast", "composer-2.5"]) {
+    for (const values of [[true, false], [false, true], [true, true]]) {
+      assert.throws(
+        () => resolveModelSelection({
+          instanceId: "cursor",
+          model,
+          options: values.map((value) => ({ id: "fastMode", value })),
+        }),
+        /must not repeat option id fastMode/,
+        `${model} ${values}`,
+      );
+    }
+  }
+});
+
+test("repeated --option flags with the same ID fail before any dispatch", async () => {
+  const cases = [
+    ["reasoningEffort=high", "reasoningEffort=xhigh"],
+    ["reasoningEffort=xhigh", "reasoningEffort=high"],
+    ["reasoningEffort=high", "reasoningEffort=max"],
+  ];
+  for (const flags of cases) {
+    const parsed = parseArgs([
+      "originate",
+      "--workspace", "/tmp/w",
+      "--title", "T",
+      "--message", "M",
+      "--instance", "grok",
+      "--model", "grok-4.7",
+      "--runtime-mode", "full-access",
+      ...flags.flatMap((flag) => ["--option", flag]),
+    ]);
+    const options = parseModelOptionFlags(parsed.options.option);
+    assert.throws(
+      () => resolveModelSelection({ instanceId: parsed.options.instance, model: parsed.options.model, options }),
+      /must not repeat option id reasoningEffort/,
+    );
+    const client = recordingClient();
+    await assert.rejects(
+      originate(client, { workspace: "/tmp/w", title: "T", message: "M", instanceId: "grok", model: "grok-4.7", options, runtimeMode: "full-access" }),
+      /must not repeat option id reasoningEffort/,
+    );
+    await assert.rejects(
+      continueThread(client, { threadId: "t", message: "M", instanceId: "grok", model: "grok-4.7", options, runtimeMode: "full-access" }),
+      /must not repeat option id reasoningEffort/,
+    );
+    assert.equal(client.commands.length, 0);
+  }
+  const cursorFlags = parseModelOptionFlags(["fastMode=true", "fastMode=false"]);
+  assert.throws(
+    () => resolveModelSelection({ instanceId: "cursor", model: "composer-2.5", options: cursorFlags }),
+    /must not repeat option id fastMode/,
+  );
+});
+
+// ── KRA-6202 Gate 4: F3 retained-seat continues ─────────────────────────────
+
+function retainedThreadClient(modelSelection, { messages = [] } = {}) {
+  const client = recordingClient();
+  client.threads.set("retained", { id: "retained", projectId: "p1", modelSelection, messages: [...messages] });
+  return client;
+}
+
+test("retainedSelectionPin keeps lab/model, pins a missing knob, and returns undefined when already valid", () => {
+  assert.deepEqual(retainedSelectionPin({ instanceId: "grok", model: "grok-4.7" }), {
+    instanceId: "grok",
+    model: "grok-4.7",
+    options: [{ id: "reasoningEffort", value: "high" }],
+  });
+  assert.deepEqual(retainedSelectionPin({ instanceId: "claudeAgent", model: "claude-opus-5-5", options: [{ id: "contextWindow", value: "1m" }] }), {
+    instanceId: "claudeAgent",
+    model: "claude-opus-5-5",
+    options: [{ id: "contextWindow", value: "1m" }, { id: "effort", value: "medium" }],
+  });
+  assert.equal(retainedSelectionPin({ instanceId: "grok", model: "grok-4.7", options: [{ id: "reasoningEffort", value: "low" }] }), undefined);
+  assert.equal(retainedSelectionPin({ instanceId: "kimi", model: "moonshotai/kimi-k3" }), undefined);
+  // Retained Cursor models are not re-aliased: the exact model is preserved.
+  assert.equal(retainedSelectionPin({ instanceId: "cursor", model: "composer-2.5-fast" }), undefined);
+  assert.equal(retainedSelectionPin({ instanceId: "cursor", model: "composer-2.5", options: [{ id: "fastMode", value: true }] }), undefined);
+  for (const bad of [null, undefined, {}, [], { instanceId: "grok" }, { model: "grok-4.7" }]) {
+    assert.throws(() => retainedSelectionPin(bad), /unproven|must be a non-empty string/);
+  }
+});
+
+test("continueThread pins an unpinned retained seat without switching lab or model", async () => {
+  for (const [retained, expected] of [
+    [{ instanceId: "grok", model: "grok-4.7" }, { instanceId: "grok", model: "grok-4.7", options: [{ id: "reasoningEffort", value: "high" }] }],
+    [{ instanceId: "codex", model: "gpt-6-astra", options: [{ id: "serviceTier", value: "default" }] }, {
+      instanceId: "codex",
+      model: "gpt-6-astra",
+      options: [{ id: "serviceTier", value: "default" }, { id: "reasoningEffort", value: "medium" }],
+    }],
+    [{ instanceId: "codex-app", model: "gpt-5.6-luna" }, { instanceId: "codex-app", model: "gpt-5.6-luna", options: [{ id: "reasoningEffort", value: "high" }] }],
+  ]) {
+    const client = retainedThreadClient(retained);
+    await continueThread(client, { threadId: "retained", message: "go", messageId: "m1", runtimeMode: "full-access" });
+    assert.equal(client.commands.length, 1);
+    assert.equal(client.commands[0].type, "thread.turn.start");
+    assert.deepEqual(client.commands[0].modelSelection, expected);
+    assert.equal(client.commands[0].runtimeMode, "full-access");
+    assert.notEqual(client.commands[0].modelSelection.instanceId, DEFAULT_INSTANCE_ID);
+  }
+});
+
+test("continueThread leaves valid-pinned and knobless retained seats unchanged", async () => {
+  for (const retained of [
+    { instanceId: "grok", model: "grok-4.7", options: [{ id: "reasoningEffort", value: "low" }] },
+    { instanceId: "claudeAgent", model: "claude-opus-5-5", options: [{ id: "effort", value: "medium" }] },
+    { instanceId: "kimi", model: "moonshotai/kimi-k3" },
+    { instanceId: "cursor", model: "composer-2.5", options: [{ id: "fastMode", value: true }] },
+    { instanceId: "opencode", model: "opencode/big-pickle" },
+  ]) {
+    const client = retainedThreadClient(retained);
+    await continueThread(client, { threadId: "retained", message: "go", messageId: "m1", runtimeMode: "auto-accept-edits" });
+    assert.equal(client.commands.length, 1);
+    assert.equal("modelSelection" in client.commands[0], false, retained.instanceId);
+    assert.equal(client.commands[0].runtimeMode, "auto-accept-edits");
+  }
+});
+
+test("continueThread refuses prohibited, ambiguous, or unproven retained selections before dispatch", async () => {
+  for (const [retained, pattern] of [
+    [{ instanceId: "grok", model: "grok-4.7", options: [{ id: "reasoningEffort", value: "xhigh" }] }, /above high is Founder-manual only/],
+    [{ instanceId: "codex", model: "gpt-5.6-sol", options: [{ id: "reasoningEffort", value: "max" }] }, /above high is Founder-manual only/],
+    [{ instanceId: "claudeAgent", model: "claude-opus-5-5", options: [{ id: "effort", value: "xhigh" }] }, /above high is Founder-manual only/],
+    [{ instanceId: "grok", model: "grok-4.7", options: [{ id: "reasoningEffort", value: "high" }, { id: "reasoningEffort", value: "xhigh" }] }, /must not repeat option id reasoningEffort/],
+    [null, /unproven/],
+    [undefined, /unproven/],
+  ]) {
+    const client = retainedThreadClient(retained);
+    await assert.rejects(
+      continueThread(client, { threadId: "retained", message: "go", messageId: "m1", runtimeMode: "full-access" }),
+      pattern,
+    );
+    assert.equal(client.commands.length, 0);
+  }
+});
+
+test("retained-seat validation preserves idempotent replay and the explicit runtime-mode gate", async () => {
+  // A replay of an already-projected message dispatches nothing and does not re-judge the seat.
+  const replay = retainedThreadClient(
+    { instanceId: "grok", model: "grok-4.7", options: [{ id: "reasoningEffort", value: "xhigh" }] },
+    { messages: [{ id: "m-done", role: "user", text: "go" }] },
+  );
+  assert.deepEqual(
+    await continueThread(replay, { threadId: "retained", message: "go", messageId: "m-done", runtimeMode: "full-access" }),
+    { threadId: "retained" },
+  );
+  assert.equal(replay.commands.length, 0);
+
+  const pinned = retainedThreadClient({ instanceId: "grok", model: "grok-4.7" });
+  await continueThread(pinned, { threadId: "retained", message: "go", messageId: "m1", runtimeMode: "full-access" });
+  await continueThread(pinned, { threadId: "retained", message: "go", messageId: "m1", runtimeMode: "full-access" });
+  assert.equal(pinned.commands.length, 1);
+
+  const missingMode = retainedThreadClient({ instanceId: "grok", model: "grok-4.7" });
+  await assert.rejects(
+    continueThread(missingMode, { threadId: "retained", message: "go", messageId: "m1" }),
+    /runtimeMode is required/,
+  );
+  assert.equal(missingMode.commands.length, 0);
+});
+
+test("act thread.continue/thread.restart apply the same retained-seat contract", async () => {
+  function actClient(modelSelection, status = "ready") {
+    const commands = [];
+    const thread = { id: "t1", modelSelection, messages: [], session: { status, activeTurnId: null, updatedAt: "before", lastError: null } };
+    return {
+      commands,
+      thread: async () => ({ thread }),
+      dispatch: async (command) => {
+        commands.push(command);
+        if (command.type === "thread.session.stop") thread.session = { ...thread.session, status: "stopped" };
+        if (command.type === "thread.turn.start") {
+          thread.messages.push({ id: command.message.messageId, role: "user" });
+          thread.session = { status: "running", activeTurnId: "turn", updatedAt: "after", lastError: null };
+        }
+        return { sequence: commands.length };
+      },
+    };
+  }
+  const waits = { intervalMs: 0, timeoutMs: 1_000 };
+
+  const unpinned = actClient({ instanceId: "grok", model: "grok-4.7" });
+  await applyIntent(unpinned, { action: "thread.continue", threadId: "t1", text: "go", runtimeMode: "full-access" }, waits);
+  assert.deepEqual(unpinned.commands[0].modelSelection, { instanceId: "grok", model: "grok-4.7", options: [{ id: "reasoningEffort", value: "high" }] });
+
+  const valid = actClient({ instanceId: "kimi", model: "moonshotai/kimi-k3" });
+  await applyIntent(valid, { action: "thread.continue", threadId: "t1", text: "go", runtimeMode: "full-access" }, waits);
+  assert.equal("modelSelection" in valid.commands[0], false);
+
+  // A prohibited retained effort fails before the restart stop is dispatched too.
+  for (const action of ["thread.continue", "thread.restart"]) {
+    const prohibited = actClient({ instanceId: "grok", model: "grok-4.7", options: [{ id: "reasoningEffort", value: "xhigh" }] }, "error");
+    await assert.rejects(
+      applyIntent(prohibited, { action, threadId: "t1", text: "go", runtimeMode: "full-access" }, waits),
+      /above high is Founder-manual only/,
+    );
+    assert.equal(prohibited.commands.length, 0, action);
+  }
+
+  const unprojected = { commands: [], thread: async () => { throw new T3HttpError({ method: "GET", pathname: "t1", status: 404, body: null }); }, dispatch: async (command) => { unprojected.commands.push(command); } };
+  await assert.rejects(
+    applyIntent(unprojected, { action: "thread.continue", threadId: "t1", text: "go", runtimeMode: "full-access" }, waits),
+    /retained model selection is unproven/,
+  );
+  assert.equal(unprojected.commands.length, 0);
+
+  // An explicit selection is unchanged by the retained check.
+  const explicit = actClient({ instanceId: "grok", model: "grok-4.7", options: [{ id: "reasoningEffort", value: "xhigh" }] });
+  await applyIntent(explicit, { action: "thread.continue", threadId: "t1", text: "go", runtimeMode: "full-access", instanceId: "codex", model: "gpt-5.6-sol" }, waits);
+  assert.deepEqual(explicit.commands[0].modelSelection, { instanceId: "codex", model: "gpt-5.6-sol", options: [{ id: "reasoningEffort", value: "high" }] });
+});
+
+test("the pair relay continue inherits retained-seat pinning through continueThread", async () => {
+  const client = retainedThreadClient({ instanceId: "grok", model: "grok-4.7" });
+  const runtime = new LoopbackRuntimeAdapter({ client });
+  await runtime.continue({ threadId: "retained", message: "go", messageId: "m1" });
+  assert.deepEqual(client.commands[0].modelSelection, { instanceId: "grok", model: "grok-4.7", options: [{ id: "reasoningEffort", value: "high" }] });
+
+  const prohibited = retainedThreadClient({ instanceId: "grok", model: "grok-4.7", options: [{ id: "reasoningEffort", value: "xhigh" }] });
+  await assert.rejects(
+    new LoopbackRuntimeAdapter({ client: prohibited }).continue({ threadId: "retained", message: "go", messageId: "m1" }),
+    /above high is Founder-manual only/,
+  );
+  assert.equal(prohibited.commands.length, 0);
+});
+
+// G5-R1: partial selection input fails closed on every continue surface.
+const PARTIAL_SELECTIONS = [
+  ["budget-only", { budget: "low" }],
+  ["options-empty", { options: [] }],
+  ["options-null", { options: null }],
+  ["options-duplicate", { options: [{ id: "reasoningEffort", value: "high" }, { id: "reasoningEffort", value: "xhigh" }] }],
+  ["options-prohibited", { options: [{ id: "reasoningEffort", value: "xhigh" }] }],
+  ["instance-only", { instanceId: "codex" }],
+  ["model-only", { model: "gpt-5.6-sol" }],
+  ["instance-and-budget", { instanceId: "grok", budget: "low" }],
+  ["model-and-options", { model: "grok-4.7", options: [{ id: "reasoningEffort", value: "low" }] }],
+];
+const RETAINED_GROK = { instanceId: "grok", model: "grok-4.7", options: [{ id: "reasoningEffort", value: "high" }] };
+
+function selectionActClient(modelSelection, status = "ready") {
+  const commands = [];
+  const thread = { id: "t1", modelSelection: structuredClone(modelSelection), messages: [], session: { status, activeTurnId: null, updatedAt: "before", lastError: null } };
+  return {
+    commands,
+    thread: async () => ({ thread }),
+    dispatch: async (command) => {
+      commands.push(command);
+      if (command.type === "thread.session.stop") thread.session = { ...thread.session, status: "stopped", updatedAt: "stopped" };
+      if (command.type === "thread.turn.start") {
+        thread.messages.push({ id: command.message.messageId, role: "user" });
+        if (command.modelSelection) thread.modelSelection = structuredClone(command.modelSelection);
+        thread.session = { status: "running", activeTurnId: "turn", updatedAt: "after", lastError: null };
+      }
+      return { sequence: commands.length };
+    },
+  };
+}
+
+test("requireContinueSelection accepts all-omitted or instanceId+model and refuses every partial", () => {
+  assert.equal(requireContinueSelection({}), false);
+  assert.equal(requireContinueSelection({ instanceId: undefined, model: undefined, options: undefined, budget: undefined }), false);
+  assert.equal(requireContinueSelection({ instanceId: "grok", model: "grok-4.7" }), true);
+  assert.equal(requireContinueSelection({ instanceId: "grok", model: "grok-4.7", budget: "low", options: [] }), true);
+  for (const [name, partial] of [...PARTIAL_SELECTIONS, ["modelSelection-only", { modelSelection: RETAINED_GROK }]]) {
+    assert.throws(() => requireContinueSelection(partial), /Partial continue selection/, name);
+  }
+});
+
+test("library and relay continue refuse partial selections with zero dispatch", async () => {
+  for (const [name, partial] of PARTIAL_SELECTIONS) {
+    const library = retainedThreadClient(structuredClone(RETAINED_GROK));
+    await assert.rejects(
+      continueThread(library, { threadId: "retained", message: "go", messageId: "m1", runtimeMode: "full-access", ...partial }),
+      /Partial continue selection/,
+      `library ${name}`,
+    );
+    assert.equal(library.commands.length, 0, `library ${name}`);
+    assert.deepEqual(library.threads.get("retained").modelSelection, RETAINED_GROK);
+
+    const relayClient = retainedThreadClient(structuredClone(RETAINED_GROK));
+    let continueCalls = 0;
+    const relay = new LoopbackRuntimeAdapter({
+      client: relayClient,
+      continueImpl: (...args) => { continueCalls++; return continueThread(...args); },
+    });
+    await assert.rejects(
+      async () => relay.continue({ threadId: "retained", message: "go", messageId: "m1", ...partial }),
+      /Partial continue selection/,
+      `relay ${name}`,
+    );
+    assert.equal(continueCalls, 0, `relay ${name}`);
+    assert.equal(relayClient.commands.length, 0, `relay ${name}`);
+  }
+});
+
+test("relay continue keeps explicit and all-omitted selections working", async () => {
+  const explicit = retainedThreadClient(structuredClone(RETAINED_GROK));
+  await new LoopbackRuntimeAdapter({ client: explicit }).continue({
+    threadId: "retained", message: "go", messageId: "m1", instanceId: "codex", model: "gpt-6-astra", budget: "low",
+  });
+  assert.deepEqual(explicit.commands[0].modelSelection, { instanceId: "codex", model: "gpt-6-astra", options: [{ id: "reasoningEffort", value: "low" }] });
+  assert.equal(explicit.commands[0].runtimeMode, "full-access");
+
+  const retained = retainedThreadClient(structuredClone(RETAINED_GROK));
+  const runtime = new LoopbackRuntimeAdapter({ client: retained });
+  await runtime.continue({ threadId: "retained", message: "go", messageId: "m1" });
+  await runtime.continue({ threadId: "retained", message: "go", messageId: "m1" });
+  assert.equal(retained.commands.length, 1);
+  assert.equal("modelSelection" in retained.commands[0], false);
+});
+
+test("act thread.continue/thread.restart refuse partial selections before any stop or start", async () => {
+  const waits = { intervalMs: 0, timeoutMs: 1_000 };
+  const partials = [...PARTIAL_SELECTIONS, ["modelSelection-only", { modelSelection: { options: [{ id: "reasoningEffort", value: "low" }] } }]];
+  for (const action of ["thread.continue", "thread.restart"]) {
+    for (const status of ["ready", "error"]) {
+      for (const [name, partial] of partials) {
+        const client = selectionActClient(RETAINED_GROK, status);
+        await assert.rejects(
+          applyIntent(client, { action, threadId: "t1", text: "go", runtimeMode: "full-access", ...partial }, waits),
+          /Partial continue selection/,
+          `${action} ${status} ${name}`,
+        );
+        assert.equal(client.commands.length, 0, `${action} ${status} ${name}`);
+      }
+    }
+  }
+});
+
+test("act thread.continue/thread.restart keep explicit and all-omitted selections working", async () => {
+  const waits = { intervalMs: 0, timeoutMs: 1_000 };
+  const explicit = selectionActClient(RETAINED_GROK);
+  await applyIntent(explicit, { action: "thread.continue", threadId: "t1", text: "go", runtimeMode: "full-access", instanceId: "grok", model: "grok-4.7", budget: "low" }, waits);
+  assert.equal(explicit.commands.length, 1);
+  assert.deepEqual(explicit.commands[0].modelSelection, { instanceId: "grok", model: "grok-4.7", options: [{ id: "reasoningEffort", value: "low" }] });
+
+  const restart = selectionActClient(RETAINED_GROK);
+  await applyIntent(restart, { action: "thread.restart", threadId: "t1", text: "go", runtimeMode: "full-access", instanceId: "codex", model: "gpt-6-astra", options: [{ id: "serviceTier", value: "default" }] }, waits);
+  assert.deepEqual(restart.commands.map((command) => command.type), ["thread.session.stop", "thread.turn.start"]);
+  assert.deepEqual(restart.commands[1].modelSelection, {
+    instanceId: "codex",
+    model: "gpt-6-astra",
+    options: [{ id: "serviceTier", value: "default" }, { id: "reasoningEffort", value: "medium" }],
+  });
+
+  // An explicit selection is still validated before the restart stop.
+  const prohibited = selectionActClient(RETAINED_GROK);
+  await assert.rejects(
+    applyIntent(prohibited, { action: "thread.restart", threadId: "t1", text: "go", runtimeMode: "full-access", instanceId: "grok", model: "grok-4.7", options: [{ id: "reasoningEffort", value: "xhigh" }] }, waits),
+    /above high is Founder-manual only/,
+  );
+  assert.equal(prohibited.commands.length, 0);
+
+  const retainedRestart = selectionActClient({ instanceId: "grok", model: "grok-4.7" });
+  await applyIntent(retainedRestart, { action: "thread.restart", threadId: "t1", text: "go", runtimeMode: "full-access" }, waits);
+  assert.deepEqual(retainedRestart.commands.map((command) => command.type), ["thread.session.stop", "thread.turn.start"]);
+  assert.deepEqual(retainedRestart.commands[1].modelSelection, { instanceId: "grok", model: "grok-4.7", options: [{ id: "reasoningEffort", value: "high" }] });
 });

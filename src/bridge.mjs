@@ -28,6 +28,8 @@ import {
   ORIGINATE_LABS,
   requireExplicitRuntimeMode,
   resolveModelSelection,
+  requireContinueSelection,
+  retainedSelectionPin,
 } from "./model-selection.mjs";
 import { DEFAULT_PAIR_STATE_FILE, readPairPresence } from "./pair-state.mjs";
 import { inspectHermesOpenaiCodexAuth } from "./hermes-acp-launch.mjs";
@@ -102,10 +104,21 @@ export function isTentaclesCodexAppProvider(instance) {
   );
 }
 
+// The app route is only routable and doctor-recognized as `codex-app`. Any
+// other ID could occupy a canonical/native slot (for example `codex`, which
+// may exist only as legacy settings with no providerInstances entry), so it
+// is refused before settings are read, whatever ownership marker it carries.
+function assertCodexAppInstanceId(instanceId) {
+  if (instanceId !== DEFAULT_CODEX_APP_INSTANCE_ID) {
+    throw new Error(`The Codex app route only manages provider instance '${DEFAULT_CODEX_APP_INSTANCE_ID}'; refusing '${instanceId}'`);
+  }
+}
+
 export async function installCodexAppProvider(client, {
   binaryPath,
   instanceId = DEFAULT_CODEX_APP_INSTANCE_ID,
 } = {}) {
+  assertCodexAppInstanceId(instanceId);
   if (!path.isAbsolute(binaryPath || "") || !isCodexAppBundleExecutablePath(binaryPath)) {
     throw new Error("Codex app binary must be an absolute <App>.app/Contents/Resources/codex path");
   }
@@ -136,6 +149,7 @@ export async function installCodexAppProvider(client, {
 export async function removeCodexAppProvider(client, {
   instanceId = DEFAULT_CODEX_APP_INSTANCE_ID,
 } = {}) {
+  assertCodexAppInstanceId(instanceId);
   const settings = await client.getSettings();
   const current = settings.providerInstances || {};
   if (!(instanceId in current)) return { removed: false };
@@ -684,18 +698,15 @@ export async function continueThread(client, {
   turnCommandId = randomUUID(),
   messageId = randomUUID(),
 }) {
-  const modelSelection =
-    instanceId === undefined && model === undefined && options === undefined && budget === undefined
-      ? undefined
-      : resolveModelSelection({
-          instanceId: instanceId === undefined ? DEFAULT_INSTANCE_ID : instanceId,
-          model: model === undefined ? DEFAULT_MODEL : model,
-          options,
-          budget,
-        });
+  // Partial selection input is refused before any read or dispatch.
+  const retained = !requireContinueSelection({ instanceId, model, options, budget });
+  let modelSelection = retained ? undefined : resolveModelSelection({ instanceId, model, options, budget });
   runtimeMode = requireExplicitRuntimeMode(runtimeMode);
   const detail = await waitForThread(client, threadId);
   if (!(detail.thread.messages || []).some((entry) => entry.id === messageId)) {
+    // Keep the retained lab/model, but never dispatch an unpinned or
+    // above-high retained effort. Replays of a projected message skip this.
+    if (retained) modelSelection = retainedSelectionPin(detail.thread.modelSelection);
     await client.dispatch({
       type: "thread.turn.start",
       commandId: turnCommandId,
@@ -968,10 +979,18 @@ function providerEnabled(settings, instanceId, configProvider) {
   const catalog = settings?.providers?.[instanceId];
   const instance = settings?.providerInstances?.[instanceId];
   if (!catalog && !instance && !configProvider) return false;
-  if (catalog && typeof catalog === "object" && catalog.enabled === false) return false;
-  if (instance && instance.enabled === false) return false;
+  let enabled = true;
+  if (isPlainObject(instance) && Object.hasOwn(instance, "enabled")) {
+    // An explicit instance flag supersedes stale legacy settings, but malformed
+    // flags must not turn a provider on.
+    enabled = instance.enabled === true;
+  } else if (instance != null && !isPlainObject(instance)) {
+    enabled = false;
+  } else if (isPlainObject(catalog) && catalog.enabled === false) {
+    enabled = false;
+  }
   if (configProvider?.status === "disabled") return false;
-  return true;
+  return enabled;
 }
 
 function normalizedDoctorStatus(value, { installed, configured } = {}) {

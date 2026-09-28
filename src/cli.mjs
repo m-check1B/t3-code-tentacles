@@ -225,7 +225,8 @@ Run doctor to print the advertised lab matrix for this machine
 machine-readable document. Doctor never prints tokens or secrets.
 
 report --thread returns a compact parent-check document (Done | generating |
-ready/idle | blocked, plus lastError and model) from one per-thread HTTP read.
+ready/idle | blocked, plus an error-presence marker and a bounded model label)
+from one per-thread HTTP read; provider error text is never printed.
 It does not scrape the observe snapshot. observe remains the additive full-state
 read.
 

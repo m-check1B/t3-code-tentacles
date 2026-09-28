@@ -298,6 +298,51 @@ test("doctor does not mislabel a configured DeepSeek adapter from stale provider
   }
 });
 
+test("doctor uses authoritative instance enablement without enabling absent or malformed providers", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles-doctor-precedence-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const fixtures = [
+    { name: "explicit true beats legacy false", instance: { enabled: true }, legacy: false, enabled: true },
+    { name: "explicit false beats legacy true", instance: { enabled: false }, legacy: true, enabled: false },
+    { name: "missing instance flag uses legacy false", instance: {}, legacy: false, enabled: false },
+    { name: "missing instance flag uses legacy true", instance: {}, legacy: true, enabled: true },
+    { name: "string flag fails closed", instance: { enabled: "true" }, legacy: true, enabled: false },
+    { name: "null flag fails closed", instance: { enabled: null }, legacy: true, enabled: false },
+    { name: "numeric flag fails closed", instance: { enabled: 1 }, legacy: true, enabled: false },
+    { name: "malformed instance fails closed", instance: [], legacy: true, enabled: false },
+    { name: "legacy-only disabled", legacy: false, enabled: false },
+    { name: "legacy-only enabled", legacy: true, enabled: true },
+    { name: "upstream disabled vetoes explicit true", instance: { enabled: true }, legacy: true, status: "disabled", enabled: false },
+    { name: "absent remains absent", absent: true, enabled: false },
+  ];
+  for (const fixture of fixtures) {
+    const settings = {
+      ...(fixture.legacy !== undefined ? { providers: { opencode: { enabled: fixture.legacy } } } : {}),
+      ...(fixture.instance !== undefined ? { providerInstances: { opencode: fixture.instance } } : {}),
+    };
+    const client = {
+      snapshot: async () => ({ projects: [], threads: [] }),
+      getSettings: async () => settings,
+      rpc: async () => ({ providers: fixture.absent ? [] : [{
+        instanceId: "opencode", driver: "opencode", installed: true,
+        status: fixture.status ?? "ready", models: [{ slug: "opencode/big-pickle" }],
+      }] }),
+    };
+    const result = await doctor(client, {
+      hermesUrl: "http://127.0.0.1:1",
+      fetchImpl: async () => { throw new Error("synthetic offline Hermes"); },
+      hermesHome: directory,
+      openrouterTokenFile: path.join(directory, "absent-token"),
+      pairStateFile: path.join(directory, "absent-pair.json"),
+    });
+    const lab = result.labs.find((entry) => entry.instanceId === "opencode");
+    assert.equal(lab.enabled, fixture.enabled, `${fixture.name}: enabled`);
+    assert.equal(lab.ready, fixture.enabled, `${fixture.name}: ready`);
+    assert.equal(lab.code, fixture.absent ? "absent" : fixture.enabled ? null : "disabled", `${fixture.name}: code`);
+    assert.equal(lab.installed, !fixture.absent, `${fixture.name}: installed`);
+  }
+});
+
 test("doctor distinguishes ready standalone and app-bundled Codex native instances", async () => {
   const client = {
     snapshot: async () => ({ projects: [], threads: [] }),

@@ -755,7 +755,8 @@ Beyond the provider adapters, Tentacles exposes the commands a chair needs to
 operate T3 without its GUI. `observe` returns the live state (projects, threads, pending
 approvals/user-input, active turns, archived threads). Parents checking one hire
 should use `tentacles report --thread <id>` for a compact once-proof status
-(`Done` | `generating` | `ready/idle` | `blocked`, plus `lastError` and `model`)
+(`Done` | `generating` | `ready/idle` | `blocked`, plus a `lastError` presence
+marker and a bounded `model` label; provider error text is never copied)
 instead of scraping `observe`. `act` and `orchestrate` dispatch the full
 project/thread/turn/approval command vocabulary with idempotent command IDs and
 projection verification. See [docs/orchestration.md](docs/orchestration.md).

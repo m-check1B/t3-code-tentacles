@@ -13,7 +13,13 @@
 
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { requireExplicitRuntimeMode, requireRuntimeMode, resolveModelSelection } from "./model-selection.mjs";
+import {
+  requireExplicitRuntimeMode,
+  requireRuntimeMode,
+  resolveModelSelection,
+  requireContinueSelection,
+  retainedSelectionPin,
+} from "./model-selection.mjs";
 import { readOrchestrationSnapshot, T3HttpError } from "./t3-client.mjs";
 
 const INTERACTION_MODES = new Set(["default", "plan"]);
@@ -285,8 +291,12 @@ export function buildCommandFromIntent(intent, { commandId, createdAt } = {}) {
     case "thread.create":
       return threadCreate({ ...base, threadId: intent.threadId ?? randomUUID(), projectId: intent.projectId, title: intent.title, modelSelection: modelSelection(intent), runtimeMode: intent.runtimeMode });
     case "thread.continue":
-    case "thread.restart":
-      return threadTurnStart({ ...base, threadId: intent.threadId, text: intent.text ?? "", runtimeMode: intent.runtimeMode, ...(intent.instanceId && intent.model ? { modelSelection: modelSelection(intent) } : {}), ...(intent.titleSeed !== undefined ? { titleSeed: intent.titleSeed } : {}) });
+    case "thread.restart": {
+      // Refuse partial selection input here, before applyIntent can dispatch
+      // anything (including a restart stop).
+      const explicit = requireContinueSelection({ instanceId: intent.instanceId, model: intent.model, options: intent.options, budget: intent.budget, modelSelection: intent.modelSelection });
+      return threadTurnStart({ ...base, threadId: intent.threadId, text: intent.text ?? "", runtimeMode: intent.runtimeMode, ...(explicit ? { modelSelection: modelSelection(intent) } : {}), ...(intent.titleSeed !== undefined ? { titleSeed: intent.titleSeed } : {}) });
+    }
     case "thread.interrupt":
       return threadTurnInterrupt({ ...base, threadId: intent.threadId, ...(intent.turnId !== undefined ? { turnId: intent.turnId } : {}) });
     case "thread.stop":
@@ -408,17 +418,23 @@ function projectThreadSummary(thread) {
 // Compact parent-check document. One per-thread HTTP read; never the observe snapshot.
 export const THREAD_REPORT_STATUSES = Object.freeze(["Done", "generating", "ready/idle", "blocked"]);
 
-function hasReportableLastError(lastError) {
-  if (lastError == null) return false;
-  if (typeof lastError === "string") return lastError.length > 0;
-  return true;
-}
+// Model labels leave this process only when they are short, printable IDs.
+export const REPORT_MODEL_LABEL = /^[A-Za-z0-9._:+-]{1,80}$/;
+// Provider error payloads can carry prompt/auth material, so the compact
+// report states only that an error exists, never its text or object.
+export const REPORT_ERROR_MARKER = "provider-error";
 
 function reportModel(modelSelection) {
   if (!isRecord(modelSelection)) return null;
-  return typeof modelSelection.model === "string" && modelSelection.model.length > 0
+  return typeof modelSelection.model === "string" && REPORT_MODEL_LABEL.test(modelSelection.model)
     ? modelSelection.model
     : null;
+}
+
+function reportError(session) {
+  const lastError = session.lastError;
+  const present = typeof lastError === "string" ? lastError.length > 0 : lastError != null;
+  return present || session.status === "error" ? REPORT_ERROR_MARKER : null;
 }
 
 export function mapThreadReportStatus({
@@ -429,34 +445,42 @@ export function mapThreadReportStatus({
   lastError = null,
 } = {}) {
   if (typeof settledAt === "string" && settledAt.length > 0) return "Done";
-  if (hasPendingApprovals || hasPendingUserInput) return "blocked";
+  if (hasPendingApprovals === true || hasPendingUserInput === true) return "blocked";
   if (sessionStatus === "starting" || sessionStatus === "running") return "generating";
-  if (sessionStatus === "error" || hasReportableLastError(lastError)) return "blocked";
-  if (sessionStatus === "ready" || sessionStatus === "idle" || sessionStatus === "stopped" || sessionStatus == null) {
+  if (sessionStatus === "error" || (typeof lastError === "string" && lastError.length > 0)) return "blocked";
+  if (lastError != null && typeof lastError !== "string") return null;
+  if (sessionStatus === "ready" || sessionStatus === "idle" || sessionStatus === "stopped") {
     return "ready/idle";
   }
-  return "blocked";
+  // Unproven is not a fifth public status: the relay omits it and the CLI fails.
+  return null;
 }
 
-export function projectThreadReport(thread, threadId) {
-  if (!isRecord(thread)) throw new Error(`T3 thread ${threadId} is not projected`);
+export function threadReportStatus(thread) {
+  if (!isRecord(thread)) return null;
   const { hasPendingApprovals, hasPendingUserInput } = threadPendingFlags(thread);
   const session = isRecord(thread.session) ? thread.session : {};
-  const lastError = Object.hasOwn(session, "lastError") ? session.lastError ?? null : null;
-  const status = mapThreadReportStatus({
+  return mapThreadReportStatus({
     sessionStatus: session.status ?? null,
     hasPendingApprovals,
     hasPendingUserInput,
     settledAt: thread.settledAt ?? null,
-    lastError,
+    lastError: session.lastError ?? null,
   });
+}
+
+export function projectThreadReport(thread, threadId) {
+  if (!isRecord(thread)) throw new Error(`T3 thread ${threadId} is not projected`);
+  if (thread.id !== threadId) throw new Error(`T3 thread ${threadId} projection identity mismatch`);
+  const status = threadReportStatus(thread);
+  if (status === null) throw new Error(`T3 thread ${threadId} report is unproven`);
   if (!THREAD_REPORT_STATUSES.includes(status)) {
     throw new Error(`Thread report produced an unknown status: ${status}`);
   }
   return {
     threadId,
     status,
-    lastError,
+    lastError: reportError(isRecord(thread.session) ? thread.session : {}),
     model: reportModel(thread.modelSelection),
   };
 }
@@ -643,6 +667,13 @@ export async function applyIntent(client, intent, { wait = true, commandId, crea
     const sessionStatus = baseline?.thread?.session?.status ?? null;
     const shouldRestart = intent.action === "thread.restart"
       || (intent.action === "thread.continue" && sessionStatus === "error");
+    // An omitted selection continues on the retained lab/model; validate and
+    // pin its effort before anything (including a restart stop) dispatches.
+    if (command.modelSelection === undefined) {
+      if (!baseline) throw new Error(`T3 thread ${command.threadId} is not projected; its retained model selection is unproven`);
+      const pinned = retainedSelectionPin(baseline.thread?.modelSelection);
+      if (pinned !== undefined) command.modelSelection = pinned;
+    }
     if (shouldRestart && sessionStatus !== null && sessionStatus !== "stopped") {
       restartCommand = threadSessionStop({
         threadId: command.threadId,

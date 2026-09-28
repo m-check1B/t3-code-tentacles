@@ -278,6 +278,53 @@ test("Codex app provider mutations refuse foreign instances and non-app binaries
   );
 });
 
+function countingSettingsClient(settings) {
+  const calls = { reads: 0, writes: 0, refreshes: 0 };
+  return {
+    calls,
+    getSettings: async () => { calls.reads += 1; return settings; },
+    updateSettings: async () => { calls.writes += 1; },
+    refreshProvider: async (instanceId) => { calls.refreshes += 1; return { provider: { instanceId } }; },
+  };
+}
+
+test("Codex app provider mutations reserve every ID except codex-app, before any settings write", async () => {
+  const binaryPath = "/Applications/ChatGPT.app/Contents/Resources/codex";
+  const appMarker = [{ name: "T3_TENTACLES_CODEX_APP_OWNER", value: "tentacles/codex-app/v1", sensitive: false }];
+  const cases = [
+    // Native codex represented only by legacy settings: no providerInstances entry at all.
+    { name: "legacy-only native codex", settings: { providers: { codex: { enabled: true, binaryPath: "/usr/local/bin/codex" } }, providerInstances: {} } },
+    { name: "empty native slots", settings: { providerInstances: {} } },
+    { name: "canonical slot already carrying the app marker", settings: { providerInstances: { codex: { driver: "codex", environment: appMarker, config: { binaryPath } } } } },
+  ];
+  const reserved = ["codex", "grok", "claudeAgent", "cursor", "opencode", "hermes", "pi", "deepseek", "kimi", "claude-openrouter", "codex-app-2", ""];
+  for (const { name, settings } of cases) {
+    for (const instanceId of reserved) {
+      const client = countingSettingsClient(settings);
+      await assert.rejects(installCodexAppProvider(client, { binaryPath, instanceId }), /only manages provider instance 'codex-app'/, `${name}: install ${instanceId}`);
+      await assert.rejects(removeCodexAppProvider(client, { instanceId }), /only manages provider instance 'codex-app'/, `${name}: remove ${instanceId}`);
+      assert.deepEqual(client.calls, { reads: 0, writes: 0, refreshes: 0 }, `${name}: ${instanceId}`);
+    }
+  }
+});
+
+test("Codex app provider refusals on the codex-app slot make zero settings writes", async () => {
+  const binaryPath = "/Applications/ChatGPT.app/Contents/Resources/codex";
+  const foreign = countingSettingsClient({ providerInstances: { "codex-app": { driver: "codex", environment: [], config: { binaryPath: "/tmp/codex" } } } });
+  await assert.rejects(installCodexAppProvider(foreign, { binaryPath }), /not owned by the Tentacles Codex app route/);
+  await assert.rejects(removeCodexAppProvider(foreign), /not owned by the Tentacles Codex app route/);
+  assert.equal(foreign.calls.writes, 0);
+  assert.equal(foreign.calls.refreshes, 0);
+
+  const redacted = [{ name: "OPENAI_API_KEY", sensitive: true, valueRedacted: true }];
+  const owned = { driver: "codex", environment: [{ name: "T3_TENTACLES_CODEX_APP_OWNER", value: "tentacles/codex-app/v1", sensitive: false }], config: { binaryPath } };
+  const withRedacted = countingSettingsClient({ providerInstances: { codex: { driver: "codex", environment: redacted }, "codex-app": owned } });
+  await assert.rejects(installCodexAppProvider(withRedacted, { binaryPath }), /redacted provider secrets/);
+  await assert.rejects(removeCodexAppProvider(withRedacted), /redacted provider secrets/);
+  assert.equal(withRedacted.calls.writes, 0);
+  assert.equal(withRedacted.calls.refreshes, 0);
+});
+
 test("provider install preserves a disabled native Grok connector verbatim", async () => {
   const nativeGrok = { driver: "grok", enabled: false, config: { enabled: false, binaryPath: "grok", customModels: [] } };
   let patch;
