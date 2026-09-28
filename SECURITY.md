@@ -2,9 +2,13 @@
 
 ## Supported versions
 
-Security fixes are applied to the latest tagged release, currently v0.2.1, and
-to the unreleased main branch. The working package version on main is 0.3.0; it
-is not a tagged release yet.
+Security fixes are applied to the latest tagged stable release, currently
+v0.4.0 (tag `v0.4.0`, commit `3c54aaa15a2bb28feefff8010f61137f40107bf2`), and
+to unreleased work on top of it. Changes listed under `[Unreleased]` in
+`CHANGELOG.md` are candidate source only: they are not part of the v0.4.0 tag
+or of an installed 0.4.0 runtime, even though the package version still reads
+0.4.0, until a new version is tagged. A package version string alone does not
+identify an installed build; compare against the tag commit.
 
 ## Reporting a vulnerability
 
@@ -56,6 +60,16 @@ machine identity, prompts, or RPC payloads.
 Treat Hermes profiles and Pi Agent as privileged local processes: the bridge
 does not reduce or expand the filesystem, shell, network, or tool permissions
 already granted to the selected runtime.
+
+The optional `codex-app` route is a second instance of T3's native `codex`
+driver, pointed directly at an executable inside a macOS app bundle. Tentacles
+does not proxy Codex traffic or attach to a running app process. Installation
+requires an absolute `<App>.app/Contents/Resources/codex` path, refuses foreign
+instance collisions or redacted settings, and marks its own instance so removal
+cannot delete the canonical `codex` instance or another owner's configuration.
+Install and removal manage only the `codex-app` instance ID: every other ID,
+including canonical/native IDs such as `codex` that may exist only as legacy
+settings, is refused before settings are read or written.
 
 Pi authentication remains exclusively in Pi's normal local configuration. The
 Pi provider stores only non-secret absolute executable, provider, initial model,

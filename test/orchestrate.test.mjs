@@ -16,6 +16,8 @@ import {
 } from "../src/orchestrate.mjs";
 
 const SAMPLE_MODEL = { instanceId: "codex", model: "gpt-5.6-sol" };
+// T3 always projects a thread's retained selection; omitted-selection continues validate it.
+const RETAINED_GROK = { instanceId: "grok", model: "grok-4.7", options: [{ id: "reasoningEffort", value: "high" }] };
 
 test("command builders produce the wire shape T3 expects", () => {
   const project = projectCreate({ commandId: "c1", createdAt: "2026-08-13T00:00:00.000Z", projectId: "p1", title: "P", workspaceRoot: "/w" });
@@ -140,6 +142,7 @@ test("applyIntent dispatches, projects, and returns evidence", async () => {
     dispatch: async (command) => { commands.push(command); return { sequence: commands.length }; },
     thread: async () => ({ thread: {
       id: "t1",
+      modelSelection: RETAINED_GROK,
       messages: commands[0]?.message ? [{ id: commands[0].message.messageId, role: "user" }] : [],
       session: commands.length === 0
         ? { status: "ready", activeTurnId: null, updatedAt: "before", lastError: null }
@@ -154,12 +157,14 @@ test("applyIntent dispatches, projects, and returns evidence", async () => {
   assert.equal(result.lastError, null);
   assert.equal(commands[0].type, "thread.turn.start");
   assert.equal(commands[0].message.text, "go");
+  assert.equal("modelSelection" in commands[0], false);
 });
 
 test("thread.continue restarts an errored session before dispatching the turn", async () => {
   const commands = [];
   const thread = {
     id: "t1",
+    modelSelection: RETAINED_GROK,
     messages: [],
     session: { status: "error", activeTurnId: null, updatedAt: "failed", lastError: "native grok transport failed" },
   };
@@ -192,6 +197,7 @@ test("thread.continue retries when T3 retains the stopped provider session as er
   const commands = [];
   const thread = {
     id: "t1",
+    modelSelection: RETAINED_GROK,
     messages: [],
     session: { status: "error", activeTurnId: null, updatedAt: "failed", lastError: "provider_identity_mismatch" },
   };
@@ -227,6 +233,7 @@ test("thread.restart explicitly replaces a stale running session", async () => {
   const commands = [];
   const thread = {
     id: "t1",
+    modelSelection: RETAINED_GROK,
     messages: [],
     session: { status: "running", activeTurnId: "stale", updatedAt: "stale", lastError: null },
   };
@@ -255,6 +262,7 @@ test("turn projection reports the real provider error instead of projected true"
   const commands = [];
   const thread = {
     id: "t1",
+    modelSelection: RETAINED_GROK,
     messages: [],
     session: { status: "ready", activeTurnId: null, updatedAt: "before", lastError: null },
   };

@@ -13,6 +13,7 @@ export const DEFAULT_DEEPSEEK_INSTANCE_ID = "deepseek";
 export const DEFAULT_DEEPSEEK_MODEL = process.env.T3_DEEPSEEK_MODEL || "deepseek/deepseek-v4-flash";
 export const DEFAULT_KIMI_INSTANCE_ID = "kimi";
 export const DEFAULT_KIMI_MODEL = process.env.T3_KIMI_MODEL || "moonshotai/kimi-k3";
+export const DEFAULT_CODEX_APP_INSTANCE_ID = "codex-app";
 export const DEFAULT_HERMES_PROFILE = process.env.HERMES_PROFILE || "default";
 export const DEFAULT_STATE_DIR = path.join(os.homedir(), ".local", "state", "t3-hermes-bridge");
 export const DEFAULT_TOKEN_FILE = path.join(DEFAULT_STATE_DIR, "t3.token");
@@ -76,6 +77,43 @@ export function resolveExecutable(name, searchPath = process.env.PATH || "") {
     } catch {}
   }
   throw new Error(`Executable not found on PATH: ${name}`);
+}
+
+export function isCodexAppBundleExecutablePath(value) {
+  if (typeof value !== "string" || !value.trim()) return false;
+  const normalized = path.normalize(value.trim());
+  return /(?:^|[/\\])[^/\\]+\.app[/\\]Contents[/\\]Resources[/\\]codex$/.test(normalized);
+}
+
+export function resolveCodexAppExecutable(
+  configured = process.env.CODEX_APP_BIN,
+  candidates = [
+    "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "/Applications/Codex.app/Contents/Resources/codex",
+    path.join(os.homedir(), "Applications", "ChatGPT.app", "Contents", "Resources", "codex"),
+    path.join(os.homedir(), "Applications", "Codex.app", "Contents", "Resources", "codex"),
+  ],
+) {
+  const requested = typeof configured === "string" && configured.trim() ? configured.trim() : null;
+  if (requested && !path.isAbsolute(requested)) {
+    throw new Error("CODEX_APP_BIN/--codex-app-bin must be an absolute path");
+  }
+  const choices = requested ? [requested] : candidates;
+  for (const candidate of choices) {
+    if (!path.isAbsolute(candidate) || !isCodexAppBundleExecutablePath(candidate)) continue;
+    try {
+      const stat = fs.statSync(candidate);
+      if (!stat.isFile()) continue;
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return path.resolve(candidate);
+    } catch {}
+  }
+  if (requested && !isCodexAppBundleExecutablePath(requested)) {
+    throw new Error("CODEX_APP_BIN/--codex-app-bin must point to <App>.app/Contents/Resources/codex");
+  }
+  throw new Error(
+    "Codex app-bundled runtime not found; install the Codex app or pass --codex-app-bin /absolute/<App>.app/Contents/Resources/codex",
+  );
 }
 
 export function requireLoopbackUrl(value, label) {

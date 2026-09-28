@@ -118,6 +118,7 @@ export function startKimiAcpProxy({
   stdout = process.stdout,
   maxLineBytes = MAX_ACP_LINE_BYTES,
   exitImpl = defaultExit,
+  configuredModel,
 } = {}) {
   const binary = kimiBin || resolveKimiBinary(env);
   const child = spawnImpl(binary, childArgs, {
@@ -172,7 +173,9 @@ export function startKimiAcpProxy({
 
   stdinRelay = consumeJsonLines(stdin, (line) => {
     const transformed = transformClientToAgentLine(line, {
-      configuredModel: env.KIMI_MODEL || DEFAULT_KIMI_MODEL,
+      configuredModel: configuredModel === undefined
+        ? env.KIMI_MODEL || DEFAULT_KIMI_MODEL
+        : configuredModel,
     });
     if (transformed.drop) return null;
     if (transformed.respond) return forwardLine(stdout, JSON.stringify(transformed.respond));

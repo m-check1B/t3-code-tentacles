@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { continueThread, doctor, originate } from "./bridge.mjs";
-import { observe } from "./orchestrate.mjs";
+import { observe, REPORT_MODEL_LABEL, threadReportStatus } from "./orchestrate.mjs";
+import { requireContinueSelection } from "./model-selection.mjs";
 import { readBoundedWebSocketData } from "./t3-client.mjs";
 import {
   acquirePairStateLock,
@@ -123,21 +124,6 @@ function fullAccessParams(params, label, allowedKeys) {
 }
 
 const EFFORT_PIN = /^[A-Za-z][A-Za-z0-9-]{0,31}$/;
-const MODEL_LABEL = /^[A-Za-z0-9._:+-]{1,80}$/;
-
-function pairedThreadReportStatus(thread) {
-  const session = isRecord(thread.session) ? thread.session : {};
-  const settled = typeof thread.settledAt === "string" && thread.settledAt.length > 0;
-  if (settled) return "Done";
-  if (thread.hasPendingApprovals === true || thread.hasPendingUserInput === true) return "blocked";
-  if (session.status === "starting" || session.status === "running") return "generating";
-  if (session.status === "error"
-    || (typeof session.lastError === "string" && session.lastError !== "")) return "blocked";
-  if (session.status === "ready" || session.status === "idle" || session.status === "stopped") {
-    return "ready/idle";
-  }
-  return null;
-}
 
 function canonicalIso(value) {
   if (typeof value !== "string") return null;
@@ -190,7 +176,7 @@ function pairedThreadEffort(thread) {
 
 function pairedThreadModel(thread) {
   const selection = isRecord(thread.modelSelection) ? thread.modelSelection : {};
-  return typeof selection.model === "string" && MODEL_LABEL.test(selection.model) ? selection.model : null;
+  return typeof selection.model === "string" && REPORT_MODEL_LABEL.test(selection.model) ? selection.model : null;
 }
 
 function pairedThreadSummary(status, model, effort) {
@@ -200,7 +186,7 @@ function pairedThreadSummary(status, model, effort) {
 }
 
 function pairedThreadReport(thread) {
-  const status = pairedThreadReportStatus(thread);
+  const status = threadReportStatus(thread);
   if (status == null) return null;
   const effort = pairedThreadEffort(thread);
   if (effort === OMIT_REPORT) return null;
@@ -264,7 +250,9 @@ export class LoopbackRuntimeAdapter {
   }
 
   continue(params) {
-    return this.continueImpl(this.client, fullAccessParams(params, "continue", CONTINUE_PARAM_KEYS));
+    const input = fullAccessParams(params, "continue", CONTINUE_PARAM_KEYS);
+    requireContinueSelection({ instanceId: input.instanceId, model: input.model, options: input.options, budget: input.budget });
+    return this.continueImpl(this.client, input);
   }
 
   doctorStatus() {

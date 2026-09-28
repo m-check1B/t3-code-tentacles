@@ -107,9 +107,9 @@ test("doctor bounds and validates the Hermes health response", async () => {
   assert.equal(result.product, "Tentacles");
   assert.deepEqual(result.pairing, { status: "paired" });
   assert.match(formatDoctor(result), /Remote pair: paired/);
-  assert.equal(result.labs.length, 9);
+  assert.equal(result.labs.length, 10);
   assert.deepEqual(result.labs.map((lab) => lab.instanceId), [
-    "hermes", "codex", "claudeAgent", "grok", "cursor", "deepseek", "kimi", "pi", "opencode",
+    "hermes", "codex", "codex-app", "claudeAgent", "grok", "cursor", "deepseek", "kimi", "pi", "opencode",
   ]);
   for (const lab of result.labs) {
     assert.equal(lab.enabled, false);
@@ -181,6 +181,13 @@ test("doctor prints an advertised lab matrix without secrets and keeps Cursor ex
   assert.equal(byId.grok.ready, true);
   assert.equal(byId.grok.kind, "native");
   assert.equal(byId.codex.ready, true);
+  assert.equal(byId.codex.runtime.id, "codex-cli");
+  assert.equal(byId.codex.runtime.transport, "app-server");
+  assert.equal(byId["codex-app"].ready, false);
+  assert.equal(byId["codex-app"].enabled, false);
+  assert.equal(byId["codex-app"].runtime.id, "codex-app");
+  assert.equal(byId["codex-app"].runtime.integration, "t3-native");
+  assert.match(byId["codex-app"].action, /install-codex-app-provider/);
   assert.equal(byId.claudeAgent.ready, false);
   assert.equal(byId.claudeAgent.code, "assistant_unverified");
   assert.equal(byId.opencode.ready, true);
@@ -194,7 +201,7 @@ test("doctor prints an advertised lab matrix without secrets and keeps Cursor ex
   assert.equal(byId.cursor.defaultModel, null);
   assert.equal(byId.cursor.code, "disabled");
   assert.equal(byId.pi.code, "provider_error");
-  assert.equal(result.labs.length, 9);
+  assert.equal(result.labs.length, 10);
   assert.equal(result.t3.version, null);
   assert.equal(JSON.stringify(result).includes("should-not-leak"), false);
   assert.equal(JSON.stringify(result).includes("PRIVATE-PROJECT-CANARY"), false);
@@ -205,6 +212,7 @@ test("doctor prints an advertised lab matrix without secrets and keeps Cursor ex
   assert.match(matrix, /Tentacles doctor — lab matrix for this machine/);
   assert.match(matrix, /Advertised is not proved/);
   assert.match(matrix, /grok\s+native\s+yes\s+yes\s+yes\s+yes\s+ready/);
+  assert.match(matrix, /codex-app\s+native\s+yes\s+no\s+no\s+no\s+absent/);
   assert.match(matrix, /cursor\s+explicit/);
   assert.match(matrix, /Ready on this machine: codex, grok, opencode/);
   assert.match(matrix, /Not ready:/);
@@ -288,6 +296,129 @@ test("doctor does not mislabel a configured DeepSeek adapter from stale provider
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("doctor uses authoritative instance enablement without enabling absent or malformed providers", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles-doctor-precedence-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const fixtures = [
+    { name: "explicit true beats legacy false", instance: { enabled: true }, legacy: false, enabled: true },
+    { name: "explicit false beats legacy true", instance: { enabled: false }, legacy: true, enabled: false },
+    { name: "missing instance flag uses legacy false", instance: {}, legacy: false, enabled: false },
+    { name: "missing instance flag uses legacy true", instance: {}, legacy: true, enabled: true },
+    { name: "string flag fails closed", instance: { enabled: "true" }, legacy: true, enabled: false },
+    { name: "null flag fails closed", instance: { enabled: null }, legacy: true, enabled: false },
+    { name: "numeric flag fails closed", instance: { enabled: 1 }, legacy: true, enabled: false },
+    { name: "malformed instance fails closed", instance: [], legacy: true, enabled: false },
+    { name: "legacy-only disabled", legacy: false, enabled: false },
+    { name: "legacy-only enabled", legacy: true, enabled: true },
+    { name: "upstream disabled vetoes explicit true", instance: { enabled: true }, legacy: true, status: "disabled", enabled: false },
+    { name: "absent remains absent", absent: true, enabled: false },
+  ];
+  for (const fixture of fixtures) {
+    const settings = {
+      ...(fixture.legacy !== undefined ? { providers: { opencode: { enabled: fixture.legacy } } } : {}),
+      ...(fixture.instance !== undefined ? { providerInstances: { opencode: fixture.instance } } : {}),
+    };
+    const client = {
+      snapshot: async () => ({ projects: [], threads: [] }),
+      getSettings: async () => settings,
+      rpc: async () => ({ providers: fixture.absent ? [] : [{
+        instanceId: "opencode", driver: "opencode", installed: true,
+        status: fixture.status ?? "ready", models: [{ slug: "opencode/big-pickle" }],
+      }] }),
+    };
+    const result = await doctor(client, {
+      hermesUrl: "http://127.0.0.1:1",
+      fetchImpl: async () => { throw new Error("synthetic offline Hermes"); },
+      hermesHome: directory,
+      openrouterTokenFile: path.join(directory, "absent-token"),
+      pairStateFile: path.join(directory, "absent-pair.json"),
+    });
+    const lab = result.labs.find((entry) => entry.instanceId === "opencode");
+    assert.equal(lab.enabled, fixture.enabled, `${fixture.name}: enabled`);
+    assert.equal(lab.ready, fixture.enabled, `${fixture.name}: ready`);
+    assert.equal(lab.code, fixture.absent ? "absent" : fixture.enabled ? null : "disabled", `${fixture.name}: code`);
+    assert.equal(lab.installed, !fixture.absent, `${fixture.name}: installed`);
+  }
+});
+
+test("doctor distinguishes ready standalone and app-bundled Codex native instances", async () => {
+  const client = {
+    snapshot: async () => ({ projects: [], threads: [] }),
+    getSettings: async () => ({
+      providers: { codex: { enabled: true, binaryPath: "/usr/local/bin/codex" } },
+      providerInstances: {
+        "codex-app": {
+          driver: "codex",
+          enabled: true,
+          config: { binaryPath: "/Applications/ChatGPT.app/Contents/Resources/codex" },
+        },
+      },
+    }),
+    rpc: async () => ({
+      providers: [
+        { instanceId: "codex", driver: "codex", status: "ready", installed: true, models: [{ slug: "gpt-5.6-luna" }, { slug: "gpt-5.6-sol" }] },
+        { instanceId: "codex-app", driver: "codex", status: "ready", installed: true, models: [{ slug: "gpt-5.6-luna" }, { slug: "gpt-5.6-sol" }] },
+      ],
+    }),
+  };
+  const result = await doctor(client, { fetchImpl: async () => { throw new Error("hermes down"); } });
+  const byId = Object.fromEntries(result.labs.map((lab) => [lab.instanceId, lab]));
+  assert.equal(byId.codex.ready, true);
+  assert.deepEqual(byId.codex.runtime, {
+    id: "codex-cli",
+    label: "Codex CLI",
+    integration: "t3-native",
+    driver: "codex",
+    transport: "app-server",
+    binarySource: "standalone-cli",
+    configuredBinarySource: "standalone-cli",
+  });
+  assert.equal(byId["codex-app"].ready, true);
+  assert.deepEqual(byId["codex-app"].runtime, {
+    id: "codex-app",
+    label: "Codex app",
+    integration: "t3-native",
+    driver: "codex",
+    transport: "app-server",
+    binarySource: "app-bundled",
+    configuredBinarySource: "app-bundled",
+  });
+  assert.equal(JSON.stringify(result).includes("/Applications/"), false);
+
+  const matrix = formatDoctor(result);
+  assert.match(matrix, /codex\s+native\s+yes\s+yes\s+yes\s+yes\s+ready.*codex-cli/);
+  assert.match(matrix, /codex-app\s+native\s+yes\s+yes\s+yes\s+yes\s+ready.*codex-app/);
+});
+
+test("doctor keeps a Codex instance fail-closed when its binary source does not match its runtime id", async () => {
+  const client = {
+    snapshot: async () => ({ projects: [], threads: [] }),
+    getSettings: async () => ({
+      providerInstances: {
+        codex: { driver: "codex", enabled: true, config: { binaryPath: "/Applications/Codex.app/Contents/Resources/codex" } },
+        "codex-app": { driver: "codex", enabled: true, config: { binaryPath: "/usr/local/bin/codex" } },
+      },
+    }),
+    rpc: async () => ({
+      providers: [
+        { instanceId: "codex", driver: "codex", status: "ready", installed: true, models: [{ slug: "gpt-5.6-luna" }] },
+        { instanceId: "codex-app", driver: "codex", status: "ready", installed: true, models: [{ slug: "gpt-5.6-luna" }] },
+      ],
+    }),
+  };
+  const result = await doctor(client, { fetchImpl: async () => { throw new Error("hermes down"); } });
+  const byId = Object.fromEntries(result.labs.map((lab) => [lab.instanceId, lab]));
+  for (const id of ["codex", "codex-app"]) {
+    assert.equal(byId[id].ready, false);
+    assert.equal(byId[id].code, "runtime_misconfigured");
+  }
+  assert.equal(byId.codex.runtime.configuredBinarySource, "app-bundled");
+  assert.equal(byId["codex-app"].runtime.configuredBinarySource, "standalone-cli");
+  assert.match(byId.codex.action, /standalone Codex CLI binary/);
+  assert.match(byId["codex-app"].action, /app-bundled/);
+  assert.equal(JSON.stringify(result).includes("/usr/local/bin/codex"), false);
 });
 
 test("missing or pruned cursor never replays an evicted historical mention", async () => {

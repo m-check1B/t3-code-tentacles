@@ -4,10 +4,66 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Distinguish T3's standalone Codex CLI instance (`codex`) from a separately
+  selectable app-bundled runtime (`codex-app`). The latter is an ownership-safe
+  second instance of T3's native `codex` driver, not a Tentacles protocol
+  wrapper. Doctor exposes both identities and originate preserves the selected
+  instance and normal Codex reasoning budget mapping.
+- `tentacles report --thread` returns a compact parent-check document
+  (`Done` | `generating` | `ready/idle` | `blocked`, plus a `lastError`
+  presence marker and a bounded `model` label) from one per-thread HTTP read.
+  Provider error text or objects are never copied into it. `observe` stays
+  additive.
+
 ### Fixed
 
+- Prefer an explicit boolean provider-instance enablement over stale legacy
+  doctor settings, including OpenCode. Malformed flags and an upstream disabled
+  status still fail closed; absent providers remain absent.
+- Share the CLI and relay thread-report status classifier. Missing or unknown
+  status evidence is unproven: the CLI fails and the relay omits the report.
+  The CLI also rejects empty or mismatched thread projections.
+- Codex app install/remove manage only the `codex-app` instance ID. Canonical
+  and native IDs (for example `codex`, even when it exists only as legacy
+  settings) are refused before any settings read or write.
+- Reject repeated model-option IDs (for example `reasoningEffort=high` then
+  `xhigh`, or contradictory Cursor `fastMode`) instead of validating only the
+  first match.
 - Run the CLI correctly when a clone is reached through a symlinked parent
   path, including the standard macOS `/tmp` alias.
+- Grok cached-auth launcher forwards T3's launch arguments (including the
+  permission mode) instead of always starting `agent stdio`. Only an allowlist
+  of known `agent stdio` / `--permission-mode` argument shapes is accepted;
+  anything else fails before the Grok binary starts. The launcher also runs
+  when reached through a symlinked path. Grok no longer inherits Kimi's
+  configured-model gate from the shared proxy (`configuredModel: null`), so
+  T3's selected Grok model is not rewritten. Covered by synthetic proxy tests
+  only; this is not a live provider acceptance claim.
+- Cursor `composer-2.5-fast` resolves to T3's parameterized base model
+  `composer-2.5` with the `fastMode: true` option. A contradictory explicit
+  `fastMode` option is rejected rather than silently overridden.
+- Partial continue selections fail closed. The CLI library, relay, and `act`
+  `thread.continue` / `thread.restart` accept either every selection field
+  omitted (retained seat) or both `instanceId` and `model`. `budget` or
+  `options` alone (including empty, `null`, duplicate, or above-`high`
+  values), or only one of `instanceId` / `model`, is refused before any
+  dispatch, including a restart stop. Previously the library and relay
+  silently switched such a continue to the Hermes default lab, and `act`
+  silently dropped the fields.
+
+### Changed
+
+- Model selection pins known effort knobs to `high` by default, or `medium`
+  for Opus/Astra, while retaining explicit `low`/`medium`/`high` selections.
+  Grok uses `reasoningEffort`; values above `high` are rejected by the resolver.
+  An all-omitted continue (CLI library, relay, and `act` `thread.continue` /
+  `thread.restart`) keeps the thread's retained lab and model but validates
+  its effort: a missing known knob is pinned, an above-`high` or ambiguous
+  retained effort fails before dispatch, and a thread without a projected
+  selection is refused. Valid retained seats still dispatch without a
+  selection, and replays of an already-projected message dispatch nothing.
 
 ### Documentation
 

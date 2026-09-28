@@ -9,12 +9,14 @@ import {
   ALLOW_ALL_MENTION_POLICY,
   doctor,
   formatDoctor,
+  installCodexAppProvider,
   installDeepSeekProvider,
   installKimiProvider,
   installProvider,
   installPiProvider,
   originate,
   removeDeepSeekProvider,
+  removeCodexAppProvider,
   removeKimiProvider,
   removeProvider,
   removePiProvider,
@@ -25,6 +27,7 @@ import {
 import {
   DEFAULT_DEEPSEEK_INSTANCE_ID,
   DEFAULT_DEEPSEEK_MODEL,
+  DEFAULT_CODEX_APP_INSTANCE_ID,
   DEFAULT_HERMES_PROFILE,
   DEFAULT_INSTANCE_ID,
   DEFAULT_KIMI_INSTANCE_ID,
@@ -33,6 +36,7 @@ import {
   DEFAULT_PI_INSTANCE_ID,
   DEFAULT_PI_MODEL,
   DEFAULT_PI_PROVIDER,
+  resolveCodexAppExecutable,
   resolveExecutable,
 } from "./config.mjs";
 import { requireRequestedProviderConstructable } from "./hermes-acp-launch.mjs";
@@ -45,7 +49,7 @@ import {
   resolveModelSelection,
   RUNTIME_MODES,
 } from "./model-selection.mjs";
-import { applyIntents, observe } from "./orchestrate.mjs";
+import { applyIntents, observe, report } from "./orchestrate.mjs";
 import { LoopbackRuntimeAdapter, OutboundPairer } from "./outbound-pairer.mjs";
 import { DEFAULT_PAIR_STATE_FILE } from "./pair-state.mjs";
 import {
@@ -62,11 +66,13 @@ const RESERVED_REMOVED_INSTANCE_IDS = new Set(["claude-openrouter"]);
 const PROVIDER_INSTANCE_COMMANDS = new Set([
   "install-provider", "remove-provider", "install-pi-provider", "remove-pi-provider",
   "install-deepseek-provider", "remove-deepseek-provider", "install-kimi-provider", "remove-kimi-provider",
+  "install-codex-app-provider", "remove-codex-app-provider",
 ]);
-const KNOWN_COMMANDS = new Set([
+export const KNOWN_COMMANDS = new Set([
   "doctor", "pair", "install-provider", "remove-provider", "install-pi-provider", "remove-pi-provider",
   "install-deepseek-provider", "remove-deepseek-provider", "install-kimi-provider", "remove-kimi-provider",
-  "restore-native-grok", "use-native-grok-cached-auth", "observe", "act", "orchestrate", "originate", "watch",
+  "install-codex-app-provider", "remove-codex-app-provider",
+  "restore-native-grok", "use-native-grok-cached-auth", "observe", "report", "act", "orchestrate", "originate", "watch",
   "install-service", "service-status", "restart-service", "uninstall-service",
 ]);
 
@@ -190,6 +196,8 @@ Usage:
   tentacles pair --pair-file OWNER_ONLY_JSON --machine-id SPHERE_MACHINE_ID [--pair-state-file PATH]
   tentacles install-provider [--instance hermes] [--profile default] [--model MODEL]
   tentacles remove-provider [--instance hermes]
+  tentacles install-codex-app-provider [--instance codex-app] [--codex-app-bin PATH]
+  tentacles remove-codex-app-provider [--instance codex-app]
   tentacles install-pi-provider [--instance pi] [--model gpt-5.6-terra] [--pi-provider openai-codex]
   tentacles remove-pi-provider [--instance pi]
   tentacles install-deepseek-provider [--instance deepseek] [--model deepseek/deepseek-v4-flash] [--dsh-acp-bin PATH]
@@ -199,6 +207,7 @@ Usage:
   tentacles restore-native-grok
   tentacles use-native-grok-cached-auth
   tentacles observe
+  tentacles report --thread THREAD_ID
   tentacles act --intent '{...}' [--intent-file PATH] [--no-wait]
   tentacles orchestrate --intent-file PATH [--no-wait]
   tentacles originate --workspace PATH --title TITLE --message TEXT --runtime-mode ${RUNTIME_MODES.join("|")} [--idempotency-key KEY] [--instance ${ORIGINATE_LABS.join("|")}] [--model MODEL] [--budget low|medium|high] [--option id=value]
@@ -214,6 +223,16 @@ The legacy t3-hermes command remains an exact compatibility alias.
 Run doctor to print the advertised lab matrix for this machine
 (ready / installed / explicit). Advertised is not proved. Use --json for the
 machine-readable document. Doctor never prints tokens or secrets.
+
+report --thread returns a compact parent-check document (Done | generating |
+ready/idle | blocked, plus an error-presence marker and a bounded model label)
+from one per-thread HTTP read; provider error text is never printed.
+It does not scrape the observe snapshot. observe remains the additive full-state
+read.
+
+Codex routes are explicit: --instance codex uses T3's standalone CLI runtime;
+--instance codex-app uses the separately configured Codex app-bundled runtime.
+Both use T3's native codex driver and its app-server transport.
 
 Remote pairing is opt-in. The pair command opens one outbound WSS connection;
 T3 remains on loopback. The one-shot pair offer is read from a 0600 file and
@@ -239,6 +258,7 @@ Environment:
   T3_URL                    default http://127.0.0.1:3773
   T3_HERMES_TOKEN_FILE      default ~/.local/state/t3-hermes-bridge/t3.token
   T3_HERMES_MODEL           default deepseek:deepseek-v4-flash
+  CODEX_APP_BIN             optional absolute <App>.app/Contents/Resources/codex path
   HERMES_URL                default http://127.0.0.1:8642
   HERMES_PROFILE            used by bin/t3-hermes-acp; default default`;
 }
@@ -372,6 +392,25 @@ async function main() {
     console.log(JSON.stringify(await removeProvider(client, { instanceId }), null, 2));
     return;
   }
+  if (command === "install-codex-app-provider") {
+    const codexAppInstanceId = options.instance || DEFAULT_CODEX_APP_INSTANCE_ID;
+    const binaryPath = resolveCodexAppExecutable(options["codex-app-bin"]);
+    const result = await installCodexAppProvider(client, { binaryPath, instanceId: codexAppInstanceId });
+    console.log(JSON.stringify({
+      installed: true,
+      instanceId: codexAppInstanceId,
+      runtime: "codex-app",
+      integration: "t3-native",
+      provider: result.provider?.instanceId || codexAppInstanceId,
+    }, null, 2));
+    return;
+  }
+  if (command === "remove-codex-app-provider") {
+    console.log(JSON.stringify(await removeCodexAppProvider(client, {
+      instanceId: options.instance || DEFAULT_CODEX_APP_INSTANCE_ID,
+    }), null, 2));
+    return;
+  }
   if (command === "install-pi-provider") {
     const piInstanceId = options.instance || DEFAULT_PI_INSTANCE_ID;
     const piModel = options.model || DEFAULT_PI_MODEL;
@@ -433,6 +472,10 @@ async function main() {
   }
   if (command === "observe") {
     console.log(JSON.stringify(await observe(client), null, 2));
+    return;
+  }
+  if (command === "report") {
+    console.log(JSON.stringify(await report(client, required(options, "thread")), null, 2));
     return;
   }
   if (command === "act") {
