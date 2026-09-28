@@ -11,6 +11,9 @@ All notable changes to this project are documented here.
   second instance of T3's native `codex` driver, not a Tentacles protocol
   wrapper. Doctor exposes both identities and originate preserves the selected
   instance and normal Codex reasoning budget mapping.
+- `tentacles report --thread` returns a compact parent-check document
+  (`Done` | `generating` | `ready/idle` | `blocked`, plus `lastError` and
+  `model`) from one per-thread HTTP read. `observe` stays additive.
 
 ### Fixed
 

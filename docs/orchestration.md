@@ -4,10 +4,10 @@ Tentacles is the user-side of T3 Code: each lab is a tentacle. Hermes was the
 first tentacle, not the product. T3 Code tentacles — originate any ready lab
 (instance + model + budget).
 
-This document describes the read (`observe`) and write (`act` / `orchestrate`)
-surfaces any local automation — a cron job, another agent, or a script — can drive over the
-bridge's existing loopback-authenticated HTTP/RPC client. The public command is
-`tentacles`; `t3-agent-bridge` is an exact alias.
+This document describes the read (`observe`, `report`) and write (`act` /
+`orchestrate`) surfaces any local automation — a cron job, another agent, or a
+script — can drive over the bridge's existing loopback-authenticated HTTP/RPC
+client. The public command is `tentacles`; `t3-agent-bridge` is an exact alias.
 
 ## Read: observe
 
@@ -32,6 +32,34 @@ Thread detail (messages, activities, checkpoints, pending approval `requestId`)
 is available on demand via `t3-agent-bridge` client code (`client.thread` /
 `client.threadDetail(threadId, { turnLimit, beforeCursor })`); the CLI exposes
 it through the bridge library, not a standalone verb.
+
+## Read: report
+
+Parents checking one hire should not scrape `observe`. Use the compact
+once-proof document:
+
+```bash
+tentacles report --thread THREAD_ID
+```
+
+The HTTP equivalent is the existing per-thread read
+`GET /api/orchestration/threads/:id`, mapped by `report(client, threadId)`.
+That path never loads the shell snapshot, archived shell, or `observe`.
+
+The document is `{ threadId, status, lastError, model }`. `status` is one of
+`Done`, `generating`, `ready/idle`, `blocked`.
+
+| Input | Result |
+| --- | --- |
+| `settledAt` present | `Done` |
+| pending approvals or pending user input | `blocked` |
+| session `starting` / `running` | `generating` |
+| session `error`, or a leftover `lastError` while not generating | `blocked` |
+| session `ready` / `idle` / `stopped` / absent | `ready/idle` |
+| any other session status (including `interrupted`) | `blocked` |
+
+`lastError` is `session.lastError` (or `null`). `model` is
+`modelSelection.model` (or `null`). `observe` stays additive and unchanged.
 
 ## Write: act / orchestrate
 

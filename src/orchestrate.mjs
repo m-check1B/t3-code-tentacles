@@ -377,13 +377,18 @@ function sanitizedLastActivity(thread) {
   return stamps.at(-1) ?? null;
 }
 
-function projectThreadSummary(thread) {
+function threadPendingFlags(thread) {
   const hasPendingApprovals = typeof thread.hasPendingApprovals === "boolean"
     ? thread.hasPendingApprovals
     : hasOpenRequest(thread.activities, "approval.requested", "approval.resolved");
   const hasPendingUserInput = typeof thread.hasPendingUserInput === "boolean"
     ? thread.hasPendingUserInput
     : hasOpenRequest(thread.activities, "user-input.requested", "user-input.resolved");
+  return { hasPendingApprovals, hasPendingUserInput };
+}
+
+function projectThreadSummary(thread) {
+  const { hasPendingApprovals, hasPendingUserInput } = threadPendingFlags(thread);
   return {
     id: thread.id ?? null,
     projectId: thread.projectId ?? null,
@@ -398,6 +403,90 @@ function projectThreadSummary(thread) {
     hasPendingApprovals,
     hasPendingUserInput,
   };
+}
+
+// Compact parent-check document. One per-thread HTTP read; never the observe snapshot.
+export const THREAD_REPORT_STATUSES = Object.freeze(["Done", "generating", "ready/idle", "blocked"]);
+
+function hasReportableLastError(lastError) {
+  if (lastError == null) return false;
+  if (typeof lastError === "string") return lastError.length > 0;
+  return true;
+}
+
+function reportModel(modelSelection) {
+  if (!isRecord(modelSelection)) return null;
+  return typeof modelSelection.model === "string" && modelSelection.model.length > 0
+    ? modelSelection.model
+    : null;
+}
+
+export function mapThreadReportStatus({
+  sessionStatus = null,
+  hasPendingApprovals = false,
+  hasPendingUserInput = false,
+  settledAt = null,
+  lastError = null,
+} = {}) {
+  if (typeof settledAt === "string" && settledAt.length > 0) return "Done";
+  if (hasPendingApprovals || hasPendingUserInput) return "blocked";
+  if (sessionStatus === "starting" || sessionStatus === "running") return "generating";
+  if (sessionStatus === "error" || hasReportableLastError(lastError)) return "blocked";
+  if (sessionStatus === "ready" || sessionStatus === "idle" || sessionStatus === "stopped" || sessionStatus == null) {
+    return "ready/idle";
+  }
+  return "blocked";
+}
+
+export function projectThreadReport(thread, threadId) {
+  if (!isRecord(thread)) throw new Error(`T3 thread ${threadId} is not projected`);
+  const { hasPendingApprovals, hasPendingUserInput } = threadPendingFlags(thread);
+  const session = isRecord(thread.session) ? thread.session : {};
+  const lastError = Object.hasOwn(session, "lastError") ? session.lastError ?? null : null;
+  const status = mapThreadReportStatus({
+    sessionStatus: session.status ?? null,
+    hasPendingApprovals,
+    hasPendingUserInput,
+    settledAt: thread.settledAt ?? null,
+    lastError,
+  });
+  if (!THREAD_REPORT_STATUSES.includes(status)) {
+    throw new Error(`Thread report produced an unknown status: ${status}`);
+  }
+  return {
+    threadId,
+    status,
+    lastError,
+    model: reportModel(thread.modelSelection),
+  };
+}
+
+function looksLikeThread(value) {
+  if (!isRecord(value)) return false;
+  return value.id != null
+    || isRecord(value.session)
+    || typeof value.settledAt === "string"
+    || isRecord(value.modelSelection)
+    || typeof value.hasPendingApprovals === "boolean"
+    || typeof value.hasPendingUserInput === "boolean"
+    || Array.isArray(value.activities);
+}
+
+function unwrapThreadDetail(detail) {
+  if (isRecord(detail?.thread)) return detail.thread;
+  if (looksLikeThread(detail) && detail.thread === undefined) return detail;
+  return null;
+}
+
+export async function report(client, threadId) {
+  const id = requireString(threadId, "threadId");
+  if (typeof client?.thread !== "function") {
+    throw new Error("T3 client does not expose a per-thread read");
+  }
+  const detail = await client.thread(id);
+  const thread = unwrapThreadDetail(detail);
+  if (!thread) throw new Error(`T3 thread ${id} is not projected`);
+  return projectThreadReport(thread, id);
 }
 
 export async function observe(client) {

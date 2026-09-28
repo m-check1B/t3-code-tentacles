@@ -49,7 +49,7 @@ import {
   resolveModelSelection,
   RUNTIME_MODES,
 } from "./model-selection.mjs";
-import { applyIntents, observe } from "./orchestrate.mjs";
+import { applyIntents, observe, report } from "./orchestrate.mjs";
 import { LoopbackRuntimeAdapter, OutboundPairer } from "./outbound-pairer.mjs";
 import { DEFAULT_PAIR_STATE_FILE } from "./pair-state.mjs";
 import {
@@ -205,6 +205,7 @@ Usage:
   tentacles restore-native-grok
   tentacles use-native-grok-cached-auth
   tentacles observe
+  tentacles report --thread THREAD_ID
   tentacles act --intent '{...}' [--intent-file PATH] [--no-wait]
   tentacles orchestrate --intent-file PATH [--no-wait]
   tentacles originate --workspace PATH --title TITLE --message TEXT --runtime-mode ${RUNTIME_MODES.join("|")} [--idempotency-key KEY] [--instance ${ORIGINATE_LABS.join("|")}] [--model MODEL] [--budget low|medium|high] [--option id=value]
@@ -220,6 +221,11 @@ The legacy t3-hermes command remains an exact compatibility alias.
 Run doctor to print the advertised lab matrix for this machine
 (ready / installed / explicit). Advertised is not proved. Use --json for the
 machine-readable document. Doctor never prints tokens or secrets.
+
+report --thread returns a compact parent-check document (Done | generating |
+ready/idle | blocked, plus lastError and model) from one per-thread HTTP read.
+It does not scrape the observe snapshot. observe remains the additive full-state
+read.
 
 Codex routes are explicit: --instance codex uses T3's standalone CLI runtime;
 --instance codex-app uses the separately configured Codex app-bundled runtime.
@@ -463,6 +469,10 @@ async function main() {
   }
   if (command === "observe") {
     console.log(JSON.stringify(await observe(client), null, 2));
+    return;
+  }
+  if (command === "report") {
+    console.log(JSON.stringify(await report(client, required(options, "thread")), null, 2));
     return;
   }
   if (command === "act") {

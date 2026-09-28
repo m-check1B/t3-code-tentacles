@@ -576,6 +576,9 @@ test("CLI parseArgs collects repeatable --option and usage documents originate f
   assert.match(help, /^Tentacles — chair CLI and additive ACP adapters for T3 Code/m);
   assert.match(help, /Hermes was the first tentacle/);
   assert.match(help, /tentacles doctor \[--json\]/);
+  assert.match(help, /tentacles observe/);
+  assert.match(help, /tentacles report --thread THREAD_ID/);
+  assert.match(help, /report --thread returns a compact parent-check document/);
   assert.match(help, /tentacles pair --pair-file OWNER_ONLY_JSON --machine-id SPHERE_MACHINE_ID/);
   assert.match(help, /one-shot pair offer is read from a 0600 file/);
   assert.match(help, /Never pass a token on the\s+command line/);

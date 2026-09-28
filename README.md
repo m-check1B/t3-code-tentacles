@@ -753,10 +753,12 @@ stable extension seam for additional ACP harnesses.
 
 Beyond the provider adapters, Tentacles exposes the commands a chair needs to
 operate T3 without its GUI. `observe` returns the live state (projects, threads, pending
-approvals/user-input, active turns, archived threads); `act` and `orchestrate`
-dispatch the full project/thread/turn/approval command vocabulary with
-idempotent command IDs and projection verification. See
-[docs/orchestration.md](docs/orchestration.md).
+approvals/user-input, active turns, archived threads). Parents checking one hire
+should use `tentacles report --thread <id>` for a compact once-proof status
+(`Done` | `generating` | `ready/idle` | `blocked`, plus `lastError` and `model`)
+instead of scraping `observe`. `act` and `orchestrate` dispatch the full
+project/thread/turn/approval command vocabulary with idempotent command IDs and
+projection verification. See [docs/orchestration.md](docs/orchestration.md).
 
 Contributions and real compatibility reports are welcome. Start with
 [CONTRIBUTING.md](CONTRIBUTING.md).
