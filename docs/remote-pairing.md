@@ -77,7 +77,7 @@ the pair token and this non-secret host contract:
   "productId": "agentjack-desktop",
   "ability": "desktop.use",
   "runtime": "tentacles",
-  "rpc": ["seats", "originate", "continue", "doctor-status", "turn-result"]
+  "rpc": ["seats", "originate", "continue", "doctor-status", "turn-result", "thread-events", "thread-artifact"]
 }
 ```
 
@@ -115,9 +115,10 @@ restores the lease.
 
 ## Exact Talk turn result extension
 
-New hosts advertise `turn-result` after the four original RPC methods. A
-compatible Sphere accepts either exact method list; old Sphere rejects the
-extended bind. This is a source contract, not deployment proof.
+New hosts advertise `turn-result`, `thread-events` and `thread-artifact` after
+the four original RPC methods. Compatible Sphere accepts the original ordered
+four plus any unique subset of these optional methods; an older Sphere may
+reject an extended bind. This is a source contract, not deployment proof.
 
 `originate` and `continue` now return the dispatched `messageId` and
 `turnCommandId` with `threadId` and `projectId`. Originate's idempotency ledger
