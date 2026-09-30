@@ -892,8 +892,8 @@ test("retained-seat validation preserves idempotent replay and the explicit runt
     { messages: [{ id: "m-done", role: "user", text: "go" }] },
   );
   assert.deepEqual(
-    await continueThread(replay, { threadId: "retained", message: "go", messageId: "m-done", runtimeMode: "full-access" }),
-    { threadId: "retained" },
+    await continueThread(replay, { threadId: "retained", message: "go", messageId: "m-done", turnCommandId: "cmd-done", runtimeMode: "full-access" }),
+    { threadId: "retained", projectId: "p1", messageId: "m-done", turnCommandId: "cmd-done" },
   );
   assert.equal(replay.commands.length, 0);
 

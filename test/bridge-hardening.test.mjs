@@ -8,6 +8,7 @@ import {
   ALLOW_ALL_MENTION_POLICY,
   acquireStateLock,
   doctor,
+  continueThread,
   formatDoctor,
   formatUntrustedContext,
   originate,
@@ -614,6 +615,10 @@ test("originate idempotency reconciles an accepted-but-ambiguous turn without du
   assert.equal(migrated.links.source, "target");
   assert.deepEqual(migrated.lastSeenMessageByThread.source, { messageId: "cursor-message", createdAt: null });
   assert.ok(migrated.originations["origin-1"]);
+  assert.equal(result.messageId, migrated.originations["origin-1"].messageId);
+  assert.equal(result.turnCommandId, migrated.originations["origin-1"].turnCommandId);
+  assert.deepEqual(await originate(client, options), result);
+  await assert.rejects(originate(client, { ...options, model: "changed-model" }), /different input/);
   await assert.rejects(originate(client, { ...options, message: "different" }), /different input/);
 });
 
@@ -670,4 +675,24 @@ test("corrupted, malformed, and oversized bridge state fails closed without muta
 test("HTTP/RPC error bodies never reflect token or prompt material", async () => {
   const client = new T3Client({ token: "test-token", fetchImpl: async () => new Response(JSON.stringify({ token: "leak", prompt: "leak" }), { status: 400 }) });
   await assert.rejects(client.shell(), (error) => error.message.includes("[redacted error body]") && !error.message.includes("leak"));
+});
+
+
+test("continue returns durable caller correlation on identical retries and refuses changed input", async () => {
+  const messages = [{ id: "old-output", role: "assistant", text: "Previous Done" }];
+  let dispatches = 0;
+  const client = {
+    thread: async () => ({ thread: { id: "thread", projectId: "project", modelSelection: { instanceId: "codex", model: "gpt-6-astra", options: [{ id: "reasoningEffort", value: "high" }] }, messages } }),
+    dispatch: async (command) => {
+      dispatches += 1;
+      messages.push({ id: command.message.messageId, role: "user", text: command.message.text });
+    },
+  };
+  const input = { threadId: "thread", message: "next task", messageId: "message", turnCommandId: "command", runtimeMode: "full-access" };
+  const first = await continueThread(client, input);
+  assert.deepEqual(first, { threadId: "thread", projectId: "project", messageId: "message", turnCommandId: "command" });
+  assert.deepEqual(await continueThread(client, input), first);
+  assert.equal(dispatches, 1);
+  await assert.rejects(continueThread(client, { ...input, message: "changed input" }), /different input/);
+  assert.equal(dispatches, 1);
 });

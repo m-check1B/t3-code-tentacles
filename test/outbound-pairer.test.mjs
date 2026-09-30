@@ -247,7 +247,7 @@ test("loopback adapter keeps the relay surface honest about full-access", async 
   assert.equal(projected.includes("stale private error"), false);
   assert.deepEqual(await adapter.originate({ workspace: "/tmp/work", title: "T", message: "M" }), { threadId: "t1" });
   assert.deepEqual(await adapter.continue({ threadId: "t1", message: "again", runtimeMode: "full-access" }), { threadId: "t1" });
-  assert.deepEqual(await adapter.doctorStatus(), { pairing: "/tmp/synthetic-pair-presence.json" });
+  assert.deepEqual(await adapter.doctorStatus(), { pairing: "/tmp/synthetic-pair-presence.json", capabilities: { talkTurnResult: null } });
   assert.deepEqual(calls.map((entry) => entry[2].runtimeMode), ["full-access", "full-access"]);
   assert.throws(() => adapter.originate({ runtimeMode: "approval-required" }), /requires runtimeMode full-access/);
   assert.throws(() => adapter.continue({ runtimeMode: "auto" }), /requires runtimeMode full-access/);
@@ -431,7 +431,7 @@ test("outbound pair binds one Sphere machine, consumes the offer once, and serve
     productId: SPHERE_PRODUCT_ID,
     ability: SPHERE_ABILITY,
     runtime: "tentacles",
-    rpc: ["seats", "originate", "continue", "doctor-status", "thread-events", "thread-artifact"],
+    rpc: ["seats", "originate", "continue", "doctor-status", "turn-result", "thread-events", "thread-artifact"],
   });
   assert.equal(fs.existsSync(pairFile), true);
 
@@ -858,4 +858,40 @@ test("expired pair offers fail closed without exposing pair tokens", async () =>
   assert.deepEqual(readPairPresence(stateFile), { status: "expired" });
   assert.equal(fs.existsSync(pairFile), true);
   assert.equal(JSON.stringify(events).includes(PAIR_TOKEN), false);
+});
+
+
+test("turn-result validates exact correlation, terminal text, bounds and negotiated support", async () => {
+  const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
+  let result = { ...params, turnId: "turn", assistantMessageId: "assistant-message", instanceId: "codex", model: "model", effort: "high", state: "succeeded", outputText: "actual reply", internal: "must not escape" };
+  const adapter = new LoopbackRuntimeAdapter({ client: { request: async (url, options) => {
+    assert.equal(url, "/api/orchestration/turn-result");
+    if (!options) return { talkTurnResult: "v1" };
+    assert.deepEqual(options.body, params);
+    return result;
+  } }, doctorImpl: async () => ({ ready: true }) });
+  assert.deepEqual((await adapter.doctorStatus()).capabilities, { talkTurnResult: "v1" });
+  assert.equal((await adapter.turnResult(params)).outputText, "actual reply");
+  assert.equal((await adapter.turnResult(params)).assistantMessageId, "assistant-message");
+  assert.equal("internal" in await adapter.turnResult(params), false);
+  for (const mutation of [{ threadId: "foreign" }, { messageId: "old" }, { turnCommandId: "wrong" }, { turnId: null }, { assistantMessageId: null }, { assistantMessageId: undefined }, { assistantMessageId: "../foreign" }, { state: "pending", outputText: "stale" }, { outputText: "é".repeat(32768) }]) {
+    const original = result;
+    result = { ...result, ...mutation };
+    await assert.rejects(adapter.turnResult(params), /Invalid correlated/);
+    result = original;
+  }
+  for (const state of ["pending", "failed", "cancelled"]) {
+    const original = result;
+    result = { ...result, state, outputText: null };
+    await assert.rejects(adapter.turnResult(params), /Invalid correlated/);
+    result = { ...result, assistantMessageId: null };
+    assert.equal((await adapter.turnResult(params)).assistantMessageId, null);
+    result = original;
+  }
+  for (const invalid of [{}, { ...params, secret: "no" }, { ...params, messageId: "../other" }]) {
+    await assert.rejects(adapter.turnResult(invalid));
+  }
+  const shim = new RemoteRpcShim(adapter);
+  result = { ...result, threadId: "foreign" };
+  assert.equal((await shim.handle({ version: 1, type: "rpc.request", id: "query", method: "turn-result", params })).type, "rpc.error");
 });

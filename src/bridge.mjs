@@ -680,11 +680,13 @@ export async function startThread(client, { projectId, title, message, instanceI
     await client.dispatch({ type: "thread.create", commandId: threadCommandId, threadId, projectId, title, modelSelection, runtimeMode, interactionMode: "default", branch: null, worktreePath: null, createdAt: now() });
     detail = await waitForThread(client, threadId);
   }
-  if (!(detail.thread.messages || []).some((entry) => entry.id === messageId)) {
+  const existingMessage = (detail.thread.messages || []).find((entry) => entry.id === messageId);
+  if (existingMessage && existingMessage.text !== undefined && existingMessage.text !== message) throw new Error("messageId was already used with different input");
+  if (!existingMessage) {
     await client.dispatch({ type: "thread.turn.start", commandId: turnCommandId, threadId, message: userMessage(message, messageId), modelSelection, titleSeed: title, runtimeMode, interactionMode: "default", createdAt: now() });
     await waitForMessage(client, threadId, messageId);
   }
-  return { threadId, projectId };
+  return { threadId, projectId, messageId, turnCommandId };
 }
 
 export async function continueThread(client, {
@@ -703,9 +705,10 @@ export async function continueThread(client, {
   let modelSelection = retained ? undefined : resolveModelSelection({ instanceId, model, options, budget });
   runtimeMode = requireExplicitRuntimeMode(runtimeMode);
   const detail = await waitForThread(client, threadId);
-  if (!(detail.thread.messages || []).some((entry) => entry.id === messageId)) {
-    // Keep the retained lab/model, but never dispatch an unpinned or
-    // above-high retained effort. Replays of a projected message skip this.
+  const existingMessage = (detail.thread.messages || []).find((entry) => entry.id === messageId);
+  if (existingMessage && existingMessage.text !== undefined && existingMessage.text !== message) throw new Error("messageId was already used with different input");
+  if (!existingMessage) {
+    // Keep the retained lab/model and its mandatory safe effort pin.
     if (retained) modelSelection = retainedSelectionPin(detail.thread.modelSelection);
     await client.dispatch({
       type: "thread.turn.start",
@@ -719,7 +722,7 @@ export async function continueThread(client, {
     });
     await waitForMessage(client, threadId, messageId);
   }
-  return { threadId };
+  return { threadId, projectId: detail.thread.projectId, messageId, turnCommandId };
 }
 
 function digest(message) { return createHash("sha256").update(message).digest("hex"); }
@@ -738,10 +741,10 @@ export async function originate(client, { workspace, title, message, instanceId 
     const state = loaded.state;
     if (loaded.migrated) writeBridgeState(state, stateFile);
     let intent = state.originations[idempotencyKey];
-    if (intent && (intent.workspace !== workspace || intent.title !== title || intent.messageDigest !== digest(message))) throw new Error("originate idempotencyKey was already used with different input");
+    if (intent && (intent.workspace !== workspace || intent.title !== title || intent.messageDigest !== digest(message) || (intent.modelSelectionDigest && intent.modelSelectionDigest !== digest(JSON.stringify(modelSelection))))) throw new Error("originate idempotencyKey was already used with different input");
     if (!intent) {
       if (Object.keys(state.originations).length >= ORIGINATION_LIMIT) throw new Error("Bridge origination ledger is full; rotate state explicitly after audit");
-      intent = { workspace, title, messageDigest: digest(message), projectId: randomUUID(), projectCommandId: randomUUID(), threadId: randomUUID(), threadCommandId: randomUUID(), turnCommandId: randomUUID(), messageId: randomUUID() };
+      intent = { workspace, title, messageDigest: digest(message), modelSelectionDigest: digest(JSON.stringify(modelSelection)), projectId: randomUUID(), projectCommandId: randomUUID(), threadId: randomUUID(), threadCommandId: randomUUID(), turnCommandId: randomUUID(), messageId: randomUUID() };
       state.originations[idempotencyKey] = intent;
       writeBridgeState(state, stateFile);
     }
