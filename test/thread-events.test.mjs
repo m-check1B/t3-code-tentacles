@@ -20,6 +20,7 @@ test("journal is idempotent and resumes after a process/runtime reconnect", asyn
   const { directory, thread, client } = setup(t);
   const first = await threadEvents(client, { threadId: THREAD, limit: 1 }, { directory });
   assert.equal(first.nextSequence, 1);
+  assert.equal(first.events[0].payload.messageId, "m1");
   assert.equal(first.hasMore, true);
   assert.deepEqual(await threadEvents(client, { threadId: THREAD, limit: 1 }, { directory }), first);
   thread.messages.push({ id: "m2", role: "assistant", text: "Done", createdAt: WHEN });

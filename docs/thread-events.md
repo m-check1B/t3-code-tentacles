@@ -35,6 +35,12 @@ Tentacles state directory's `thread-events` subdirectory. VM callers may pass
 
 ## Wire
 
+Message event IDs are exactly `message:<T3 message.id>`. Their payload also
+includes the exact `messageId` and `turnId` when T3 provides one. No command ID
+is inferred. Jack must register its dispatched user/assistant origin IDs before
+draining events so policy envelopes and already-finalized replies are not
+projected again. Text or timestamp equality is never an origin match.
+
 - `thread-events` params: `{threadId, afterSequence: 0, limit: 100}`; limit 1–200.
 - Page: `{threadId, afterSequence, events, nextSequence, hasMore}`.
 - Event: `{threadId,eventId,sequence,occurredAt,kind,payload}`; sequences start at

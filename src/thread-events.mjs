@@ -57,7 +57,8 @@ export function projectThreadEvents(thread) {
     if (!message.text) continue;
     const eventId = `message:${message.id}`;
     projected.push({ eventId, kind: "message", occurredAt: iso(message.createdAt),
-      payload: { role: message.role, text: message.text } });
+      payload: { role: message.role, text: message.text, messageId: message.id,
+        ...(safeText(message.turnId, 200) ? { turnId: message.turnId } : {}) } });
     // Only explicit user marks become memory candidates. Jack revalidates the
     // exact original text against its stricter durable-facts parser.
     if (message.role === "user") {
