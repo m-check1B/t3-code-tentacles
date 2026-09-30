@@ -863,7 +863,7 @@ test("expired pair offers fail closed without exposing pair tokens", async () =>
 
 test("turn-result validates exact correlation, terminal text, bounds and negotiated support", async () => {
   const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
-  let result = { ...params, turnId: "turn", instanceId: "codex", model: "model", effort: "high", state: "succeeded", outputText: "actual reply", internal: "must not escape" };
+  let result = { ...params, turnId: "turn", assistantMessageId: "assistant-message", instanceId: "codex", model: "model", effort: "high", state: "succeeded", outputText: "actual reply", internal: "must not escape" };
   const adapter = new LoopbackRuntimeAdapter({ client: { request: async (url, options) => {
     assert.equal(url, "/api/orchestration/turn-result");
     if (!options) return { talkTurnResult: "v1" };
@@ -872,11 +872,20 @@ test("turn-result validates exact correlation, terminal text, bounds and negotia
   } }, doctorImpl: async () => ({ ready: true }) });
   assert.deepEqual((await adapter.doctorStatus()).capabilities, { talkTurnResult: "v1" });
   assert.equal((await adapter.turnResult(params)).outputText, "actual reply");
+  assert.equal((await adapter.turnResult(params)).assistantMessageId, "assistant-message");
   assert.equal("internal" in await adapter.turnResult(params), false);
-  for (const mutation of [{ threadId: "foreign" }, { messageId: "old" }, { turnCommandId: "wrong" }, { turnId: null }, { state: "pending", outputText: "stale" }, { outputText: "é".repeat(32768) }]) {
+  for (const mutation of [{ threadId: "foreign" }, { messageId: "old" }, { turnCommandId: "wrong" }, { turnId: null }, { assistantMessageId: null }, { assistantMessageId: undefined }, { assistantMessageId: "../foreign" }, { state: "pending", outputText: "stale" }, { outputText: "é".repeat(32768) }]) {
     const original = result;
     result = { ...result, ...mutation };
     await assert.rejects(adapter.turnResult(params), /Invalid correlated/);
+    result = original;
+  }
+  for (const state of ["pending", "failed", "cancelled"]) {
+    const original = result;
+    result = { ...result, state, outputText: null };
+    await assert.rejects(adapter.turnResult(params), /Invalid correlated/);
+    result = { ...result, assistantMessageId: null };
+    assert.equal((await adapter.turnResult(params)).assistantMessageId, null);
     result = original;
   }
   for (const invalid of [{}, { ...params, secret: "no" }, { ...params, messageId: "../other" }]) {

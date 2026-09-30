@@ -124,9 +124,13 @@ extended bind. This is a source contract, not deployment proof.
 preserves those identifiers across ambiguous accepted responses and rejects a
 changed model selection for a new-version ledger entry. `turn-result` takes
 exactly `{threadId,messageId,turnCommandId}` and returns those identifiers with
-`turnId`, `instanceId`, `model`, `effort`, `state` and `outputText`. States are `pending`,
+`turnId`, `assistantMessageId`, `instanceId`, `model`, `effort`, `state` and `outputText`. States are `pending`,
 `succeeded`, `failed` and `cancelled`; only success includes actual terminal
-assistant text (maximum 32 KiB UTF-8). Oversize/mismatched results fail closed.
+assistant text (maximum 32 KiB UTF-8) and its exact source `assistantMessageId`.
+That ID comes from the same joined assistant row as the output; it is null for
+pending, failed and cancelled results. Journal consumers can link this source
+message to the reply they already persisted without importing a duplicate.
+Oversize/mismatched results fail closed.
 
 Doctor adds `capabilities.talkTurnResult`, which is `"v1"` only when authenticated
 T3 `GET /api/orchestration/turn-result` confirms support; otherwise it is null.

@@ -290,15 +290,16 @@ export class LoopbackRuntimeAdapter {
     if (keys.some((key) => result[key] !== input[key])
       || !["pending", "succeeded", "failed", "cancelled"].includes(result.state)
       || (result.turnId !== null && (typeof result.turnId !== "string" || !SAFE_ID.test(result.turnId)))
+      || (result.assistantMessageId !== null && (typeof result.assistantMessageId !== "string" || !SAFE_ID.test(result.assistantMessageId)))
       || (result.instanceId !== null && (typeof result.instanceId !== "string" || result.instanceId.length > 128))
       || (result.model !== null && (typeof result.model !== "string" || result.model.length > 256))
       || (result.effort !== null && (typeof result.effort !== "string" || !/^[A-Za-z0-9_-]{1,32}$/.test(result.effort)))
-      || (result.state === "succeeded" ? typeof result.outputText !== "string" || !result.turnId : result.outputText !== null)
+      || (result.state === "succeeded" ? typeof result.outputText !== "string" || !result.turnId || !result.assistantMessageId : result.outputText !== null || result.assistantMessageId !== null)
       || (typeof result.outputText === "string" && Buffer.byteLength(result.outputText, "utf8") > 32 * 1024)) {
       throw new Error("Invalid correlated turn result");
     }
     // Closed projection excludes all upstream additions and internal diagnostics.
-    return Object.fromEntries([...keys, "turnId", "instanceId", "model", "effort", "state", "outputText"].map((key) => [key, result[key]]));
+    return Object.fromEntries([...keys, "turnId", "assistantMessageId", "instanceId", "model", "effort", "state", "outputText"].map((key) => [key, result[key]]));
   }
 }
 
