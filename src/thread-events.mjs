@@ -60,11 +60,13 @@ export function projectThreadEvents(thread) {
       payload: { role: message.role, text: message.text, messageId: message.id,
         ...(safeText(message.turnId, 200) ? { turnId: message.turnId } : {}) } });
     // Only explicit user marks become memory candidates. Jack revalidates the
-    // exact original text against its stricter durable-facts parser.
+    // complete original text against its durable-facts parser, including
+      // fences, quotes and message-wide negation. This is a candidate, not
+      // authorization to persist memory; Jack resolves face/team scope.
     if (message.role === "user") {
-      for (const line of (message.text.includes("\n") ? [] : [message.text])) {
-        const match = /^(?:Remember that|Remember:|Fact:)\s+(.{1,280})$/.exec(line);
-        if (!match || /(?:password|secret|token|key|bearer|cookie|authorization|credential|do not|don.t)/i.test(line)) continue;
+      for (const line of message.text.split(/\r?\n/)) {
+        const match = /^[ \t]*(?:Remember that|Remember:|Fact:)[ \t]+(.{1,280})[ \t]*$/.exec(line);
+        if (!match) continue;
         const text = match[1].replace(/\s+/g, " ").trim();
         projected.push({ eventId: `memory:${hash(`${message.id}:${text}`)}`, kind: "memory",
           occurredAt: iso(message.createdAt), payload: { text, scope: "face", sourceEventId: eventId } });

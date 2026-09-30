@@ -12,9 +12,12 @@ provider authentication; no provider credentials enter the event contract.
 The exporter uses `T3Client.thread(threadId)`, which returns a full thread when
 no window is requested. Windowed/incomplete responses fail closed. It projects
 completed user/assistant messages, compact tool/terminal summaries, current
-state, and explicit single-line user memory marks. Assistant streaming messages
+state, and explicit user memory candidates from every source-message line. Assistant streaming messages
 wait until immutable. Memory candidates carry their source message ID; Jack
-must apply its own explicit-user-fact policy before writing face/team memory.
+must validate candidates against the complete original user text (including
+fences, quotes and negations), quarantine refused candidates without blocking
+the journal cursor, and resolve face/team custody from the bound Talk. Source
+`scope` is a compatibility hint, never memory-write authority.
 
 Artifacts have actual producers: message `attachments` and changed/generated
 files in ready T3 checkpoint summaries. Bytes come through T3 `assets.createUrl`
@@ -62,6 +65,6 @@ then enable Jack synchronization. The old four-method host bind remains valid
 in Sphere. The new pairer advertises both optional methods. Do not enable a Jack
 importer against an old pairer and interpret unavailable as an empty journal.
 
-Validation: `npm test` (235 passed, 1 skipped), `npm run check`, and
+Validation: `npm test` (236 passed, 1 skipped), `npm run check`, and
 `git diff --check`; all synthetic, isolated fixtures. Live T3/VM and reconnect
 proof remains a release acceptance step.

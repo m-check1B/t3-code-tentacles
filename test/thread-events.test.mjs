@@ -119,3 +119,16 @@ test("dead exporter locks recover without resetting a committed cursor", async (
   assert.equal(resumed.nextSequence, first.nextSequence);
   assert.equal(fs.existsSync(lock), false);
 });
+
+test("multiline explicit memory marks remain candidates for full-message Jack validation", (t) => {
+  const { thread } = setup(t);
+  thread.messages[0].text = "Please keep these preferences.\nRemember: Prefer blue.\n  Remember that Use metric units.\n```text\nFact: Quoted sample only.\n```\nDo not save this message.";
+  const projected = projectThreadEvents(thread);
+  const candidates = projected.events.filter((event) => event.kind === "memory");
+  assert.deepEqual(candidates.map((event) => event.payload.text), [
+    "Prefer blue.", "Use metric units.", "Quoted sample only.",
+  ]);
+  assert.ok(candidates.every((event) => event.payload.sourceEventId === "message:m1"));
+  assert.equal(projected.events.find((event) => event.kind === "message").payload.text, thread.messages[0].text);
+  assert.ok(candidates.every((event) => !Object.hasOwn(event.payload, "accepted")));
+});
