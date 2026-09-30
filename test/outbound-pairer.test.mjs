@@ -431,7 +431,7 @@ test("outbound pair binds one Sphere machine, consumes the offer once, and serve
     productId: SPHERE_PRODUCT_ID,
     ability: SPHERE_ABILITY,
     runtime: "tentacles",
-    rpc: ["seats", "originate", "continue", "doctor-status"],
+    rpc: ["seats", "originate", "continue", "doctor-status", "thread-events", "thread-artifact"],
   });
   assert.equal(fs.existsSync(pairFile), true);
 

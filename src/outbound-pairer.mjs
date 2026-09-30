@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { randomUUID } from "node:crypto";
 import { continueThread, doctor, originate } from "./bridge.mjs";
 import { observe, REPORT_MODEL_LABEL, threadReportStatus } from "./orchestrate.mjs";
@@ -13,7 +14,7 @@ import {
 export const PAIR_PROTOCOL_VERSION = 1;
 export const SPHERE_PRODUCT_ID = "agentjack-desktop";
 export const SPHERE_ABILITY = "desktop.use";
-export const REMOTE_RPC_METHODS = Object.freeze(["seats", "originate", "continue", "doctor-status"]);
+export const REMOTE_RPC_METHODS = Object.freeze(["seats", "originate", "continue", "doctor-status", "thread-events", "thread-artifact"]);
 
 const offerSecrets = new WeakMap();
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -231,6 +232,8 @@ export class LoopbackRuntimeAdapter {
     originateImpl = originate,
     continueImpl = continueThread,
     doctorImpl = doctor,
+    threadEventsImpl = threadEvents,
+    threadEventsDirectory,
   }) {
     if (!client) throw new Error("Loopback runtime requires a T3 client");
     this.client = client;
@@ -239,6 +242,8 @@ export class LoopbackRuntimeAdapter {
     this.originateImpl = originateImpl;
     this.continueImpl = continueImpl;
     this.doctorImpl = doctorImpl;
+    this.threadEventsImpl = threadEventsImpl;
+    this.threadEventsDirectory = threadEventsDirectory;
   }
 
   async seats() {
@@ -253,6 +258,14 @@ export class LoopbackRuntimeAdapter {
     const input = fullAccessParams(params, "continue", CONTINUE_PARAM_KEYS);
     requireContinueSelection({ instanceId: input.instanceId, model: input.model, options: input.options, budget: input.budget });
     return this.continueImpl(this.client, input);
+  }
+
+  threadArtifact(params) {
+    return threadArtifact(params, { directory: this.threadEventsDirectory });
+  }
+
+  threadEvents(params) {
+    return this.threadEventsImpl(this.client, params, { directory: this.threadEventsDirectory });
   }
 
   doctorStatus() {
@@ -283,7 +296,7 @@ export class RemoteRpcShim {
       id = requireSafeId(message.id, "RPC request id");
       if (!REMOTE_RPC_METHODS.includes(message.method)) throw new Error("Unsupported RPC method");
       const params = message.params === undefined ? {} : requireRecord(message.params, "RPC params");
-      const method = message.method === "doctor-status" ? "doctorStatus" : message.method;
+      const method = ({ "doctor-status": "doctorStatus", "thread-events": "threadEvents", "thread-artifact": "threadArtifact" })[message.method] ?? message.method;
       if (typeof this.runtime[method] !== "function") throw new Error("Runtime method is unavailable");
       const result = await this.runtime[method](params);
       return { version: PAIR_PROTOCOL_VERSION, type: "rpc.result", id, result: result ?? null };

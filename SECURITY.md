@@ -27,7 +27,7 @@ regular file, rejects redirects, and refuses to replace or remove a provider it
 does not own. It does not make T3 Code or Hermes remotely accessible.
 
 Optional outbound pairing preserves that boundary: Tentacles opens one
-outbound WSS connection and executes a four-method runtime shim locally; it
+outbound WSS connection and executes a runtime shim with four original methods and two optional thread-journal reads locally; it
 never opens an inbound port or forwards T3 transport. Pair offers are
 current-user-owned `0600` regular files, are sent outside the URL, expire, and
 are consumed only after a successful bind. The bind carries the existing Sphere
