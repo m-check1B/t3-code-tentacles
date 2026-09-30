@@ -14,7 +14,7 @@ import {
 export const PAIR_PROTOCOL_VERSION = 1;
 export const SPHERE_PRODUCT_ID = "agentjack-desktop";
 export const SPHERE_ABILITY = "desktop.use";
-export const REMOTE_RPC_METHODS = Object.freeze(["seats", "originate", "continue", "doctor-status", "thread-events", "thread-artifact"]);
+export const REMOTE_RPC_METHODS = Object.freeze(["seats", "originate", "continue", "doctor-status", "turn-result", "thread-events", "thread-artifact"]);
 
 const offerSecrets = new WeakMap();
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -268,8 +268,37 @@ export class LoopbackRuntimeAdapter {
     return this.threadEventsImpl(this.client, params, { directory: this.threadEventsDirectory });
   }
 
-  doctorStatus() {
-    return this.doctorImpl(this.client, { pairStateFile: this.pairStateFile });
+  async doctorStatus() {
+    const report = await this.doctorImpl(this.client, { pairStateFile: this.pairStateFile });
+    let supported = false;
+    try {
+      const capabilities = await this.client.request("/api/orchestration/turn-result");
+      supported = capabilities?.talkTurnResult === "v1";
+    } catch { /* Older or unavailable T3 has no exact-result capability. */ }
+    return { ...report, capabilities: { talkTurnResult: supported ? "v1" : null } };
+  }
+
+  async turnResult(params) {
+    const input = requireRecord(params, "turn-result params");
+    const keys = ["threadId", "messageId", "turnCommandId"];
+    if (Object.keys(input).length !== keys.length || keys.some((key) => !Object.hasOwn(input, key))) {
+      throw new Error("turn-result requires exactly threadId, messageId and turnCommandId");
+    }
+    for (const key of keys) requireSafeId(input[key], key);
+    const result = await this.client.request("/api/orchestration/turn-result", { method: "POST", body: input });
+    requireRecord(result, "turn-result response");
+    if (keys.some((key) => result[key] !== input[key])
+      || !["pending", "succeeded", "failed", "cancelled"].includes(result.state)
+      || (result.turnId !== null && (typeof result.turnId !== "string" || !SAFE_ID.test(result.turnId)))
+      || (result.instanceId !== null && (typeof result.instanceId !== "string" || result.instanceId.length > 128))
+      || (result.model !== null && (typeof result.model !== "string" || result.model.length > 256))
+      || (result.effort !== null && (typeof result.effort !== "string" || !/^[A-Za-z0-9_-]{1,32}$/.test(result.effort)))
+      || (result.state === "succeeded" ? typeof result.outputText !== "string" || !result.turnId : result.outputText !== null)
+      || (typeof result.outputText === "string" && Buffer.byteLength(result.outputText, "utf8") > 32 * 1024)) {
+      throw new Error("Invalid correlated turn result");
+    }
+    // Closed projection excludes all upstream additions and internal diagnostics.
+    return Object.fromEntries([...keys, "turnId", "instanceId", "model", "effort", "state", "outputText"].map((key) => [key, result[key]]));
   }
 }
 
@@ -296,7 +325,7 @@ export class RemoteRpcShim {
       id = requireSafeId(message.id, "RPC request id");
       if (!REMOTE_RPC_METHODS.includes(message.method)) throw new Error("Unsupported RPC method");
       const params = message.params === undefined ? {} : requireRecord(message.params, "RPC params");
-      const method = ({ "doctor-status": "doctorStatus", "thread-events": "threadEvents", "thread-artifact": "threadArtifact" })[message.method] ?? message.method;
+      const method = ({ "doctor-status": "doctorStatus", "turn-result": "turnResult", "thread-events": "threadEvents", "thread-artifact": "threadArtifact" })[message.method] ?? message.method;
       if (typeof this.runtime[method] !== "function") throw new Error("Runtime method is unavailable");
       const result = await this.runtime[method](params);
       return { version: PAIR_PROTOCOL_VERSION, type: "rpc.result", id, result: result ?? null };

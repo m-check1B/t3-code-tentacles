@@ -77,12 +77,12 @@ the pair token and this non-secret host contract:
   "productId": "agentjack-desktop",
   "ability": "desktop.use",
   "runtime": "tentacles",
-  "rpc": ["seats", "originate", "continue", "doctor-status"]
+  "rpc": ["seats", "originate", "continue", "doctor-status", "turn-result"]
 }
 ```
 
 After `pair.bound`, the endpoint may send bounded `rpc.request` frames for only
-those four methods. Tentacles returns `rpc.result`, or this fail-closed envelope
+those five methods. Tentacles returns `rpc.result`, or this fail-closed envelope
 without reflecting local error text:
 
 ```json
@@ -111,3 +111,37 @@ application-level `ping`, instead of by an independent local timer. Socket loss
 or a missed relay heartbeat immediately writes `unpaired` with a closed
 `staleReason` value before retrying; a later `pair.bound` clears that reason and
 restores the lease.
+
+
+## Exact Talk turn result extension
+
+New hosts advertise `turn-result` after the four original RPC methods. A
+compatible Sphere accepts either exact method list; old Sphere rejects the
+extended bind. This is a source contract, not deployment proof.
+
+`originate` and `continue` now return the dispatched `messageId` and
+`turnCommandId` with `threadId` and `projectId`. Originate's idempotency ledger
+preserves those identifiers across ambiguous accepted responses and rejects a
+changed model selection for a new-version ledger entry. `turn-result` takes
+exactly `{threadId,messageId,turnCommandId}` and returns those identifiers with
+`turnId`, `instanceId`, `model`, `effort`, `state` and `outputText`. States are `pending`,
+`succeeded`, `failed` and `cancelled`; only success includes actual terminal
+assistant text (maximum 32 KiB UTF-8). Oversize/mismatched results fail closed.
+
+Doctor adds `capabilities.talkTurnResult`, which is `"v1"` only when authenticated
+T3 `GET /api/orchestration/turn-result` confirms support; otherwise it is null.
+Primary Talk clients must check this before dispatch. The result query uses
+`POST` on that T3 path, whose durable command/event/turn joins prove the exact
+input and assistant output. There is no fallback to latest thread state or the
+generated `seats.report.summary`. Read-only result retrieval does not grant
+new runtime permissions and keeps existing Sphere owner/pair authority.
+
+`effort` is the exact accepted command option (or null for no knob); it is not
+a new claim of provider-native effort attestation. Conflicting effort options
+are refused. The authenticated pair transport binds the computer identity.
+
+A start receipt alone is not proof of a new dispatch or completion. Continuing
+with an already projected message id does not launch another turn; clients must
+reconcile its exact command id and compare returned model/effort with the frozen
+route. A changed command id or requested model cannot turn an older response
+into proof: unknown correlation or mismatched accepted selection blocks use.
