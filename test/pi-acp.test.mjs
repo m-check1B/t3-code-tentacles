@@ -195,6 +195,10 @@ test("SIGTERM closes an open relay and terminates the Pi process group", { skip:
   const pi = fakePi(directory, `
 const { spawn } = require("node:child_process");
 const grandchild = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+// Reap the group-signalled child before exiting: container PID 1 need not reap orphans.
+// This handler never signals the child, so parent-only termination still fails the test.
+process.on("SIGTERM", () => {});
+grandchild.once("exit", () => process.exit(0));
 process.stdout.write(JSON.stringify({ jsonrpc: "2.0", method: "ready", params: { grandchildPid: grandchild.pid } }) + "\\n");
 process.stdin.resume();
 setInterval(() => {}, 1000);
