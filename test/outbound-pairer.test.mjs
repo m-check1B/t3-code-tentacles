@@ -476,7 +476,10 @@ test("fake relay socket drop reconnects, re-announces, and refreshes presence on
   const controller = new AbortController();
   const events = [];
   let now = Date.parse("2026-09-09T12:00:00.000Z");
-  const runtime = { seats: async () => null, originate: async () => null, continue: async () => null, doctorStatus: async () => null };
+  let modelRefreshes = 0;
+  const runtime = { seats: async () => null, originate: async () => null, continue: async () => null, doctorStatus: async () => null,
+    refreshModels: async () => { modelRefreshes += 1; throw new Error("Private upstream diagnostics"); },
+  };
   const pairer = new OutboundPairer({
     runtime,
     WebSocketImpl: FakeWebSocket,
@@ -504,6 +507,8 @@ test("fake relay socket drop reconnects, re-announces, and refreshes presence on
     "heartbeat-refreshed presence",
   );
   assert.equal(first.sent.some((message) => message.type === "pong"), true);
+  await waitFor(() => modelRefreshes === 1, "heartbeat refreshes live models");
+  assert.deepEqual(first.sent.find((message) => message.type === "pong"), { version: 1, type: "pong" });
 
   first.emit("close");
   await waitFor(

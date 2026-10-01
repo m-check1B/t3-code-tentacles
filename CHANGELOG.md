@@ -6,6 +6,10 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- `tentacles doctor --json --models full` returns complete validated model IDs
+  plus safe display names and T3 thinking/speed option descriptors. Existing
+  doctor output remains bounded to 16 IDs per lab.
+
 - Distinguish T3's standalone Codex CLI instance (`codex`) from a separately
   selectable app-bundled runtime (`codex-app`). The latter is an ownership-safe
   second instance of T3's native `codex` driver, not a Tentacles protocol
@@ -18,6 +22,10 @@ All notable changes to this project are documented here.
   additive.
 
 ### Fixed
+
+- Doctor honors T3's live `isDefault` model marker before legacy lab defaults.
+  Paired `doctor-status` reads the full catalog afresh and pairing heartbeats
+  refresh it in the background without changing the v1 relay wire surface.
 
 - Prefer an explicit boolean provider-instance enablement over stale legacy
   doctor settings, including OpenCode. Malformed flags and an upstream disabled

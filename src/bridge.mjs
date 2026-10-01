@@ -978,6 +978,66 @@ function normalizedModelSlugs(provider) {
   return normalized;
 }
 
+function modelLabel(value) {
+  return typeof value === "string" && /^[^\u0000-\u001f\u007f]{1,256}$/.test(value.trim())
+    ? value.trim() : null;
+}
+
+// Project only T3's public model selectors. Provider diagnostics, authentication,
+// descriptions and prompt-injection hints are not part of this wire contract.
+function modelOptionDescriptors(model) {
+  const descriptors = model?.capabilities?.optionDescriptors;
+  if (!Array.isArray(descriptors)) return [];
+  const seen = new Set();
+  return descriptors.flatMap((descriptor) => {
+    const id = modelLabel(descriptor?.id);
+    const label = modelLabel(descriptor?.label);
+    if (!id || !label || seen.has(id) || !["select", "boolean"].includes(descriptor.type)) return [];
+    seen.add(id);
+    const option = { id, label, type: descriptor.type };
+    if (descriptor.type === "boolean") {
+      if (typeof descriptor.currentValue === "boolean") option.currentValue = descriptor.currentValue;
+    } else {
+      const choices = new Set();
+      option.options = (Array.isArray(descriptor.options) ? descriptor.options : []).flatMap((choice) => {
+        const choiceId = modelLabel(choice?.id);
+        const choiceLabel = modelLabel(choice?.label);
+        if (!choiceId || !choiceLabel || choices.has(choiceId)) return [];
+        choices.add(choiceId);
+        return [{ id: choiceId, label: choiceLabel, ...(choice.isDefault === true ? { isDefault: true } : {}) }];
+      });
+      if (!option.options.length) return [];
+      const currentValue = modelLabel(descriptor.currentValue);
+      if (currentValue && choices.has(currentValue)) option.currentValue = currentValue;
+    }
+    return [option];
+  });
+}
+
+function fullModelCatalog(provider, allModels) {
+  const entries = new Map();
+  for (const model of Array.isArray(provider?.models) ? provider.models : []) {
+    const id = normalizedModelSlugs({ models: [model] })[0];
+    if (!id || entries.has(id)) continue;
+    entries.set(id, {
+      id,
+      displayName: modelLabel(model?.displayName) || modelLabel(model?.name) || id,
+      options: modelOptionDescriptors(model),
+    });
+  }
+  return allModels.map((id) => entries.get(id));
+}
+
+function liveDefaultModel(provider, instanceId, allModels) {
+  const marked = (Array.isArray(provider?.models) ? provider.models : [])
+    .find((model) => model?.isDefault === true && normalizedModelSlugs({ models: [model] }).length);
+  if (marked) return normalizedModelSlugs({ models: [marked] })[0];
+  // Older snapshots can expose the default directly instead of marking a row.
+  const declared = modelLabel(provider?.defaultModel);
+  if (declared && allModels.includes(declared)) return declared;
+  return defaultModelForLab(instanceId);
+}
+
 function providerEnabled(settings, instanceId, configProvider) {
   const catalog = settings?.providers?.[instanceId];
   const instance = settings?.providerInstances?.[instanceId];
@@ -1020,7 +1080,7 @@ async function probeHermesHealth(hermesUrl, fetchImpl) {
   return { reachable: true, status, version };
 }
 
-function labRow({ instanceId, advertised, settings, configById }) {
+function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
   const configProvider = configById.get(instanceId);
   const instance = settings?.providerInstances?.[instanceId];
   const configured = Boolean(instance);
@@ -1028,9 +1088,9 @@ function labRow({ instanceId, advertised, settings, configById }) {
   const installed = configProvider?.installed === true || configured;
   const kind = labKind(instanceId);
   const allModels = normalizedModelSlugs(configProvider);
-  const defaultModel = defaultModelForLab(instanceId);
+  const defaultModel = liveDefaultModel(configProvider, instanceId, allModels);
   const defaultAvailable = kind === "explicit" ? null : Boolean(defaultModel && allModels.includes(defaultModel));
-  const models = allModels.slice(0, DOCTOR_MODEL_LIMIT);
+  const models = modelsMode === "full" ? [...allModels] : allModels.slice(0, DOCTOR_MODEL_LIMIT);
   if (defaultAvailable && !models.includes(defaultModel)) {
     models[models.length === DOCTOR_MODEL_LIMIT ? DOCTOR_MODEL_LIMIT - 1 : models.length] = defaultModel;
   }
@@ -1059,6 +1119,7 @@ function labRow({ instanceId, advertised, settings, configById }) {
     defaultModel,
     defaultAvailable,
   };
+  if (modelsMode === "full") row.modelCatalog = fullModelCatalog(configProvider, allModels);
   if (instanceId === "codex" || instanceId === DEFAULT_CODEX_APP_INSTANCE_ID) {
     const legacyConfig = settings?.providers?.codex;
     const instanceConfig = instance?.config && typeof instance.config === "object" && !Array.isArray(instance.config)
@@ -1123,7 +1184,9 @@ export async function doctor(client, {
   hermesHome,
   openrouterTokenFile,
   pairStateFile = DEFAULT_PAIR_STATE_FILE,
+  models: modelsMode = "summary",
 } = {}) {
+  if (!["summary", "full"].includes(modelsMode)) throw new Error("Doctor models must be summary or full");
   const shell = await readOrchestrationSnapshot(client);
   const settings = await client.getSettings();
   const config = await client.rpc("server.getConfig", {});
@@ -1135,7 +1198,7 @@ export async function doctor(client, {
   const configById = new Map(providers.map((entry) => [entry.instanceId, entry]));
   const labs = [];
   for (const labId of ORIGINATE_LABS) {
-    labs.push(labRow({ instanceId: labId, advertised: true, settings, configById }));
+    labs.push(labRow({ instanceId: labId, advertised: true, settings, configById, modelsMode }));
   }
 
   const adapterCredential = inspectAdapterAuth(openrouterTokenFile);
