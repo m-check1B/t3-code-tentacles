@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { ensureLocalTalkWorkspace } from "./local-talk-workspace.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { randomUUID } from "node:crypto";
 import { continueThread, doctor, originate } from "./bridge.mjs";
@@ -230,6 +231,7 @@ export class LoopbackRuntimeAdapter {
     pairStateFile = DEFAULT_PAIR_STATE_FILE,
     observeImpl = observe,
     originateImpl = originate,
+    prepareTalkWorkspaceImpl = ensureLocalTalkWorkspace,
     continueImpl = continueThread,
     doctorImpl = doctor,
     threadEventsImpl = threadEvents,
@@ -240,6 +242,7 @@ export class LoopbackRuntimeAdapter {
     this.pairStateFile = pairStateFile;
     this.observeImpl = observeImpl;
     this.originateImpl = originateImpl;
+    this.prepareTalkWorkspaceImpl = prepareTalkWorkspaceImpl;
     this.continueImpl = continueImpl;
     this.doctorImpl = doctorImpl;
     this.threadEventsImpl = threadEventsImpl;
@@ -251,7 +254,9 @@ export class LoopbackRuntimeAdapter {
   }
 
   originate(params) {
-    return this.originateImpl(this.client, fullAccessParams(params, "originate", ORIGINATE_PARAM_KEYS));
+    const admitted = fullAccessParams(params, "originate", ORIGINATE_PARAM_KEYS);
+    this.prepareTalkWorkspaceImpl(admitted.workspace);
+    return this.originateImpl(this.client, admitted);
   }
 
   continue(params) {
