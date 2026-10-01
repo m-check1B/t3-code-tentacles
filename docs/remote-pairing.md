@@ -168,3 +168,29 @@ with an already projected message id does not launch another turn; clients must
 reconcile its exact command id and compare returned model/effort with the frozen
 route. A changed command id or requested model cannot turn an older response
 into proof: unknown correlation or mismatched accepted selection blocks use.
+
+
+## Paired Local Talk workspace preparation (KRA-6259)
+
+After the authenticated pairer admits a closed-body originate request, and before
+T3 project/turn dispatch, the machine prepares the requested workspace only if
+it is its own private `<home>/.jack-local-scratch/jack-talk/<tenant>/<agent>`.
+Both IDs must be exactly 32 lowercase hex characters. The root is derived from
+the machine's canonical user home, never from an RPC override. The home must be
+current-user-owned and not group/other writable; every private level is a real
+current-user-owned directory opened without following links and set to0700.
+Malformed scopes, another machine's scratch root, files, symlinks and foreign
+ownership refuse before provider dispatch. Source checkout guard components
+remain refused. No arbitrary workspace is created.
+
+Web, routine and Bot-DM Local turns arrive through this same outbound-pairing
+RPC path; none requires an earlier desktop-originated turn or renderer IPC.
+Existing hire/chair and legacy non-scratch workspace behavior is unchanged.
+T3 still receives its existing project creation flag; this bounded machine-side
+step makes the admitted directory exist first. Pairing/Sphere authorization,
+native Allow/Ask and remote parameter allowlists are unchanged.
+
+This code requires the reviewed Tentacles pairer runtime to be released on the
+paired computer. A Jack API/web release alone cannot update an old machine-side
+pairer. No desktop source/build/install is required by this patch, and no live
+Local reply is claimed from synthetic tests.
