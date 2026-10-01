@@ -268,8 +268,23 @@ export class LoopbackRuntimeAdapter {
     return this.threadEventsImpl(this.client, params, { directory: this.threadEventsDirectory });
   }
 
-  async doctorStatus() {
-    const report = await this.doctorImpl(this.client, { pairStateFile: this.pairStateFile });
+  refreshModels() {
+    // Coalesce concurrent heartbeat/picker probes, never retain a completed
+    // pair-time catalog. Each subsequent call reads the current T3 snapshot.
+    if (!this.modelRefresh) {
+      this.modelRefresh = Promise.resolve().then(() => this.doctorImpl(this.client, {
+        pairStateFile: this.pairStateFile,
+        models: "full",
+      })).finally(() => { this.modelRefresh = null; });
+    }
+    return this.modelRefresh;
+  }
+
+  async doctorStatus(params = {}) {
+    if (Object.keys(requireRecord(params, "doctor-status params")).length) {
+      throw new Error("doctor-status does not accept remote parameters");
+    }
+    const report = await this.refreshModels();
     let supported = false;
     try {
       const capabilities = await this.client.request("/api/orchestration/turn-result");
@@ -701,6 +716,11 @@ export class OutboundPairer {
           refreshPresence();
           if (message.type === "ping") {
             send({ version: PAIR_PROTOCOL_VERSION, type: "pong" });
+            // Keep heartbeat transport compatible. Slow/unavailable local labs
+            // cannot delay pong or expose diagnostics to the relay.
+            if (typeof this.shim.runtime.refreshModels === "function") {
+              void Promise.resolve().then(() => this.shim.runtime.refreshModels()).catch(() => {});
+            }
             return;
           }
           if (message.type !== "rpc.request") throw new Error("Unsupported pair relay message");

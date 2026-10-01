@@ -171,6 +171,15 @@ auth headers, or provider secrets. Use `tentacles doctor --json` for the
 machine-readable document. Doctor inventories both T3-native providers and
 Tentacles adapters; appearing in doctor does not transfer product ownership.
 
+For a picker or another model-list consumer, use
+`tentacles doctor --json --models full`. The default document still limits each
+lab to 16 visible model IDs. Full mode returns every validated ID in `models`,
+sets `modelsTruncated: false`, and adds `modelCatalog` entries with `id`,
+`displayName`, and `options`. Options are T3's public select/boolean descriptors,
+including thinking budgets and speed selectors when the live provider exposes
+them. The live T3 model marked `isDefault` wins over Tentacles' legacy default;
+no newer model is guessed from its name.
+
 T3-native reference rows:
 
 | T3-native lab | Tentacles relationship |

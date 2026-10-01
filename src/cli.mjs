@@ -192,7 +192,7 @@ Hermes was the first tentacle. The public command is tentacles; t3-agent-bridge 
 
 Usage:
   tentacles --version | -V
-  tentacles doctor [--json]
+  tentacles doctor [--json] [--models summary|full]
   tentacles pair --pair-file OWNER_ONLY_JSON --machine-id SPHERE_MACHINE_ID [--pair-state-file PATH]
   tentacles install-provider [--instance hermes] [--profile default] [--model MODEL]
   tentacles remove-provider [--instance hermes]
@@ -348,6 +348,7 @@ async function main() {
     const result = await doctor(client, {
       instanceId,
       pairStateFile: options["pair-state-file"] || DEFAULT_PAIR_STATE_FILE,
+      models: options.models || "summary",
     });
     console.log(options.json ? JSON.stringify(result, null, 2) : formatDoctor(result));
     return;
