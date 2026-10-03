@@ -20,7 +20,7 @@ import {
   requireContinueSelection,
   retainedSelectionPin,
 } from "./model-selection.mjs";
-import { readOrchestrationSnapshot, T3HttpError } from "./t3-client.mjs";
+import { readOrchestrationSnapshot, T3HttpError, T3AuthError } from "./t3-client.mjs";
 
 const INTERACTION_MODES = new Set(["default", "plan"]);
 const APPROVAL_DECISIONS = new Set(["accept", "acceptForSession", "decline", "cancel"]);
@@ -728,8 +728,8 @@ export class IntentDispatchError extends Error {
   constructor(commandId, status, authError) {
     super(status === "rejected" ? "T3 rejected the command" : "T3 command acceptance is unconfirmed; retry with the same commandId");
     this.name = "IntentDispatchError";
-    if (authError?.code === "t3_reauth_required") this.message = authError.message;
-    this.receipt = { accepted: false, commandId, status, projected: false, ...(authError?.code === "t3_reauth_required" ? { code: authError.code, action: authError.action } : {}) };
+    if (authError instanceof T3AuthError) this.message = authError.message;
+    this.receipt = { accepted: false, commandId, status, projected: false, ...(authError instanceof T3AuthError ? { code: authError.code, action: authError.action } : {}) };
   }
 }
 

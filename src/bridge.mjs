@@ -1333,6 +1333,7 @@ export function formatDoctor(result = {}) {
   } else {
     lines.push(`Hermes health: unreachable  code: ${hermes.code || "hermes_unreachable"}`);
   }
+  if (t3.auth?.status === "invalid") return ["Tentacles doctor — T3 re-authentication required (401)", `Recovery: ${t3.auth.action}`, "Lab readiness is unavailable until reauthentication."].join("\n");
   if (t3.auth) {
     lines.push(`T3 authentication: ${t3.auth.status === "valid" ? "valid" : "re-authentication required (401)"}`);
     if (t3.auth.status === "invalid") lines.push(`Recovery: ${t3.auth.action}`);

@@ -86,7 +86,7 @@ export class T3Client {
     if (response.status === 401) {
       // An unauthenticated request has not executed. Retry the same command only
       // when an operator has replaced the owner-controlled token file.
-      await response.body?.cancel();
+      try { await response.body?.cancel(); } catch { /* 401 diagnostics never reflect a body error */ }
       if (!retried && this.tokenFile) {
         let current;
         try { current = readToken(this.tokenFile); } catch { /* fail closed below */ }
