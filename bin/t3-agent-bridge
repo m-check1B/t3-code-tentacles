@@ -10,4 +10,22 @@ while [ -L "$SELF" ]; do
   esac
 done
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$SELF")" && pwd)
-exec node "$SCRIPT_DIR/../src/cli.mjs" "$@"
+NODE_PATH=''
+if [ -f "$SCRIPT_DIR/node-path" ]; then
+  IFS= read -r NODE_PATH < "$SCRIPT_DIR/node-path" || true
+fi
+case "$NODE_PATH" in
+  /*) [ -x "$NODE_PATH" ] || NODE_PATH='' ;;
+  *) NODE_PATH='' ;;
+esac
+if [ -z "$NODE_PATH" ]; then
+  for CANDIDATE in /opt/homebrew/bin/node /usr/local/bin/node; do
+    if [ -x "$CANDIDATE" ]; then NODE_PATH=$CANDIDATE; break; fi
+  done
+fi
+if [ -z "$NODE_PATH" ]; then NODE_PATH=$(command -v node || true); fi
+if [ -z "$NODE_PATH" ]; then
+  echo "Tentacles: Node.js 22+ is missing. Record its absolute path in bin/node-path or install Node.js." >&2
+  exit 127
+fi
+exec "$NODE_PATH" "$SCRIPT_DIR/../src/cli.mjs" "$@"
