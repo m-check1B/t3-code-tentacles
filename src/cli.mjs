@@ -49,7 +49,7 @@ import {
   resolveModelSelection,
   RUNTIME_MODES,
 } from "./model-selection.mjs";
-import { applyIntents, observe, report } from "./orchestrate.mjs";
+import { applyIntents, observe, report, IntentDispatchError } from "./orchestrate.mjs";
 import { LoopbackRuntimeAdapter, OutboundPairer } from "./outbound-pairer.mjs";
 import { DEFAULT_PAIR_STATE_FILE } from "./pair-state.mjs";
 import {
@@ -561,6 +561,7 @@ async function main() {
 // module); importing it for tests must not start a command.
 if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
   main().catch((error) => {
+    if (error instanceof IntentDispatchError) console.log(JSON.stringify([...(error.results ?? []), error.receipt], null, 2));
     const home = os.homedir();
     const message = String(error?.message || "command failed")
       .split(home).join("~")

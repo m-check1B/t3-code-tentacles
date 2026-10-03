@@ -654,6 +654,24 @@ export async function waitForProjectProjection(client, projectId, { timeoutMs = 
   throw new Error(`Timed out waiting for T3 projection: project ${projectId}`);
 }
 
+export class IntentDispatchError extends Error {
+  constructor(commandId, status) {
+    super(status === "rejected" ? "T3 rejected the command" : "T3 command acceptance is unconfirmed; retry with the same commandId");
+    this.name = "IntentDispatchError";
+    this.receipt = { accepted: false, commandId, status, projected: false };
+  }
+}
+
+async function dispatchWithReceipt(client, command) {
+  let result;
+  try { result = await client.dispatch(command); }
+  catch (error) {
+    throw new IntentDispatchError(command.commandId, error instanceof T3HttpError && error.status >= 400 && error.status < 500 ? "rejected" : "unconfirmed");
+  }
+  if (result?.accepted === false) throw new IntentDispatchError(command.commandId, "rejected");
+  return result;
+}
+
 // Apply one intent: build the command, dispatch it, project it back, and
 // return evidence an orchestrator can record. `wait` toggles projection
 // verification (off for fire-and-forget lifecycle commands).
@@ -680,14 +698,14 @@ export async function applyIntent(client, intent, { wait = true, commandId, crea
         commandId: `restart:${command.commandId}`,
         createdAt: command.createdAt,
       });
-      restartDispatchResult = await client.dispatch(restartCommand);
+      restartDispatchResult = await dispatchWithReceipt(client, restartCommand);
       baseline = await waitForRestartableSession(client, command.threadId, { timeoutMs, intervalMs });
     }
   }
   const baselineSession = isRecord(baseline?.thread?.session)
     ? { ...baseline.thread.session }
     : null;
-  const dispatchResult = await client.dispatch(command);
+  const dispatchResult = await dispatchWithReceipt(client, command);
   const waitOptions = { timeoutMs, intervalMs };
   let projection = null;
   if (wait && command.type === "thread.turn.start") {
@@ -705,6 +723,9 @@ export async function applyIntent(client, intent, { wait = true, commandId, crea
     action: intent.action,
     commandId: command.commandId,
     dispatchResult,
+    accepted: true,
+    status: "accepted",
+    executionStatus: projection !== null ? "verified" : "unverified",
     ...(restartCommand !== null ? {
       restartCommandId: restartCommand.commandId,
       restartDispatchResult,
@@ -726,7 +747,11 @@ export async function applyIntents(client, intents, { wait = true, maxIntents = 
   if (intents.length > maxIntents) throw new Error(`Refusing to apply more than ${maxIntents} intents`);
   const results = [];
   for (const intent of intents) {
-    results.push(await applyIntent(client, intent, { wait }));
+    try { results.push(await applyIntent(client, intent, { wait })); }
+    catch (error) {
+      if (error instanceof IntentDispatchError) error.results = results;
+      throw error;
+    }
   }
   return results;
 }
