@@ -4,6 +4,28 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-04
+
+### Fixed — KRA-6432
+
+- Stop/archive verifies provider session termination and uses supported T3 session
+  stop commands when needed. Doctor reports archived session leaks.
+- Support the `thread.session.stop` intent alias and list valid actions in help.
+- Resolve the shim's Node from an owner-recorded absolute path before known
+  macOS locations and PATH, with a clear missing-runtime error.
+- Emit explicit accepted/rejected command receipts for `--no-wait`.
+- Recover operator-rotated bearer files once on 401; report invalid authentication
+  in doctor and provide explicit supported T3 reauthentication without printing
+  credentials. Mini installation and reauthentication remain held.
+- Publish release packages and checksums to the canonical Forgejo, rather than
+  invoking GitHub release tooling from Forgejo CI.
+
+### Designed
+
+- Provenance, idle reporting, typed inbox and ephemeral thread lifecycle remain
+  design notes only; no recurring automation was added.
+
+
 ### Added
 
 - `tentacles doctor --json --models full` returns complete validated model IDs

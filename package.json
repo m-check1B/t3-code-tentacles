@@ -1,6 +1,6 @@
 {
   "name": "tentacles",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Tentacles \u2014 chair CLI and additive ACP adapters for T3 Code.",
   "type": "module",
   "author": "m-check1B",
@@ -37,7 +37,8 @@
     "README.md",
     "SECURITY.md",
     "SUPPORT.md",
-    "scripts/record-node-path.mjs"
+    "scripts/record-node-path.mjs",
+    "scripts/publish-forgejo-release.mjs"
   ],
   "bin": {
     "t3-agent-bridge": "./bin/t3-agent-bridge",
@@ -49,7 +50,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "check": "node --check src/t3-auth.mjs && node --check src/cli.mjs && node --check src/t3-client.mjs && node --check src/bridge.mjs && node --check src/orchestrate.mjs && node --check src/model-selection.mjs && node --check src/pair-state.mjs && node --check src/outbound-pairer.mjs && node --check src/local-talk-workspace.mjs && node --check src/pi-acp.mjs && node --check src/service.mjs && node --check src/deepseek-acp-launch.mjs && node --check src/kimi-acp-launch.mjs && node --check src/grok-acp-launch.mjs && node --check src/hermes-acp-launch.mjs && node --check scripts/e2e-labs.mjs && node --check src/thread-events.mjs",
+    "check": "node --check src/t3-auth.mjs && node --check src/cli.mjs && node --check src/t3-client.mjs && node --check src/bridge.mjs && node --check src/orchestrate.mjs && node --check src/model-selection.mjs && node --check src/pair-state.mjs && node --check src/outbound-pairer.mjs && node --check src/local-talk-workspace.mjs && node --check src/pi-acp.mjs && node --check src/service.mjs && node --check src/deepseek-acp-launch.mjs && node --check src/kimi-acp-launch.mjs && node --check src/grok-acp-launch.mjs && node --check src/hermes-acp-launch.mjs && node --check scripts/e2e-labs.mjs && node --check src/thread-events.mjs && node --check scripts/publish-forgejo-release.mjs",
     "test": "node --test",
     "e2e:labs": "node scripts/e2e-labs.mjs"
   },

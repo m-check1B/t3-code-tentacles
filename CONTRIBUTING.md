@@ -60,4 +60,4 @@ machine-specific paths.
 
 Version tags use `v<package-version>`. Pushing a matching tag runs checks and
 tests, packs the npm-compatible tarball, writes its SHA-256 checksum, and creates
-or updates the GitHub release. The workflow does not publish to npm.
+the canonical Forgejo release. The workflow does not publish to npm.

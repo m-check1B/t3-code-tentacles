@@ -3,10 +3,10 @@
 ## Supported versions
 
 Security fixes are applied to the latest tagged stable release, currently
-v0.4.0 (tag `v0.4.0`, commit `3c54aaa15a2bb28feefff8010f61137f40107bf2`), and
+v0.4.1 (tag `v0.4.1`), and
 to unreleased work on top of it. Changes listed under `[Unreleased]` in
-`CHANGELOG.md` are candidate source only: they are not part of the v0.4.0 tag
-or of an installed 0.4.0 runtime, even though the package version still reads
+`CHANGELOG.md` are candidate source only: they are not part of the v0.4.1 tag
+or of an installed 0.4.1 runtime, even though the package version still reads
 0.4.0, until a new version is tagged. A package version string alone does not
 identify an installed build; compare against the tag commit.
 
