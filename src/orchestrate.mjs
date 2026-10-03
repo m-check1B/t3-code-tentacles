@@ -610,15 +610,17 @@ async function stopLifecycleSession(client, command, options) {
   const before = await readLifecycleThread(client, command.threadId);
   const archived = before.archivedAt != null;
   if (sessionEnded(before)) return before;
-  if (archived) {
-    await client.dispatch(threadUnarchive({ threadId: command.threadId, commandId: `unarchive-for-stop:${command.commandId}` }));
-    await waitForLifecycle(client, command.threadId, (thread) => thread.archivedAt == null, options);
-  }
+  let unarchived = false;
   try {
+    if (archived) {
+      await client.dispatch(threadUnarchive({ threadId: command.threadId, commandId: `unarchive-for-stop:${command.commandId}` }));
+      unarchived = true;
+      await waitForLifecycle(client, command.threadId, (thread) => thread.archivedAt == null, options);
+    }
     await client.dispatch(threadSessionStop({ threadId: command.threadId, commandId: `verified-stop:${command.commandId}` }));
     await waitForLifecycle(client, command.threadId, sessionEnded, options);
   } finally {
-    if (archived) {
+    if (unarchived && (await readLifecycleThread(client, command.threadId)).archivedAt == null) {
       await client.dispatch(threadArchive({ threadId: command.threadId, commandId: `restore-archive:${command.commandId}` }));
       await waitForLifecycle(client, command.threadId, (thread) => thread.archivedAt != null, options);
     }
