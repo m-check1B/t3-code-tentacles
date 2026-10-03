@@ -413,3 +413,8 @@ test("rejection and uncertain transport preserve command identity and completed 
     return true;
   });
 });
+
+test("a retry commandId in intent is preserved on the wire", () => {
+  const command = buildCommandFromIntent({ action: "thread.pin", threadId: "t", commandId: "same-request" });
+  assert.equal(command.commandId, "same-request");
+});

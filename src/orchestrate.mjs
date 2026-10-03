@@ -277,7 +277,8 @@ export function buildCommandFromIntent(intent, { commandId, createdAt } = {}) {
   if (!intent || typeof intent !== "object" || Array.isArray(intent)) throw new Error("Intent must be an object");
   const action = requireString(intent.action, "action");
   if (!INTENT_ACTIONS.has(action)) throw new Error(`Unknown intent action: ${action}`);
-  const base = { ...(commandId !== undefined ? { commandId } : {}), ...(createdAt !== undefined ? { createdAt } : {}) };
+  const retryId = commandId ?? intent.commandId;
+  const base = { ...(retryId !== undefined ? { commandId: requireString(retryId, "commandId") } : {}), ...(createdAt !== undefined ? { createdAt } : {}) };
 
   switch (action) {
     case "project.create":
@@ -676,6 +677,9 @@ async function dispatchWithReceipt(client, command) {
 // return evidence an orchestrator can record. `wait` toggles projection
 // verification (off for fire-and-forget lifecycle commands).
 export async function applyIntent(client, intent, { wait = true, commandId, createdAt, timeoutMs, intervalMs } = {}) {
+  const dispatchClient = client;
+  client = Object.create(client);
+  client.dispatch = (command) => dispatchWithReceipt(dispatchClient, command);
   const command = buildCommandFromIntent(intent, { commandId, createdAt });
   let baseline = null;
   let restartCommand = null;
@@ -698,14 +702,14 @@ export async function applyIntent(client, intent, { wait = true, commandId, crea
         commandId: `restart:${command.commandId}`,
         createdAt: command.createdAt,
       });
-      restartDispatchResult = await dispatchWithReceipt(client, restartCommand);
+      restartDispatchResult = await client.dispatch(restartCommand);
       baseline = await waitForRestartableSession(client, command.threadId, { timeoutMs, intervalMs });
     }
   }
   const baselineSession = isRecord(baseline?.thread?.session)
     ? { ...baseline.thread.session }
     : null;
-  const dispatchResult = await dispatchWithReceipt(client, command);
+  const dispatchResult = await client.dispatch(command);
   const waitOptions = { timeoutMs, intervalMs };
   let projection = null;
   if (wait && command.type === "thread.turn.start") {

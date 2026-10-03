@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { IntentDispatchError } from "./orchestrate.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -49,7 +50,7 @@ import {
   resolveModelSelection,
   RUNTIME_MODES,
 } from "./model-selection.mjs";
-import { applyIntents, observe, report, IntentDispatchError } from "./orchestrate.mjs";
+import { applyIntents, observe, report } from "./orchestrate.mjs";
 import { LoopbackRuntimeAdapter, OutboundPairer } from "./outbound-pairer.mjs";
 import { DEFAULT_PAIR_STATE_FILE } from "./pair-state.mjs";
 import {
