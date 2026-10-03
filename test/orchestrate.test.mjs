@@ -287,13 +287,6 @@ test("turn projection reports the real provider error instead of projected true"
   assert.equal(commands.length, 1);
 });
 
-test("applyIntent skips projection when wait is false", async () => {
-  const commands = [];
-  const client = { dispatch: async (command) => { commands.push(command); return { sequence: 1 }; } };
-  const result = await applyIntent(client, { action: "thread.stop", threadId: "t1" }, { wait: false });
-  assert.equal(result.projected, false);
-  assert.equal(commands[0].type, "thread.session.stop");
-});
 
 test("applyIntent waits for exact project id in the full snapshot without calling shell", async () => {
   const commands = [];

@@ -577,6 +577,73 @@ async function getThreadIfProjected(client, threadId) {
   catch (error) { if (error instanceof T3HttpError && error.status === 404) return null; throw error; }
 }
 
+// Archived threads are absent from T3's active detail endpoint. Read their
+// exact shell identity instead of treating a 404 as proof of termination.
+async function readLifecycleThread(client, threadId) {
+  const detail = await getThreadIfProjected(client, threadId);
+  const active = unwrapThreadDetail(detail);
+  if (active) {
+    if (active.id !== threadId) throw new Error("T3 lifecycle projection identity mismatch");
+    return active;
+  }
+  const archived = await client.archivedShell();
+  const thread = recordArray(archived?.threads).find((entry) => entry.id === threadId);
+  if (!thread) throw new Error(`T3 lifecycle thread ${threadId} is not projected`);
+  return thread;
+}
+
+async function waitForLifecycle(client, threadId, predicate, { timeoutMs = 15_000, intervalMs = 100 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    const thread = await readLifecycleThread(client, threadId);
+    if (predicate(thread)) return thread;
+    if (Date.now() >= deadline) break;
+    await delay(intervalMs);
+  } while (true);
+  throw new Error(`T3 did not verify session termination for thread ${threadId}`);
+}
+
+const sessionEnded = (thread) => thread.session == null
+  || (thread.session.status === "stopped" && thread.session.activeTurnId == null);
+
+// Older T3 releases acknowledge stops for archived threads without acting.
+// Temporarily expose only this thread to the supported session-stop command,
+// then restore its archive state. Never terminate a process by PID or pattern.
+async function stopLifecycleSession(client, command, options) {
+  const before = await readLifecycleThread(client, command.threadId);
+  const archived = before.archivedAt != null;
+  if (sessionEnded(before)) return before;
+  let unarchived = false;
+  try {
+    if (archived) {
+      await client.dispatch(threadUnarchive({ threadId: command.threadId, commandId: `unarchive-for-stop:${command.commandId}` }));
+      unarchived = true;
+      await waitForLifecycle(client, command.threadId, (thread) => thread.archivedAt == null, options);
+    }
+    await client.dispatch(threadSessionStop({ threadId: command.threadId, commandId: `verified-stop:${command.commandId}` }));
+    await waitForLifecycle(client, command.threadId, sessionEnded, options);
+  } finally {
+    if (unarchived && (await readLifecycleThread(client, command.threadId)).archivedAt == null) {
+      await client.dispatch(threadArchive({ threadId: command.threadId, commandId: `restore-archive:${command.commandId}` }));
+      await waitForLifecycle(client, command.threadId, (thread) => thread.archivedAt != null, options);
+    }
+  }
+  return await readLifecycleThread(client, command.threadId);
+}
+
+export async function inspectLeakedSessions(client) {
+  try {
+    if (typeof client.archivedShell !== "function") return { status: "unavailable", count: null, threads: [] };
+    const archived = await client.archivedShell();
+    if (!Array.isArray(archived?.threads)) return { status: "unavailable", count: null, threads: [] };
+    const threads = archived.threads.filter((thread) => thread.deletedAt == null && !sessionEnded(thread))
+      .map((thread) => ({ threadId: thread.id, sessionStatus: thread.session?.status ?? null }));
+    return { status: threads.length ? "leaked" : "clear", count: threads.length, threads };
+  } catch {
+    return { status: "unavailable", count: null, threads: [] };
+  }
+}
+
 export async function waitForThreadProjection(client, threadId, { timeoutMs = 15_000, intervalMs = 100 } = {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -711,10 +778,26 @@ export async function applyIntent(client, intent, { wait = true, commandId, crea
   const baselineSession = isRecord(baseline?.thread?.session)
     ? { ...baseline.thread.session }
     : null;
-  const dispatchResult = await client.dispatch(command);
+  const lifecycle = command.type === "thread.session.stop" || command.type === "thread.archive";
+  let lifecycleBefore = null;
+  if (lifecycle) {
+    // Stop before archive so T3's active-only stop lookup can still find it.
+    lifecycleBefore = await stopLifecycleSession(client, command, { timeoutMs, intervalMs });
+  }
+  const dispatchResult = command.type === "thread.archive" && lifecycleBefore?.archivedAt != null
+    ? { alreadyArchived: true }
+    : await client.dispatch(command);
   const waitOptions = { timeoutMs, intervalMs };
   let projection = null;
-  if (wait && command.type === "thread.turn.start") {
+  if (lifecycle) {
+    let thread = await waitForLifecycle(client, command.threadId,
+      (entry) => command.type !== "thread.archive" || entry.archivedAt != null, waitOptions);
+    if (!sessionEnded(thread)) {
+      await stopLifecycleSession(client, { ...command, commandId: `recovery:${command.commandId}` }, waitOptions);
+      thread = await waitForLifecycle(client, command.threadId, sessionEnded, waitOptions);
+    }
+    projection = { thread };
+  } else if (wait && command.type === "thread.turn.start") {
     projection = await waitForTurnOutcome(client, command.threadId, command.message.messageId, {
       ...waitOptions,
       baselineSession,
