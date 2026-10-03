@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { IntentDispatchError } from "./orchestrate.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -565,6 +566,7 @@ async function main() {
 // module); importing it for tests must not start a command.
 if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
   main().catch((error) => {
+    if (error instanceof IntentDispatchError) console.log(JSON.stringify([...(error.results ?? []), error.receipt], null, 2));
     const home = os.homedir();
     const message = String(error?.message || "command failed")
       .split(home).join("~")

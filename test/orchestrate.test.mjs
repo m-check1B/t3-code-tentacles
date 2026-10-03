@@ -383,3 +383,38 @@ test("observe tolerates missing and partial thread fields in projected snapshots
   assert.equal(state.activeTurns[0].activeTurnId, null);
   assert.equal(state.activeTurns[0].runtimeMode, null);
 });
+
+test("no-wait confirms acceptance without claiming execution", async () => {
+  const client = { dispatch: async () => ({ sequence: 1 }) };
+  const result = await applyIntent(client, { action: "thread.pin", threadId: "t" }, { wait: false, commandId: "receipt" });
+  assert.equal(result.accepted, true);
+  assert.equal(result.commandId, "receipt");
+  assert.equal(result.executionStatus, "unverified");
+});
+
+test("rejection and uncertain transport preserve command identity and completed receipts", async () => {
+  const { IntentDispatchError } = await import("../src/orchestrate.mjs");
+  const { T3HttpError } = await import("../src/t3-client.mjs");
+  for (const [failure, status] of [[new T3HttpError({ method: "POST", pathname: "/dispatch", status: 400 }), "rejected"], [new Error("PRIVATE"), "unconfirmed"]]) {
+    const client = { dispatch: async () => { throw failure; } };
+    await assert.rejects(applyIntent(client, { action: "thread.pin", threadId: "t" }, { wait: false, commandId: "stable" }), (error) => {
+      assert(error instanceof IntentDispatchError);
+      assert.deepEqual(error.receipt, { accepted: false, commandId: "stable", status, projected: false });
+      assert(!error.message.includes("PRIVATE"));
+      return true;
+    });
+  }
+  let calls = 0;
+  const client = { dispatch: async () => ++calls === 1 ? { sequence: 1 } : { accepted: false } };
+  await assert.rejects(applyIntents(client, [{ action: "thread.pin", threadId: "t", commandId: "a" }, { action: "thread.pin", threadId: "t", commandId: "b" }], { wait: false }), (error) => {
+    assert.equal(error.results.length, 1);
+    assert.equal(error.results[0].accepted, true);
+    assert.equal(error.receipt.status, "rejected");
+    return true;
+  });
+});
+
+test("a retry commandId in intent is preserved on the wire", () => {
+  const command = buildCommandFromIntent({ action: "thread.pin", threadId: "t", commandId: "same-request" });
+  assert.equal(command.commandId, "same-request");
+});
