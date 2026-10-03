@@ -39,3 +39,11 @@ test("parseIntentOption reads --intent-file when --intent is absent", () => {
   for (const action of INTENT_ACTIONS) assert(usage().includes(action));
   assert.equal(buildCommandFromIntent({ action: "thread.session.stop", threadId: "t" }).type, "thread.session.stop");
 });
+
+test("act --help succeeds without T3 credentials", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const { fileURLToPath } = await import("node:url");
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL("../src/cli.mjs", import.meta.url)), "act", "--help"], { encoding: "utf8", env: { ...process.env, T3_HERMES_TOKEN_FILE: "/nonexistent" } });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /thread.session.stop/);
+});
