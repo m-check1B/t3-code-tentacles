@@ -1,3 +1,4 @@
+import { inspectLeakedSessions } from "./orchestrate.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -1277,7 +1278,7 @@ export async function doctor(client, {
   const threads = Array.isArray(shell?.threads) ? shell.threads.filter((entry) => entry?.deletedAt == null && entry?.archivedAt == null) : [];
   return {
     product: "Tentacles",
-    t3: { reachable: true, version: serverVersion, projects: projects.length, threads: threads.length },
+    t3: { reachable: true, version: serverVersion, projects: projects.length, threads: threads.length, leakedSessions: await inspectLeakedSessions(client) },
     pairing: readPairPresence(pairStateFile),
     labs,
     adapterCredential,
@@ -1311,6 +1312,7 @@ export function formatDoctor(result = {}) {
     "Tentacles doctor — lab matrix for this machine",
     "Live local state only. Advertised is not proved. Ready is not a global compatibility claim.",
     "",
+    `Archived session check: ${t3.leakedSessions?.status ?? "unavailable"}  count: ${t3.leakedSessions?.count ?? "unknown"}`,
     `Product: ${result.product || "Tentacles"}`,
     `T3: ${t3.reachable === false ? "unreachable" : "reachable"}  version: ${t3.version || "unknown"}  projects: ${t3.projects ?? 0}  threads: ${t3.threads ?? 0}`,
     `Remote pair: ${["paired", "unpaired", "expired"].includes(pairing.status) ? pairing.status : "unpaired"}`,
