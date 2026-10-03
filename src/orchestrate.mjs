@@ -725,10 +725,11 @@ export async function waitForProjectProjection(client, projectId, { timeoutMs = 
 }
 
 export class IntentDispatchError extends Error {
-  constructor(commandId, status) {
+  constructor(commandId, status, authError) {
     super(status === "rejected" ? "T3 rejected the command" : "T3 command acceptance is unconfirmed; retry with the same commandId");
     this.name = "IntentDispatchError";
-    this.receipt = { accepted: false, commandId, status, projected: false };
+    if (authError?.code === "t3_reauth_required") this.message = authError.message;
+    this.receipt = { accepted: false, commandId, status, projected: false, ...(authError?.code === "t3_reauth_required" ? { code: authError.code, action: authError.action } : {}) };
   }
 }
 
@@ -736,7 +737,7 @@ async function dispatchWithReceipt(client, command) {
   let result;
   try { result = await client.dispatch(command); }
   catch (error) {
-    throw new IntentDispatchError(command.commandId, error instanceof T3HttpError && error.status >= 400 && error.status < 500 ? "rejected" : "unconfirmed");
+    throw new IntentDispatchError(command.commandId, error instanceof T3HttpError && error.status >= 400 && error.status < 500 ? "rejected" : "unconfirmed", error);
   }
   if (result?.accepted === false) throw new IntentDispatchError(command.commandId, "rejected");
   return result;

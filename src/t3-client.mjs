@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { DEFAULT_T3_URL, readToken, requireLoopbackUrl } from "./config.mjs";
+import { DEFAULT_T3_URL, DEFAULT_TOKEN_FILE, readToken, requireLoopbackUrl } from "./config.mjs";
 
 function safeErrorBody(body) {
   // T3 error payloads are not a trusted logging surface: they can echo bearer
@@ -55,31 +55,48 @@ export async function readBoundedWebSocketData(data, maxBytes, label = "T3 webso
 export class T3Client {
   constructor({
     baseUrl = process.env.T3_URL || DEFAULT_T3_URL,
-    token = readToken(),
+    token,
+    tokenFile = process.env.T3_HERMES_TOKEN_FILE || DEFAULT_TOKEN_FILE,
     fetchImpl = globalThis.fetch,
     WebSocketImpl = globalThis.WebSocket,
     requestTimeoutMs = 15_000,
     responseMaxBytes = 32 * 1024 * 1024,
   } = {}) {
     this.baseUrl = requireLoopbackUrl(baseUrl, "T3_URL");
-    this.token = token;
+    this.tokenFile = token === undefined ? tokenFile : null;
+    this.token = token === undefined ? readToken(tokenFile) : token;
     this.fetchImpl = fetchImpl;
     this.WebSocketImpl = WebSocketImpl;
     this.requestTimeoutMs = requestTimeoutMs;
     this.responseMaxBytes = responseMaxBytes;
   }
 
-  async request(pathname, { method = "GET", body } = {}) {
+  async request(pathname, { method = "GET", body } = {}, retried = false) {
+    const usedToken = this.token;
     const response = await this.fetchImpl(`${this.baseUrl}${pathname}`, {
       method,
       redirect: "error",
       signal: AbortSignal.timeout(this.requestTimeoutMs),
       headers: {
-        authorization: `Bearer ${this.token}`,
+        authorization: `Bearer ${usedToken}`,
         ...(body === undefined ? {} : { "content-type": "application/json" }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
+    if (response.status === 401) {
+      // An unauthenticated request has not executed. Retry the same command only
+      // when an operator has replaced the owner-controlled token file.
+      await response.body?.cancel();
+      if (!retried && this.tokenFile) {
+        let current;
+        try { current = readToken(this.tokenFile); } catch { /* fail closed below */ }
+        if (current && current !== usedToken) {
+          this.token = current;
+          return this.request(pathname, { method, body }, true);
+        }
+      }
+      throw new T3AuthError({ method, pathname });
+    }
     const text = await readBoundedResponseText(response, this.responseMaxBytes);
     let parsed = null;
     if (text) {
@@ -217,5 +234,17 @@ export class T3HttpError extends Error {
     this.name = "T3HttpError";
     this.status = status;
     this.pathname = pathname;
+  }
+}
+
+export const T3_REAUTH_ACTION = 'tentacles reauth --t3-bin "$(command -v t3)" --t3-home "$HOME/.t3"';
+
+export class T3AuthError extends T3HttpError {
+  constructor({ method, pathname }) {
+    super({ method, pathname, status: 401 });
+    this.name = "T3AuthError";
+    this.code = "t3_reauth_required";
+    this.action = T3_REAUTH_ACTION;
+    this.message = `T3 authentication rejected (401); the bearer expired, was revoked, or belongs to another T3 home. Re-authenticate using the colocated T3 CLI: ${this.action}`;
   }
 }

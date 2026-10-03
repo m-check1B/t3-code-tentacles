@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import { reauthenticate } from "./t3-auth.mjs";
 import { T3Client } from "./t3-client.mjs";
 import {
   ALLOW_ALL_MENTION_POLICY,
@@ -70,7 +71,7 @@ const PROVIDER_INSTANCE_COMMANDS = new Set([
   "install-codex-app-provider", "remove-codex-app-provider",
 ]);
 export const KNOWN_COMMANDS = new Set([
-  "doctor", "pair", "install-provider", "remove-provider", "install-pi-provider", "remove-pi-provider",
+  "reauth", "doctor", "pair", "install-provider", "remove-provider", "install-pi-provider", "remove-pi-provider",
   "install-deepseek-provider", "remove-deepseek-provider", "install-kimi-provider", "remove-kimi-provider",
   "install-codex-app-provider", "remove-codex-app-provider",
   "restore-native-grok", "use-native-grok-cached-auth", "observe", "report", "act", "orchestrate", "originate", "watch",
@@ -197,6 +198,7 @@ Valid act actions:
 
 Usage:
   tentacles --version | -V
+  tentacles reauth --t3-bin /absolute/t3 --t3-home /absolute/.t3 [--token-file /absolute/t3.token]
   tentacles doctor [--json] [--models summary|full]
   tentacles pair --pair-file OWNER_ONLY_JSON --machine-id SPHERE_MACHINE_ID [--pair-state-file PATH]
   tentacles install-provider [--instance hermes] [--profile default] [--model MODEL]
@@ -347,6 +349,14 @@ async function main() {
     return;
   }
 
+  if (command === "reauth") {
+    console.log(JSON.stringify(reauthenticate({
+      t3Bin: required(options, "t3-bin"),
+      t3Home: required(options, "t3-home"),
+      tokenFile: options["token-file"],
+    })));
+    return;
+  }
   const client = new T3Client();
 
   if (command === "doctor") {
@@ -356,6 +366,7 @@ async function main() {
       models: options.models || "summary",
     });
     console.log(options.json ? JSON.stringify(result, null, 2) : formatDoctor(result));
+    if (result.t3?.auth?.status === "invalid") process.exitCode = 1;
     return;
   }
   if (command === "pair") {
