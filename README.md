@@ -782,3 +782,13 @@ Contributions and real compatibility reports are welcome. Start with
 This is an independent community project. It is not an official T3 Code, Ping
 Labs, Hermes Agent, Nous Research, Pi Agent, or Agent Client Protocol project and
 is not affiliated with or endorsed by those organizations.
+
+### Node path for SSH launchers
+
+Before linking a release on a host, run `node scripts/record-node-path.mjs` with
+the chosen Node.js 22+ runtime. This records an absolute path in `bin/node-path`
+without committing a host-specific path. The public shim tries that path first,
+then `/opt/homebrew/bin/node`, `/usr/local/bin/node`, and finally PATH. A missing
+runtime produces an explicit error and exit 127. Both public aliases use this
+same shim. Re-record the file when replacing the runtime (remove the old
+`bin/node-path` in the release being prepared first).

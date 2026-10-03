@@ -36,7 +36,8 @@
     "LICENSE",
     "README.md",
     "SECURITY.md",
-    "SUPPORT.md"
+    "SUPPORT.md",
+    "scripts/record-node-path.mjs"
   ],
   "bin": {
     "t3-agent-bridge": "./bin/t3-agent-bridge",
