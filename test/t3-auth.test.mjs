@@ -85,7 +85,7 @@ test("doctor positively reports validated transport credentials", async () => {
 
 test("no-wait rejection receipt carries a safe auth recovery action", async () => {
   const c = new T3Client({ token: OLD, fetchImpl: async () => rejected() });
-  await assert.rejects(applyIntent(c, { action: "thread.archive", threadId: "throwaway" }, { wait: false }), error => error.receipt.accepted === false && error.receipt.code === "t3_reauth_required" && error.receipt.action.includes("tentacles reauth"));
+  await assert.rejects(applyIntent(c, { action: "thread.rename", threadId: "throwaway", title: "synthetic" }, { wait: false }), error => error.receipt.accepted === false && error.receipt.code === "t3_reauth_required" && error.receipt.action.includes("tentacles reauth"));
 });
 
 test("supported issuance stores only a validated private bearer atomically", t => {
