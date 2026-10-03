@@ -32,3 +32,18 @@ test("parseIntentOption reads --intent-file when --intent is absent", () => {
   }
   assert.throws(() => parseIntentOption({ "intent-file": "/nonexistent/intent.json" }), /ENOENT/);
 });
+
+ test("help lists every valid action and the stop alias", async () => {
+  const { usage } = await import("../src/cli.mjs");
+  const { INTENT_ACTIONS, buildCommandFromIntent } = await import("../src/orchestrate.mjs");
+  for (const action of INTENT_ACTIONS) assert(usage().includes(action));
+  assert.equal(buildCommandFromIntent({ action: "thread.session.stop", threadId: "t" }).type, "thread.session.stop");
+});
+
+test("act --help succeeds without T3 credentials", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const { fileURLToPath } = await import("node:url");
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL("../src/cli.mjs", import.meta.url)), "act", "--help"], { encoding: "utf8", env: { ...process.env, T3_HERMES_TOKEN_FILE: "/nonexistent" } });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /thread.session.stop/);
+});

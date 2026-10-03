@@ -49,7 +49,7 @@ import {
   resolveModelSelection,
   RUNTIME_MODES,
 } from "./model-selection.mjs";
-import { applyIntents, observe, report } from "./orchestrate.mjs";
+import { applyIntents, observe, report, INTENT_ACTIONS } from "./orchestrate.mjs";
 import { LoopbackRuntimeAdapter, OutboundPairer } from "./outbound-pairer.mjs";
 import { DEFAULT_PAIR_STATE_FILE } from "./pair-state.mjs";
 import {
@@ -108,7 +108,7 @@ export function parseArgs(argv) {
     if (command === "originate" && !ORIGINATE_OPTION_KEYS.has(key)) {
       throw new Error(`Unknown originate option --${key}; run tentacles help for supported options`);
     }
-    if (key === "once" || key === "allow-all-projects" || key === "no-wait" || key === "json") {
+    if (key === "help" || key === "once" || key === "allow-all-projects" || key === "no-wait" || key === "json") {
       options[key] = true;
       continue;
     }
@@ -189,6 +189,10 @@ function resolveKimiExecutable(option) {
 export function usage() {
   return `Tentacles — chair CLI and additive ACP adapters for T3 Code.
 Hermes was the first tentacle. The public command is tentacles; t3-agent-bridge is an exact alias.
+
+Valid act actions:
+  ${[...INTENT_ACTIONS].join("\n  ")}
+  thread.session.stop is an alias of thread.stop.
 
 Usage:
   tentacles --version | -V
@@ -298,7 +302,7 @@ function writeWatchStatus(statusFile, event) {
 
 async function main() {
   const { command, options } = parseArgs(process.argv.slice(2));
-  if (command === "help" || command === "--help" || command === "-h") {
+  if (options.help === true || command === "help" || command === "--help" || command === "-h") {
     console.log(usage());
     return;
   }
