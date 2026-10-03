@@ -13,7 +13,10 @@ function harness({ archived = false, refuseStop = false, status = "ready" } = {}
     archivedShell: async () => ({ threads: thread.archivedAt ? [structuredClone(thread)] : [] }),
     dispatch: async (command) => {
       commands.push(command);
-      if (command.type === "thread.archive") thread.archivedAt = "2026-01-01T00:00:00Z";
+      if (command.type === "thread.archive") {
+        if (thread.archivedAt) throw new Error("already archived");
+        thread.archivedAt = "2026-01-01T00:00:00Z";
+      }
       if (command.type === "thread.unarchive") thread.archivedAt = null;
       if (command.type === "thread.session.stop" && !thread.archivedAt && !refuseStop) thread.session = { status: "stopped", activeTurnId: null };
       return { sequence: commands.length };
