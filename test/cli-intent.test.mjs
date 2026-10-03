@@ -32,3 +32,10 @@ test("parseIntentOption reads --intent-file when --intent is absent", () => {
   }
   assert.throws(() => parseIntentOption({ "intent-file": "/nonexistent/intent.json" }), /ENOENT/);
 });
+
+ test("help lists every valid action and the stop alias", async () => {
+  const { usage } = await import("../src/cli.mjs");
+  const { INTENT_ACTIONS, buildCommandFromIntent } = await import("../src/orchestrate.mjs");
+  for (const action of INTENT_ACTIONS) assert(usage().includes(action));
+  assert.equal(buildCommandFromIntent({ action: "thread.session.stop", threadId: "t" }).type, "thread.session.stop");
+});

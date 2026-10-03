@@ -245,7 +245,7 @@ export function threadExternalMessageAppend(input) {
 // A high-level action vocabulary an orchestrator (Hermes, a cron job, another
 // agent) can drive without knowing T3's wire command shapes.
 
-const INTENT_ACTIONS = new Set([
+export const INTENT_ACTIONS = new Set([
   "project.create",
   "project.rename",
   "project.set-model",
@@ -255,6 +255,7 @@ const INTENT_ACTIONS = new Set([
   "thread.restart",
   "thread.interrupt",
   "thread.stop",
+  "thread.session.stop",
   "thread.approval.respond",
   "thread.user-input.respond",
   "thread.checkpoint.revert",
@@ -300,6 +301,7 @@ export function buildCommandFromIntent(intent, { commandId, createdAt } = {}) {
     case "thread.interrupt":
       return threadTurnInterrupt({ ...base, threadId: intent.threadId, ...(intent.turnId !== undefined ? { turnId: intent.turnId } : {}) });
     case "thread.stop":
+    case "thread.session.stop":
       return threadSessionStop({ ...base, threadId: intent.threadId });
     case "thread.approval.respond":
       return threadApprovalRespond({ ...base, threadId: intent.threadId, requestId: intent.requestId, decision: intent.decision });

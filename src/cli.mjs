@@ -49,7 +49,7 @@ import {
   resolveModelSelection,
   RUNTIME_MODES,
 } from "./model-selection.mjs";
-import { applyIntents, observe, report } from "./orchestrate.mjs";
+import { applyIntents, observe, report, INTENT_ACTIONS } from "./orchestrate.mjs";
 import { LoopbackRuntimeAdapter, OutboundPairer } from "./outbound-pairer.mjs";
 import { DEFAULT_PAIR_STATE_FILE } from "./pair-state.mjs";
 import {
@@ -189,6 +189,10 @@ function resolveKimiExecutable(option) {
 export function usage() {
   return `Tentacles — chair CLI and additive ACP adapters for T3 Code.
 Hermes was the first tentacle. The public command is tentacles; t3-agent-bridge is an exact alias.
+
+Valid act actions:
+  ${[...INTENT_ACTIONS].join("\n  ")}
+  thread.session.stop is an alias of thread.stop.
 
 Usage:
   tentacles --version | -V
