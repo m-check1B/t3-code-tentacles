@@ -3,7 +3,7 @@ import test from "node:test";
 import { LoopbackRuntimeAdapter, RemoteRpcShim, REMOTE_RPC_METHODS } from "../src/outbound-pairer.mjs";
 import { T3HttpError } from "../src/t3-client.mjs";
 
-const FAST = { startWaitMs: 60, terminalWaitMs: 200, intervalMs: 5 };
+const FAST = { startWaitMs: 60, terminalWaitMs: 200, totalBudgetMs: 1_000, intervalMs: 5 };
 
 // Synthetic T3: exact turn-result rows keyed by the receipt tuple, one
 // session per thread, and thread.turn.interrupt that interrupts by session
@@ -219,4 +219,15 @@ test("the shim refuses malformed interrupt requests generically", async () => {
   assert.equal(ok.type, "rpc.result");
   assert.equal(ok.result.status, "cancelled");
   assert.equal(t3.dispatched.length, 1);
+});
+
+test("the whole request, including lock wait, stays inside the relay budget", async () => {
+  const t3 = new FakeT3();
+  t3.start(A);
+  t3.onInterrupt = () => {}; // provider never reports a terminal state
+  const adapter = adapterFor(t3, { interruptOptions: { ...FAST, totalBudgetMs: 150 } });
+  const started = Date.now();
+  const result = await adapter.interrupt(stopFor(A));
+  assert.equal(result.status, "unavailable");
+  assert.ok(Date.now() - started < 400, "bounded by totalBudgetMs, not terminalWaitMs");
 });

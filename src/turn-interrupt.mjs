@@ -58,8 +58,11 @@ export class TurnInterrupter {
     readThread,
     dispatch,
     withThreadLock,
-    startWaitMs = 10_000,
-    terminalWaitMs = 20_000,
+    startWaitMs = 4_000,
+    terminalWaitMs = 14_000,
+    // Whole-request bound, including the per-thread lock wait. It must stay
+    // below Sphere's 30 s relay timeout so a real answer is never dropped.
+    totalBudgetMs = 22_000,
     intervalMs = 200,
   }) {
     this.readTurnResult = readTurnResult;
@@ -68,6 +71,7 @@ export class TurnInterrupter {
     this.withThreadLock = withThreadLock;
     this.startWaitMs = startWaitMs;
     this.terminalWaitMs = terminalWaitMs;
+    this.totalBudgetMs = totalBudgetMs;
     this.intervalMs = intervalMs;
     // requestId -> { tuple, promise, result }. Final results replay exactly;
     // unavailable is not final and re-runs (dispatch is commandId-idempotent).
@@ -84,7 +88,8 @@ export class TurnInterrupter {
       if (remembered.promise) return remembered.promise;
     }
     const entry = { tuple: tupleKey(input), promise: null, result: null };
-    entry.promise = this.withThreadLock(input.threadId, () => this.interruptExact(input))
+    const deadlineMs = Date.now() + this.totalBudgetMs;
+    entry.promise = this.withThreadLock(input.threadId, () => this.interruptExact(input, deadlineMs))
       .catch(() => interruptEnvelope(input, "unavailable"))
       .then((result) => {
         entry.promise = null;
@@ -115,8 +120,10 @@ export class TurnInterrupter {
     }
   }
 
-  async interruptExact(input) {
-    let result = await this.pollUntil(input, Date.now() + this.startWaitMs,
+  async interruptExact(input, deadlineMs = Date.now() + this.totalBudgetMs) {
+    const until = (ms) => Math.min(deadlineMs, Date.now() + ms);
+    if (Date.now() >= deadlineMs) return interruptEnvelope(input, "unavailable");
+    let result = await this.pollUntil(input, until(this.startWaitMs),
       (current) => TERMINAL_STATES.has(current.state) || current.turnId !== null);
     if (!result) return interruptEnvelope(input, "target_mismatch");
     if (TERMINAL_STATES.has(result.state)) return interruptEnvelope(input, "already_terminal", result.state);
@@ -129,7 +136,7 @@ export class TurnInterrupter {
     if (!thread || thread.id !== input.threadId) return interruptEnvelope(input, "target_mismatch");
     if (!session || !ACTIVE_SESSION_STATES.has(session.status) || session.activeTurnId !== result.turnId) {
       // Natural completion may be settling; prefer its exact outcome.
-      const settled = await this.pollUntil(input, Date.now() + this.terminalWaitMs, (current) => TERMINAL_STATES.has(current.state));
+      const settled = await this.pollUntil(input, until(this.terminalWaitMs), (current) => TERMINAL_STATES.has(current.state));
       if (settled && TERMINAL_STATES.has(settled.state)) return interruptEnvelope(input, "already_terminal", settled.state);
       // Another turn owns the session: a delayed Stop for A never interrupts B.
       if (session?.activeTurnId && session.activeTurnId !== result.turnId) return interruptEnvelope(input, "target_mismatch");
@@ -143,7 +150,7 @@ export class TurnInterrupter {
     }));
     // Transport acceptance is not a Stop acknowledgement; wait for the exact
     // turn to reach terminal provider state.
-    result = await this.pollUntil(input, Date.now() + this.terminalWaitMs, (current) => TERMINAL_STATES.has(current.state));
+    result = await this.pollUntil(input, until(this.terminalWaitMs), (current) => TERMINAL_STATES.has(current.state));
     if (!result) return interruptEnvelope(input, "unavailable");
     if (result.state === "cancelled") return interruptEnvelope(input, "cancelled");
     if (TERMINAL_STATES.has(result.state)) return interruptEnvelope(input, "already_terminal", result.state);
