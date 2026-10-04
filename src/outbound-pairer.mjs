@@ -11,11 +11,12 @@ import {
   DEFAULT_PAIR_STATE_FILE,
   writePairPresence,
 } from "./pair-state.mjs";
+import { createThreadLock, TURN_INTERRUPT_CONTRACT, TurnInterrupter } from "./turn-interrupt.mjs";
 
 export const PAIR_PROTOCOL_VERSION = 1;
 export const SPHERE_PRODUCT_ID = "agentjack-desktop";
 export const SPHERE_ABILITY = "desktop.use";
-export const REMOTE_RPC_METHODS = Object.freeze(["seats", "originate", "continue", "doctor-status", "turn-result", "thread-events", "thread-artifact"]);
+export const REMOTE_RPC_METHODS = Object.freeze(["seats", "originate", "continue", "doctor-status", "turn-result", "thread-events", "thread-artifact", "interrupt"]);
 
 const offerSecrets = new WeakMap();
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -236,6 +237,7 @@ export class LoopbackRuntimeAdapter {
     doctorImpl = doctor,
     threadEventsImpl = threadEvents,
     threadEventsDirectory,
+    interruptOptions = {},
   }) {
     if (!client) throw new Error("Loopback runtime requires a T3 client");
     this.client = client;
@@ -247,6 +249,14 @@ export class LoopbackRuntimeAdapter {
     this.doctorImpl = doctorImpl;
     this.threadEventsImpl = threadEventsImpl;
     this.threadEventsDirectory = threadEventsDirectory;
+    this.withThreadLock = createThreadLock();
+    this.interrupter = new TurnInterrupter({
+      readTurnResult: (tuple) => this.turnResult(tuple),
+      readThread: (threadId) => this.client.thread(threadId),
+      dispatch: (command) => this.client.dispatch(command),
+      withThreadLock: this.withThreadLock,
+      ...interruptOptions,
+    });
   }
 
   async seats() {
@@ -262,7 +272,10 @@ export class LoopbackRuntimeAdapter {
   continue(params) {
     const input = fullAccessParams(params, "continue", CONTINUE_PARAM_KEYS);
     requireContinueSelection({ instanceId: input.instanceId, model: input.model, options: input.options, budget: input.budget });
-    return this.continueImpl(this.client, input);
+    // Serialized with interrupt so a delayed Stop for A cannot land on B.
+    return typeof input.threadId === "string"
+      ? this.withThreadLock(input.threadId, () => this.continueImpl(this.client, input))
+      : this.continueImpl(this.client, input);
   }
 
   threadArtifact(params) {
@@ -295,7 +308,12 @@ export class LoopbackRuntimeAdapter {
       const capabilities = await this.client.request("/api/orchestration/turn-result");
       supported = capabilities?.talkTurnResult === "v1";
     } catch { /* Older or unavailable T3 has no exact-result capability. */ }
-    return { ...report, capabilities: { talkTurnResult: supported ? "v1" : null } };
+    // Exact interruption is only provable through the exact turn-result query.
+    return { ...report, capabilities: { talkTurnResult: supported ? "v1" : null, turnInterrupt: supported ? TURN_INTERRUPT_CONTRACT : null } };
+  }
+
+  interrupt(params) {
+    return this.interrupter.interrupt(params);
   }
 
   async turnResult(params) {
