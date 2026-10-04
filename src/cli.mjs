@@ -54,6 +54,7 @@ import {
 import { applyIntents, observe, report, INTENT_ACTIONS } from "./orchestrate.mjs";
 import { LoopbackRuntimeAdapter, OutboundPairer } from "./outbound-pairer.mjs";
 import { DEFAULT_PAIR_STATE_FILE } from "./pair-state.mjs";
+import { redactHomePaths } from "./platform.mjs";
 import {
   installService,
   restartService,
@@ -573,15 +574,19 @@ async function main() {
   throw new Error(`Unknown command: ${command}\n\n${usage()}`);
 }
 
+export function isDirectCliInvocation(moduleUrl, argv1, { platform = process.platform, realpath = fs.realpathSync } = {}) {
+  if (!argv1) return false;
+  const invoked = pathToFileURL(realpath(argv1)).href;
+  // Windows paths are case-insensitive; drive-letter case can differ (c: vs C:).
+  return platform === "win32" ? moduleUrl.toLowerCase() === invoked.toLowerCase() : moduleUrl === invoked;
+}
+
 // Only run the CLI when executed directly (bin/t3-agent-bridge execs this
 // module); importing it for tests must not start a command.
-if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
+if (isDirectCliInvocation(import.meta.url, process.argv[1])) {
   main().catch((error) => {
     if (error instanceof IntentDispatchError) console.log(JSON.stringify([...(error.results ?? []), error.receipt], null, 2));
-    const home = os.homedir();
-    const message = String(error?.message || "command failed")
-      .split(home).join("~")
-      .replace(/\/(?:Users|home)\/[^/\s]+/g, "~")
+    const message = redactHomePaths(error?.message || "command failed", os.homedir())
       .replace(/\b(?:authorization|bearer)\s*[:=]?\s*\S+/gi, "$1 [redacted]")
       .replace(/\b(?:sk|xox[baprs]|gh[pousr])-[A-Za-z0-9_-]{8,}\b/g, "[redacted]");
     console.error(`tentacles: ${message}`);

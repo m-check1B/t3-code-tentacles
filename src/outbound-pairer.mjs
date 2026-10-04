@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { ensureLocalTalkWorkspace } from "./local-talk-workspace.mjs";
+import { privateModeOk } from "./platform.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { randomUUID } from "node:crypto";
 import { continueThread, doctor, originate } from "./bridge.mjs";
@@ -68,7 +69,7 @@ function readOwnerOnlyFile(file, maxBytes) {
     if (typeof process.getuid === "function" && stat.uid !== process.getuid()) {
       throw new Error("Pair offer must be owned by the current user");
     }
-    if ((stat.mode & 0o077) !== 0) throw new Error("Pair offer must have mode 0600");
+    if (!privateModeOk(stat.mode)) throw new Error("Pair offer must have mode 0600");
     if (stat.size < 1 || stat.size > maxBytes) throw new Error(`Pair offer must be between 1 and ${maxBytes} bytes`);
     return {
       text: fs.readFileSync(descriptor, "utf8"),

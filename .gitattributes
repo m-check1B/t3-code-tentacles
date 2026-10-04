@@ -1,0 +1,2 @@
+# KRA-6491: Windows batch files must keep CRLF line endings.
+*.cmd text eol=crlf

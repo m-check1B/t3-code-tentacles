@@ -3,12 +3,13 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { DEFAULT_TOKEN_FILE, readToken } from "./config.mjs";
+import { privateModeOk } from "./platform.mjs";
 
 function ownedDirectory(directory) {
   const stat = fs.lstatSync(directory);
   if (stat.isSymbolicLink() || !stat.isDirectory()
     || (typeof process.getuid === "function" && stat.uid !== process.getuid())
-    || (stat.mode & 0o077) !== 0) {
+    || !privateModeOk(stat.mode)) {
     throw new Error("Reauthentication requires an owner-controlled private token directory (0700)");
   }
 }
