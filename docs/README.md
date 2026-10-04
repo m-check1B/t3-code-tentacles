@@ -25,6 +25,7 @@ proved. The README lab matrix records which labs have a fresh e2e proof.
 - Agent contribution and live-runtime boundary: [AGENTS.md](../AGENTS.md)
 - Component architecture: [architecture.md](architecture.md)
 - Outbound remote-pairing protocol: [remote-pairing.md](remote-pairing.md)
+- Windows preview and open VM checks: [windows.md](windows.md)
 - Security policy: [SECURITY.md](../SECURITY.md)
 - Contribution workflow: [CONTRIBUTING.md](../CONTRIBUTING.md)
 - Synthetic demo runbook: [demo.md](demo.md)

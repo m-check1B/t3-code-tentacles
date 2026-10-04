@@ -3,6 +3,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { DEFAULT_STATE_DIR } from "./config.mjs";
 import { acquirePairStateLock } from "./pair-state.mjs";
+import { privateModeOk } from "./platform.mjs";
 
 export const DEFAULT_THREAD_EVENTS_DIRECTORY = path.join(DEFAULT_STATE_DIR, "thread-events");
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -15,17 +16,17 @@ const safeText = (value, max) => typeof value === "string" && value.length > 0 &
 function privateDirectory(directory) {
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   const stat = fs.lstatSync(directory);
-  if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077)
+  if (!stat.isDirectory() || stat.isSymbolicLink() || !privateModeOk(stat.mode)
     || (process.getuid && stat.uid !== process.getuid())) throw new Error("Invalid thread journal directory");
 }
 
 function readJournal(file) {
   let fd;
-  try { fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW); }
+  try { fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0)); }
   catch (error) { if (error.code === "ENOENT") return []; throw error; }
   try {
     const stat = fs.fstatSync(fd);
-    if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o077)
+    if (!stat.isFile() || stat.nlink !== 1 || !privateModeOk(stat.mode)
       || (process.getuid && stat.uid !== process.getuid()) || stat.size > MAX_JOURNAL_BYTES) {
       throw new Error("Invalid thread journal file");
     }

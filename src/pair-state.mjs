@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_STATE_DIR } from "./config.mjs";
+import { privateModeOk } from "./platform.mjs";
 
 export const DEFAULT_PAIR_STATE_FILE = path.join(DEFAULT_STATE_DIR, "pair-presence.json");
 export const PAIR_PRESENCE_STATUSES = Object.freeze(["paired", "unpaired", "expired"]);
@@ -29,7 +30,7 @@ function ensurePrivatePairDirectory(directory) {
   if (typeof process.getuid === "function" && stat.uid !== process.getuid()) {
     throw new Error("Pair state directory must be owned by the current user");
   }
-  if ((stat.mode & 0o077) !== 0) throw new Error("Pair state directory must have mode 0700");
+  if (!privateModeOk(stat.mode)) throw new Error("Pair state directory must have mode 0700");
 }
 
 function validateExistingStateFile(file) {
@@ -45,7 +46,7 @@ function validateExistingStateFile(file) {
   if (typeof process.getuid === "function" && stat.uid !== process.getuid()) {
     throw new Error("Pair presence state must be owned by the current user");
   }
-  if ((stat.mode & 0o077) !== 0) throw new Error("Pair presence state must have mode 0600");
+  if (!privateModeOk(stat.mode)) throw new Error("Pair presence state must have mode 0600");
   if (stat.size > 16_384) throw new Error("Pair presence state exceeds 16384 bytes");
   return stat;
 }
@@ -64,7 +65,7 @@ function readPrivateFile(file, { maxBytes, missing = null, label }) {
     if (typeof process.getuid === "function" && stat.uid !== process.getuid()) {
       throw new Error(`${label} must be owned by the current user`);
     }
-    if ((stat.mode & 0o077) !== 0) throw new Error(`${label} must have mode 0600`);
+    if (!privateModeOk(stat.mode)) throw new Error(`${label} must have mode 0600`);
     if (stat.size > maxBytes) throw new Error(`${label} exceeds ${maxBytes} bytes`);
     return { text: fs.readFileSync(descriptor, "utf8"), identity: { dev: stat.dev, ino: stat.ino } };
   } finally {

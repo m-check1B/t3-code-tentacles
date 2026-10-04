@@ -6,6 +6,12 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- Windows groundwork (KRA-6491, preview, not yet VM-proved): the state
+  directory moves to `%LOCALAPPDATA%\t3-hermes-bridge`, executable lookup uses
+  `PATHEXT` (`.exe`/`.cmd`/`.bat` only), private-file checks rely on the
+  profile ACL instead of POSIX mode bits, a `taskkill /T /F` tree-kill plan is
+  added, and there is a `bin\tentacles.cmd` entry point. See
+  [docs/windows.md](docs/windows.md).
 - Paired `interrupt` RPC (`turn-interrupt-v1`, KRA-6245): exact-receipt Stop
   for a paired Local Talk turn through T3 `thread.turn.interrupt`, serialized
   with `continue` per thread, idempotent by `requestId`, and acknowledged only

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { defaultStateDir, executableCandidates, privateModeOk } from "./platform.mjs";
 
 export const DEFAULT_T3_URL = "http://127.0.0.1:3773";
 export const DEFAULT_HERMES_URL = "http://127.0.0.1:8642";
@@ -15,7 +16,7 @@ export const DEFAULT_KIMI_INSTANCE_ID = "kimi";
 export const DEFAULT_KIMI_MODEL = process.env.T3_KIMI_MODEL || "moonshotai/kimi-k3";
 export const DEFAULT_CODEX_APP_INSTANCE_ID = "codex-app";
 export const DEFAULT_HERMES_PROFILE = process.env.HERMES_PROFILE || "default";
-export const DEFAULT_STATE_DIR = path.join(os.homedir(), ".local", "state", "t3-hermes-bridge");
+export const DEFAULT_STATE_DIR = defaultStateDir();
 export const DEFAULT_TOKEN_FILE = path.join(DEFAULT_STATE_DIR, "t3.token");
 export const DEFAULT_OPENROUTER_TOKEN_FILE = path.join(DEFAULT_STATE_DIR, "openrouter.token");
 export const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
@@ -38,7 +39,7 @@ function readPrivateTokenFile(tokenFile, label) {
     if (typeof process.getuid === "function" && stat.uid !== process.getuid()) {
       throw new Error(`Token file is not owned by the current user: ${tokenFile}`);
     }
-    if ((stat.mode & 0o077) !== 0) {
+    if (!privateModeOk(stat.mode)) {
       throw new Error(`Token file permissions are too broad: ${tokenFile}; expected mode 0600`);
     }
     if (stat.size < 16 || stat.size > 16_384) {
@@ -67,10 +68,9 @@ export function ensurePrivateDirectory(directory = DEFAULT_STATE_DIR) {
   fs.chmodSync(directory, 0o700);
 }
 
-export function resolveExecutable(name, searchPath = process.env.PATH || "") {
-  for (const directory of searchPath.split(path.delimiter)) {
-    if (!directory) continue;
-    const candidate = path.join(directory, name);
+// Windows honours PATHEXT (.exe/.cmd/.bat only); POSIX keeps the exact name.
+export function resolveExecutable(name, searchPath = process.env.PATH || "", { platform = process.platform, env = process.env } = {}) {
+  for (const candidate of executableCandidates(name, searchPath, { platform, env })) {
     try {
       fs.accessSync(candidate, fs.constants.X_OK);
       return fs.realpathSync(candidate);
