@@ -34,7 +34,7 @@ import {
 } from "./model-selection.mjs";
 import { DEFAULT_PAIR_STATE_FILE, readPairPresence } from "./pair-state.mjs";
 import { inspectHermesOpenaiCodexAuth } from "./hermes-acp-launch.mjs";
-import { readBoundedResponseText, readOrchestrationSnapshot, T3HttpError } from "./t3-client.mjs";
+import { readBoundedResponseText, readOrchestrationSnapshot, T3HttpError, T3_REAUTH_ACTION } from "./t3-client.mjs";
 
 const HERMES_MENTION = /(^|\s)@hermes\b/i;
 const BRIDGE_OWNER_VARIABLE = "T3_HERMES_BRIDGE_OWNER";
@@ -1188,9 +1188,20 @@ export async function doctor(client, {
   models: modelsMode = "summary",
 } = {}) {
   if (!["summary", "full"].includes(modelsMode)) throw new Error("Doctor models must be summary or full");
-  const shell = await readOrchestrationSnapshot(client);
-  const settings = await client.getSettings();
-  const config = await client.rpc("server.getConfig", {});
+  let shell, settings, config;
+  try {
+    shell = await readOrchestrationSnapshot(client);
+    settings = await client.getSettings();
+    config = await client.rpc("server.getConfig", {});
+  } catch (error) {
+    if (!(error instanceof T3HttpError) || error.status !== 401) throw error;
+    return {
+      product: "Tentacles",
+      t3: { reachable: true, auth: { status: "invalid", code: "t3_reauth_required", action: T3_REAUTH_ACTION } },
+      pairing: readPairPresence(pairStateFile),
+      labs: [],
+    };
+  }
   const providers = Array.isArray(config?.providers) ? config.providers : [];
   const serverVersion = typeof config?.environment?.serverVersion === "string"
     && /^[A-Za-z0-9._+-]{1,128}$/.test(config.environment.serverVersion)
@@ -1278,7 +1289,7 @@ export async function doctor(client, {
   const threads = Array.isArray(shell?.threads) ? shell.threads.filter((entry) => entry?.deletedAt == null && entry?.archivedAt == null) : [];
   return {
     product: "Tentacles",
-    t3: { reachable: true, version: serverVersion, projects: projects.length, threads: threads.length, leakedSessions: await inspectLeakedSessions(client) },
+    t3: { reachable: true, auth: { status: "valid" }, version: serverVersion, projects: projects.length, threads: threads.length, leakedSessions: await inspectLeakedSessions(client) },
     pairing: readPairPresence(pairStateFile),
     labs,
     adapterCredential,
@@ -1321,6 +1332,11 @@ export function formatDoctor(result = {}) {
     lines.push(`Hermes health: reachable  status: ${hermes.status || "ok"}  version: ${hermes.version || "unknown"}`);
   } else {
     lines.push(`Hermes health: unreachable  code: ${hermes.code || "hermes_unreachable"}`);
+  }
+  if (t3.auth?.status === "invalid") return ["Tentacles doctor — T3 re-authentication required (401)", `Recovery: ${t3.auth.action}`, "Lab readiness is unavailable until reauthentication."].join("\n");
+  if (t3.auth) {
+    lines.push(`T3 authentication: ${t3.auth.status === "valid" ? "valid" : "re-authentication required (401)"}`);
+    if (t3.auth.status === "invalid") lines.push(`Recovery: ${t3.auth.action}`);
   }
   const openaiCodex = hermes.openaiCodex && typeof hermes.openaiCodex === "object" ? hermes.openaiCodex : null;
   if (openaiCodex) {

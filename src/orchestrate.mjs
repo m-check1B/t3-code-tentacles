@@ -20,7 +20,7 @@ import {
   requireContinueSelection,
   retainedSelectionPin,
 } from "./model-selection.mjs";
-import { readOrchestrationSnapshot, T3HttpError } from "./t3-client.mjs";
+import { readOrchestrationSnapshot, T3HttpError, T3AuthError } from "./t3-client.mjs";
 
 const INTERACTION_MODES = new Set(["default", "plan"]);
 const APPROVAL_DECISIONS = new Set(["accept", "acceptForSession", "decline", "cancel"]);
@@ -725,10 +725,11 @@ export async function waitForProjectProjection(client, projectId, { timeoutMs = 
 }
 
 export class IntentDispatchError extends Error {
-  constructor(commandId, status) {
+  constructor(commandId, status, authError) {
     super(status === "rejected" ? "T3 rejected the command" : "T3 command acceptance is unconfirmed; retry with the same commandId");
     this.name = "IntentDispatchError";
-    this.receipt = { accepted: false, commandId, status, projected: false };
+    if (authError instanceof T3AuthError) this.message = authError.message;
+    this.receipt = { accepted: false, commandId, status, projected: false, ...(authError instanceof T3AuthError ? { code: authError.code, action: authError.action } : {}) };
   }
 }
 
@@ -736,7 +737,7 @@ async function dispatchWithReceipt(client, command) {
   let result;
   try { result = await client.dispatch(command); }
   catch (error) {
-    throw new IntentDispatchError(command.commandId, error instanceof T3HttpError && error.status >= 400 && error.status < 500 ? "rejected" : "unconfirmed");
+    throw new IntentDispatchError(command.commandId, error instanceof T3HttpError && error.status >= 400 && error.status < 500 ? "rejected" : "unconfirmed", error);
   }
   if (result?.accepted === false) throw new IntentDispatchError(command.commandId, "rejected");
   return result;
