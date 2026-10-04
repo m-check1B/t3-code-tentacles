@@ -77,12 +77,12 @@ the pair token and this non-secret host contract:
   "productId": "agentjack-desktop",
   "ability": "desktop.use",
   "runtime": "tentacles",
-  "rpc": ["seats", "originate", "continue", "doctor-status", "turn-result", "thread-events", "thread-artifact"]
+  "rpc": ["seats", "originate", "continue", "doctor-status", "turn-result", "thread-events", "thread-artifact", "interrupt"]
 }
 ```
 
 After `pair.bound`, the endpoint may send bounded `rpc.request` frames for only
-those five methods. Tentacles returns `rpc.result`, or this fail-closed envelope
+those advertised methods. Tentacles returns `rpc.result`, or this fail-closed envelope
 without reflecting local error text:
 
 ```json
@@ -140,6 +140,48 @@ Primary Talk clients must check this before dispatch. The result query uses
 input and assistant output. There is no fallback to latest thread state or the
 generated `seats.report.summary`. Read-only result retrieval does not grant
 new runtime permissions and keeps existing Sphere owner/pair authority.
+
+## Exact turn interrupt extension (turn-interrupt-v1, KRA-6245)
+
+New hosts also advertise `interrupt`. It takes exactly
+`{requestId,threadId,messageId,turnCommandId,reason:"user_stop"}`. The three
+correlation identifiers must come from the persisted originate/continue
+receipt; the host never infers a target from the current or latest thread.
+`requestId` is the idempotency key and is independent of the per-frame RPC id,
+which must stay unique for the replay window.
+
+The host resolves the tuple through T3's exact `turn-result` query, requires
+that turn to own the thread's active session, and only then dispatches
+`thread.turn.interrupt` with command id `jack-stop:<requestId>`. T3 interrupts
+by session, so `interrupt` and `continue` are serialized per thread: a delayed
+Stop for turn A can never interrupt a newer turn B on a reused thread. After
+dispatch the host waits for the exact turn to reach a terminal state.
+
+The result is a closed envelope:
+
+```json
+{
+  "contract": "turn-interrupt-v1",
+  "requestId": "...", "threadId": "...", "messageId": "...", "turnCommandId": "...",
+  "status": "cancelled | already_terminal | target_mismatch | unavailable",
+  "outcome": "succeeded | failed | cancelled | null"
+}
+```
+
+Only `cancelled` means the provider turn reached terminal interrupted state.
+`already_terminal` carries the original outcome and never relabels completed
+work. An unknown, forged or foreign tuple, a reused `requestId` with a different
+tuple, or a session owned by another turn is `target_mismatch`. A turn that has
+not started within the bound, an unsettled turn, or unreachable T3 is
+`unavailable` and may be retried with the same `requestId`; final results replay
+exactly. `unsupported` is reserved for the relay when the host does not
+advertise `interrupt`. Malformed parameters return the generic
+`computer.unavailable` error.
+
+Doctor adds `capabilities.turnInterrupt`, which is `"turn-interrupt-v1"` only
+when exact turn results are supported; otherwise null. Sphere must accept the
+extended bind before this host is released, because an older Sphere rejects
+unknown RPC methods.
 
 ## Full live model catalog
 

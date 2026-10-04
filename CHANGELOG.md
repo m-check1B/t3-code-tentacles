@@ -6,6 +6,12 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- Paired `interrupt` RPC (`turn-interrupt-v1`, KRA-6245): exact-receipt Stop
+  for a paired Local Talk turn through T3 `thread.turn.interrupt`, serialized
+  with `continue` per thread, idempotent by `requestId`, and acknowledged only
+  after the exact turn is terminal. Doctor reports
+  `capabilities.turnInterrupt`. Requires a Sphere that accepts the extended bind.
+
 - `tentacles doctor --json --models full` returns complete validated model IDs
   plus safe display names and T3 thinking/speed option descriptors. Existing
   doctor output remains bounded to 16 IDs per lab.
