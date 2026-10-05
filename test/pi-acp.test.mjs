@@ -282,7 +282,7 @@ test("Pi providers coexist with Hermes and refuse foreign or cross-harness owner
   };
   await installPiProvider(client, { wrapperPath: "/opt/t3-pi-acp", piBin: "/opt/pi", model: "gpt-5.6-terra" });
   assert.equal(providerHarness(patch.providerInstances.hermes), "hermes");
-  assert.equal(patch.providerInstances.pi.displayName, "Pi");
+  assert.equal(patch.providerInstances.pi.displayName, "Pi CLI");
   assert.deepEqual(patch.providerInstances.pi.config.customModels, ["gpt-5.6-terra"]);
   assert.equal(patch.providerInstances.pi.environment.find((entry) => entry.name === "PI_MODEL").value, "gpt-5.6-terra");
   await assert.rejects(installProvider({ getSettings: async () => ({ providerInstances: { pi: patch.providerInstances.pi } }) }, { wrapperPath: "/opt/hermes", instanceId: "pi" }), /Hermes harness/);

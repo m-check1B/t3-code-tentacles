@@ -212,9 +212,9 @@ test("doctor prints an advertised lab matrix without secrets and keeps Cursor ex
   const matrix = formatDoctor(result);
   assert.match(matrix, /Tentacles doctor — lab matrix for this machine/);
   assert.match(matrix, /Advertised is not proved/);
-  assert.match(matrix, /grok\s+native\s+yes\s+yes\s+yes\s+yes\s+ready/);
-  assert.match(matrix, /codex-app\s+native\s+yes\s+no\s+no\s+no\s+absent/);
-  assert.match(matrix, /cursor\s+explicit/);
+  assert.match(matrix, /grok\s+Grok CLI\s+native\s+yes\s+yes\s+yes\s+yes\s+ready/);
+  assert.match(matrix, /codex-app\s+Codex App\s+native\s+yes\s+no\s+no\s+no\s+absent/);
+  assert.match(matrix, /cursor\s+Cursor CLI\s+explicit/);
   assert.match(matrix, /Ready on this machine: codex, grok, opencode/);
   assert.match(matrix, /Not ready:/);
   assert.match(matrix, /action: Start or recover the loopback Hermes/);
@@ -379,7 +379,7 @@ test("doctor distinguishes ready standalone and app-bundled Codex native instanc
   assert.equal(byId["codex-app"].ready, true);
   assert.deepEqual(byId["codex-app"].runtime, {
     id: "codex-app",
-    label: "Codex app",
+    label: "Codex App",
     integration: "t3-native",
     driver: "codex",
     transport: "app-server",
@@ -389,8 +389,8 @@ test("doctor distinguishes ready standalone and app-bundled Codex native instanc
   assert.equal(JSON.stringify(result).includes("/Applications/"), false);
 
   const matrix = formatDoctor(result);
-  assert.match(matrix, /codex\s+native\s+yes\s+yes\s+yes\s+yes\s+ready.*codex-cli/);
-  assert.match(matrix, /codex-app\s+native\s+yes\s+yes\s+yes\s+yes\s+ready.*codex-app/);
+  assert.match(matrix, /codex\s+Codex CLI\s+native\s+yes\s+yes\s+yes\s+yes\s+ready.*codex-cli/);
+  assert.match(matrix, /codex-app\s+Codex App\s+native\s+yes\s+yes\s+yes\s+yes\s+ready.*codex-app/);
 });
 
 test("doctor keeps a Codex instance fail-closed when its binary source does not match its runtime id", async () => {
