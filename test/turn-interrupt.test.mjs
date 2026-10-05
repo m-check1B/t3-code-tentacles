@@ -261,3 +261,34 @@ test("KRA-6575: a slow T3 read past the budget is unavailable and never dispatch
     assert.deepEqual(t3.dispatched, [], `${slow}: no late thread.turn.interrupt`);
   }
 });
+
+test("KRA-6578: a Stop result outlives 256 later Stops and still refuses a retarget", async () => {
+  const t3 = new FakeT3();
+  t3.start(A);
+  const adapter = adapterFor(t3);
+  const first = await adapter.interrupt(stopFor(A, "stop-old"));
+  assert.equal(first.status, "cancelled");
+  for (let index = 0; index < 300; index += 1) {
+    const forged = { threadId: "thread-x", messageId: `m-${index}`, turnCommandId: `c-${index}` };
+    assert.equal((await adapter.interrupt(stopFor(forged, `stop-${index}`))).status, "target_mismatch");
+  }
+  t3.start(B);
+  assert.equal((await adapter.interrupt(stopFor(B, "stop-old"))).status, "target_mismatch");
+  assert.deepEqual(await adapter.interrupt(stopFor(A, "stop-old")), first);
+  assert.equal(t3.dispatched.filter((command) => command.type === "thread.turn.interrupt").length, 1);
+});
+
+test("KRA-6578: an in-flight Stop is never evicted by the memory bound", async () => {
+  const t3 = new FakeT3();
+  t3.start(A);
+  t3.onInterrupt = () => {}; // stays in flight until the terminal wait ends
+  const adapter = adapterFor(t3, { interruptOptions: { ...FAST, maxRememberedRequests: 1 } });
+  const running = adapter.interrupt(stopFor(A, "stop-running"));
+  for (let index = 0; index < 5; index += 1) {
+    const forged = { threadId: "thread-y", messageId: `m-${index}`, turnCommandId: `c-${index}` };
+    await adapter.interrupt(stopFor(forged, `stop-y-${index}`));
+  }
+  const retarget = await adapter.interrupt(stopFor(B, "stop-running"));
+  assert.equal(retarget.status, "target_mismatch");
+  await running;
+});
