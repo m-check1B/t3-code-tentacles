@@ -216,24 +216,29 @@ const sensitivePath = (name) => name.split(/[\\/]/).some((part) =>
   /^(?:\.env(?:\..*)?|\.ssh|\.aws|\.git|credentials(?:\..*)?|id_rsa|id_ed25519)$/i.test(part)
   || /\.(?:pem|key|p12|pfx)$/i.test(part));
 
+// KRA-6577: one bad or unreadable item is skipped for this poll, never the
+// whole journal. Invalid names and paths are still never read; an unreadable
+// asset is retried on the next poll because it is not journaled yet.
 async function attachmentEvents(client, thread, previous) {
   const result = [];
   const existing = new Map(previous.map((event) => [event.eventId, event]));
   for (const message of thread.messages ?? []) {
     for (const attachment of message.attachments ?? []) {
-      if (!["file", "image"].includes(attachment.type)) continue;
-      if (sensitivePath(attachment.name ?? "")) continue;
-      if (!safeText(attachment.id, 256) || !safeText(attachment.name, 255)
-        || attachment.name === "." || attachment.name === ".." || /[/\\\x00]/.test(attachment.name)
-        || !safeText(attachment.mimeType, 100) || !Number.isSafeInteger(attachment.sizeBytes)
-        || attachment.sizeBytes < 0 || attachment.sizeBytes > 25 * 1024 * 1024) throw new Error("Invalid thread attachment");
-      const eventId = `artifact:${hash(`${message.id}:${attachment.id}`)}`;
-      if (existing.has(eventId)) { result.push(existing.get(eventId)); continue; }
-      const content = await readAsset(client, { _tag: "attachment", attachmentId: attachment.id,
-        fileName: attachment.name, mimeType: attachment.mimeType }, attachment.sizeBytes);
-      result.push({ eventId, kind: "artifact",
-        occurredAt: iso(message.createdAt), payload: { name: attachment.name, mediaType: attachment.mimeType,
-          contentBase64: content.toString("base64"), sha256: hash(content) } });
+      try {
+        if (!["file", "image"].includes(attachment.type)) continue;
+        if (sensitivePath(attachment.name ?? "")) continue;
+        if (!safeText(attachment.id, 256) || !safeText(attachment.name, 255)
+          || attachment.name === "." || attachment.name === ".." || /[/\\\x00]/.test(attachment.name)
+          || !safeText(attachment.mimeType, 100) || !Number.isSafeInteger(attachment.sizeBytes)
+          || attachment.sizeBytes < 0 || attachment.sizeBytes > 25 * 1024 * 1024) throw new Error("Invalid thread attachment");
+        const eventId = `artifact:${hash(`${message.id}:${attachment.id}`)}`;
+        if (existing.has(eventId)) { result.push(existing.get(eventId)); continue; }
+        const content = await readAsset(client, { _tag: "attachment", attachmentId: attachment.id,
+          fileName: attachment.name, mimeType: attachment.mimeType }, attachment.sizeBytes);
+        result.push({ eventId, kind: "artifact",
+          occurredAt: iso(message.createdAt), payload: { name: attachment.name, mediaType: attachment.mimeType,
+            contentBase64: content.toString("base64"), sha256: hash(content) } });
+      } catch { continue; }
     }
   }
   // T3 checkpoint summaries are the authoritative set of generated/changed
@@ -245,16 +250,18 @@ async function attachmentEvents(client, thread, previous) {
     for (const file of checkpoint.files ?? []) latest.set(file.path, { file, checkpoint });
   }
   for (const [relativePath, { file, checkpoint }] of latest) {
-    if (file.kind === "deleted" || file.kind === "delete" || sensitivePath(relativePath ?? "")) continue;
-    if (!safeText(relativePath, 1024) || path.isAbsolute(relativePath)
-      || relativePath.includes("\\") || relativePath.split("/").includes("..")) throw new Error("Invalid checkpoint path");
-    const eventId = `file:${hash(`${relativePath}:${checkpoint.checkpointRef}`)}`;
-    if (existing.has(eventId)) { result.push(existing.get(eventId)); continue; }
-    const content = await readAsset(client, { _tag: "workspace-file", threadId: thread.id, path: relativePath });
-    const digest = hash(content);
-    result.push({ eventId, kind: "artifact",
-      occurredAt: iso(checkpoint.completedAt), payload: { name: path.posix.basename(relativePath),
-        mediaType: "application/octet-stream", contentBase64: content.toString("base64"), sha256: digest } });
+    try {
+      if (file.kind === "deleted" || file.kind === "delete" || sensitivePath(relativePath ?? "")) continue;
+      if (!safeText(relativePath, 1024) || path.isAbsolute(relativePath)
+        || relativePath.includes("\\") || relativePath.split("/").includes("..")) throw new Error("Invalid checkpoint path");
+      const eventId = `file:${hash(`${relativePath}:${checkpoint.checkpointRef}`)}`;
+      if (existing.has(eventId)) { result.push(existing.get(eventId)); continue; }
+      const content = await readAsset(client, { _tag: "workspace-file", threadId: thread.id, path: relativePath });
+      const digest = hash(content);
+      result.push({ eventId, kind: "artifact",
+        occurredAt: iso(checkpoint.completedAt), payload: { name: path.posix.basename(relativePath),
+          mediaType: "application/octet-stream", contentBase64: content.toString("base64"), sha256: digest } });
+    } catch { continue; }
   }
   return result;
 }

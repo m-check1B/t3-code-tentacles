@@ -132,3 +132,31 @@ test("multiline explicit memory marks remain candidates for full-message Jack va
   assert.equal(projected.events.find((event) => event.kind === "message").payload.text, thread.messages[0].text);
   assert.ok(candidates.every((event) => !Object.hasOwn(event.payload, "accepted")));
 });
+
+test("KRA-6577: one bad attachment or unreadable file never freezes the journal", async (t) => {
+  const { directory, thread, client } = setup(t);
+  thread.messages[0].attachments = [
+    { type: "file", id: "bad", name: "a/b.txt", mimeType: "text/plain", sizeBytes: 3 },
+    { type: "file", id: "late", name: "late.txt", mimeType: "text/plain", sizeBytes: 3 },
+  ];
+  thread.checkpoints = [{ status: "ready", checkpointRef: "ref1", completedAt: WHEN,
+    files: [{ path: "../escape.txt", kind: "added" }, { path: "reports/q3.txt", kind: "added" }] }];
+  let available = false;
+  const read = [];
+  client.baseUrl = "http://127.0.0.1:3773";
+  client.requestTimeoutMs = 1000;
+  client.rpc = async (_method, params) => { read.push(params.resource); return { relativeUrl: "/api/assets/x" }; };
+  client.fetchImpl = async () => (available ? new Response("abc") : new Response("gone", { status: 404 }));
+
+  const first = await threadEvents(client, { threadId: THREAD }, { directory });
+  const kinds = (page) => page.events.map((event) => event.kind).filter((kind) => kind !== "state").sort();
+  assert.deepEqual(kinds(first), ["message"]);
+  // The traversal path and the bad name are never read.
+  assert.ok(read.every((resource) => resource.fileName !== "a/b.txt" && resource.path !== "../escape.txt"));
+
+  thread.messages.push({ id: "m2", role: "assistant", text: "Later", createdAt: WHEN });
+  available = true;
+  const second = await threadEvents(client, { threadId: THREAD, afterSequence: first.nextSequence }, { directory });
+  assert.deepEqual(kinds(second), ["artifact", "artifact", "message"]);
+  assert.ok(second.events.some((event) => event.eventId === "message:m2"));
+});
