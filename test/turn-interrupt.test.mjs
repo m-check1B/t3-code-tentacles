@@ -231,3 +231,33 @@ test("the whole request, including lock wait, stays inside the relay budget", as
   assert.equal(result.status, "unavailable");
   assert.ok(Date.now() - started < 400, "bounded by totalBudgetMs, not terminalWaitMs");
 });
+
+test("KRA-6575: a slow T3 read past the budget is unavailable and never dispatches", async () => {
+  for (const slow of ["turn-result", "thread"]) {
+    const t3 = new FakeT3();
+    t3.start(A);
+    const client = t3.client();
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const slowClient = {
+      ...client,
+      request: async (url, options) => {
+        if (slow === "turn-result" && options) await sleep(300);
+        return client.request(url, options);
+      },
+      thread: async (threadId) => {
+        if (slow === "thread") await sleep(300);
+        return client.thread(threadId);
+      },
+    };
+    const adapter = new LoopbackRuntimeAdapter({
+      client: slowClient,
+      interruptOptions: { ...FAST, totalBudgetMs: 120 },
+    });
+    const started = Date.now();
+    const result = await adapter.interrupt(stopFor(A, `stop-slow-${slow}`));
+    assert.equal(result.status, "unavailable", slow);
+    assert.ok(Date.now() - started < 250, `${slow}: answered inside the budget`);
+    await sleep(400); // the slow read has now returned
+    assert.deepEqual(t3.dispatched, [], `${slow}: no late thread.turn.interrupt`);
+  }
+});

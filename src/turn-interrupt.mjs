@@ -52,6 +52,26 @@ function tupleKey(input) {
   return TUPLE_KEYS.map((key) => input[key]).join("\u0000");
 }
 
+// KRA-6575: the whole Stop answer must reach Sphere inside its relay wait.
+class InterruptBudgetExceeded extends Error {}
+
+/** Run one T3 call only while budget remains, and stop waiting when it ends. */
+async function withinBudget(deadlineMs, call) {
+  const left = deadlineMs - Date.now();
+  if (left <= 0) throw new InterruptBudgetExceeded();
+  const pending = Promise.resolve().then(call);
+  pending.catch(() => {}); // a call that loses the race must not reject unhandled
+  let timer;
+  try {
+    return await Promise.race([
+      pending,
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new InterruptBudgetExceeded()), left); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class TurnInterrupter {
   constructor({
     readTurnResult,
@@ -102,9 +122,9 @@ export class TurnInterrupter {
     return entry.promise;
   }
 
-  async exactResult(input) {
+  async exactResult(input, budgetMs = Infinity) {
     try {
-      return await this.readTurnResult(Object.fromEntries(TUPLE_KEYS.map((key) => [key, input[key]])));
+      return await withinBudget(budgetMs, () => this.readTurnResult(Object.fromEntries(TUPLE_KEYS.map((key) => [key, input[key]]))));
     } catch (error) {
       // T3 answers 404 when the tuple does not identify one accepted turn.
       if (error instanceof T3HttpError && error.status === 404) return null;
@@ -112,9 +132,9 @@ export class TurnInterrupter {
     }
   }
 
-  async pollUntil(input, deadlineMs, done) {
+  async pollUntil(input, deadlineMs, done, budgetMs = Infinity) {
     while (true) {
-      const result = await this.exactResult(input);
+      const result = await this.exactResult(input, budgetMs);
       if (!result || done(result) || Date.now() >= deadlineMs) return result;
       await delay(this.intervalMs);
     }
@@ -124,33 +144,35 @@ export class TurnInterrupter {
     const until = (ms) => Math.min(deadlineMs, Date.now() + ms);
     if (Date.now() >= deadlineMs) return interruptEnvelope(input, "unavailable");
     let result = await this.pollUntil(input, until(this.startWaitMs),
-      (current) => TERMINAL_STATES.has(current.state) || current.turnId !== null);
+      (current) => TERMINAL_STATES.has(current.state) || current.turnId !== null, deadlineMs);
     if (!result) return interruptEnvelope(input, "target_mismatch");
     if (TERMINAL_STATES.has(result.state)) return interruptEnvelope(input, "already_terminal", result.state);
     // Accepted but not started within the bound: never guess a provider turn.
     if (result.turnId === null) return interruptEnvelope(input, "unavailable");
 
-    const detail = await this.readThread(input.threadId);
+    const detail = await withinBudget(deadlineMs, () => this.readThread(input.threadId));
     const thread = detail?.thread ?? null;
     const session = thread?.session ?? null;
     if (!thread || thread.id !== input.threadId) return interruptEnvelope(input, "target_mismatch");
     if (!session || !ACTIVE_SESSION_STATES.has(session.status) || session.activeTurnId !== result.turnId) {
       // Natural completion may be settling; prefer its exact outcome.
-      const settled = await this.pollUntil(input, until(this.terminalWaitMs), (current) => TERMINAL_STATES.has(current.state));
+      const settled = await this.pollUntil(input, until(this.terminalWaitMs), (current) => TERMINAL_STATES.has(current.state), deadlineMs);
       if (settled && TERMINAL_STATES.has(settled.state)) return interruptEnvelope(input, "already_terminal", settled.state);
       // Another turn owns the session: a delayed Stop for A never interrupts B.
       if (session?.activeTurnId && session.activeTurnId !== result.turnId) return interruptEnvelope(input, "target_mismatch");
       return interruptEnvelope(input, "unavailable");
     }
 
-    await this.dispatch(threadTurnInterrupt({
+    // Never start the interrupt once the relay budget is spent: Sphere has
+    // already answered unavailable and must not see a late cancellation.
+    await withinBudget(deadlineMs, () => this.dispatch(threadTurnInterrupt({
       commandId: `jack-stop:${input.requestId}`,
       threadId: input.threadId,
       turnId: result.turnId,
-    }));
+    })));
     // Transport acceptance is not a Stop acknowledgement; wait for the exact
     // turn to reach terminal provider state.
-    result = await this.pollUntil(input, until(this.terminalWaitMs), (current) => TERMINAL_STATES.has(current.state));
+    result = await this.pollUntil(input, until(this.terminalWaitMs), (current) => TERMINAL_STATES.has(current.state), deadlineMs);
     if (!result) return interruptEnvelope(input, "unavailable");
     if (result.state === "cancelled") return interruptEnvelope(input, "cancelled");
     if (TERMINAL_STATES.has(result.state)) return interruptEnvelope(input, "already_terminal", result.state);
