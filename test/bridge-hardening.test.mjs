@@ -17,7 +17,7 @@ import {
   writeBridgeState,
 } from "../src/bridge.mjs";
 import { T3Client, T3HttpError } from "../src/t3-client.mjs";
-import { writePairPresence } from "../src/pair-state.mjs";
+import { acquirePairStateLock, writePairPresence } from "../src/pair-state.mjs";
 
 function fixtureState(file, patch = {}) {
   const state = readBridgeState(file);
@@ -695,4 +695,47 @@ test("continue returns durable caller correlation on identical retries and refus
   assert.equal(dispatches, 1);
   await assert.rejects(continueThread(client, { ...input, message: "changed input" }), /different input/);
   assert.equal(dispatches, 1);
+});
+
+test("KRA-6572: a partial lock or a dead recovery marker never wedges the bridge or pairing", () => {
+  const old = new Date(Date.now() - 120_000);
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "t3-bridge-partial-"));
+  fs.chmodSync(directory, 0o700);
+  const stateFile = path.join(directory, "state.json");
+  const lockFile = `${stateFile}.lock`;
+
+  // A fresh empty lock (a writer may still be mid-crash) is busy, not an error.
+  fs.writeFileSync(lockFile, "", { mode: 0o600 });
+  assert.equal(acquireStateLock(stateFile), null);
+  // After the stale window it is reclaimed.
+  fs.utimesSync(lockFile, old, old);
+  const reclaimed = acquireStateLock(stateFile);
+  assert.equal(typeof reclaimed, "function");
+  assert.equal(JSON.parse(fs.readFileSync(lockFile, "utf8")).pid, process.pid);
+  reclaimed();
+
+  // A recovery marker left by a dead recoverer no longer blocks every steal.
+  fs.writeFileSync(lockFile, JSON.stringify({ version: 1, owner: "crashed", pid: 999_999_999, createdAt: "2000-01-01T00:00:00.000Z" }), { mode: 0o600 });
+  fs.writeFileSync(`${lockFile}.recovery`, JSON.stringify({ owner: "gone", pid: 999_999_998 }), { mode: 0o600 });
+  const recovered = acquireStateLock(stateFile, { staleMs: 0 });
+  assert.equal(typeof recovered, "function");
+  assert.equal(fs.existsSync(`${lockFile}.recovery`), false);
+  recovered();
+  // A live recoverer is still respected.
+  fs.writeFileSync(lockFile, JSON.stringify({ version: 1, owner: "crashed", pid: 999_999_999, createdAt: "2000-01-01T00:00:00.000Z" }), { mode: 0o600 });
+  fs.writeFileSync(`${lockFile}.recovery`, JSON.stringify({ owner: "live", pid: process.pid }), { mode: 0o600 });
+  assert.equal(acquireStateLock(stateFile, { staleMs: 0 }), null);
+  fs.unlinkSync(`${lockFile}.recovery`);
+  fs.unlinkSync(lockFile);
+
+  // Pair presence: same rule, and no throw into the pairer or journal.
+  const pairFile = path.join(directory, "presence.json");
+  fs.writeFileSync(`${pairFile}.lock`, "{\"version\":1,", { mode: 0o600 });
+  assert.equal(acquirePairStateLock(pairFile), null);
+  fs.utimesSync(`${pairFile}.lock`, old, old);
+  const pairRelease = acquirePairStateLock(pairFile);
+  assert.equal(typeof pairRelease, "function");
+  pairRelease();
+  assert.equal(fs.existsSync(`${pairFile}.lock`), false);
+  assert.deepEqual(fs.readdirSync(directory).filter((name) => name.endsWith(".tmp")), []);
 });
