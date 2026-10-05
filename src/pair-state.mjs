@@ -174,6 +174,18 @@ function partialPairLock(lockFile, readError) {
   return { pid: null, identity: { dev: stat.dev, ino: stat.ino } };
 }
 
+/** A recovery guard left by a crashed recoverer must not block recovery forever. */
+function clearDeadPairGuard(guardFile) {
+  let stat;
+  try { stat = fs.lstatSync(guardFile); } catch (error) { if (error.code === "ENOENT") return; throw error; }
+  let marker = null;
+  try { marker = JSON.parse(fs.readFileSync(guardFile, "utf8")); } catch { /* partial marker */ }
+  const dead = Number.isInteger(marker?.pid) ? !pidIsAlive(marker.pid) : Date.now() - stat.mtimeMs > PAIR_LOCK_STALE_MS;
+  if (!dead) return;
+  try { if (fs.lstatSync(guardFile).ino === stat.ino) fs.unlinkSync(guardFile); }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
+}
+
 function pidIsAlive(pid) {
   try { process.kill(pid, 0); return true; }
   catch (error) { return error.code !== "ESRCH"; }
@@ -186,10 +198,7 @@ export function acquirePairStateLock(file = DEFAULT_PAIR_STATE_FILE) {
   const owner = randomUUID();
   // KRA-6572: the body is durable before the lock name exists (temp + link).
   const create = () => fs.closeSync(publishLockFile(lockFile, `${JSON.stringify({ version: 1, owner, pid: process.pid })}\n`));
-  try {
-    create();
-  } catch (error) {
-    if (error.code !== "EEXIST") throw error;
+  const staleLock = () => {
     let existing;
     try { existing = readPairLock(lockFile); }
     catch (readError) {
@@ -197,15 +206,44 @@ export function acquirePairStateLock(file = DEFAULT_PAIR_STATE_FILE) {
       existing = partialPairLock(lockFile, readError);
     }
     if (!existing || (existing.pid !== null && pidIsAlive(existing.pid))) return null;
-    const current = fs.lstatSync(lockFile);
-    if (current.isSymbolicLink() || current.dev !== existing.identity.dev || current.ino !== existing.identity.ino) return null;
-    const staleFile = `${lockFile}.stale.${owner}`;
-    try { fs.renameSync(lockFile, staleFile); }
-    catch (renameError) { if (renameError.code === "ENOENT") return null; throw renameError; }
+    return existing;
+  };
+  try {
+    create();
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    if (!staleLock()) return null;
+    // KRA-6572: only one recoverer at a time. Without this guard, B could
+    // recover and hold a fresh lock between A's staleness check and A's
+    // rename, and A would rename B's live lock away (two live owners).
+    const guardFile = `${lockFile}.recovery`;
+    clearDeadPairGuard(guardFile);
+    let guard;
+    try { guard = publishLockFile(guardFile, `${JSON.stringify({ version: 1, owner, pid: process.pid })}\n`); }
+    catch (guardError) { if (guardError.code === "EEXIST") return null; throw guardError; }
     try {
-      try { create(); } catch (createError) { if (createError.code === "EEXIST") return null; throw createError; }
+      // Re-validate identity and liveness under the guard.
+      const confirmed = staleLock();
+      if (!confirmed) return null;
+      const current = fs.lstatSync(lockFile);
+      if (current.isSymbolicLink() || current.dev !== confirmed.identity.dev || current.ino !== confirmed.identity.ino) return null;
+      const staleFile = `${lockFile}.stale.${owner}`;
+      try { fs.renameSync(lockFile, staleFile); }
+      catch (renameError) { if (renameError.code === "ENOENT") return null; throw renameError; }
+      try {
+        try { create(); } catch (createError) { if (createError.code === "EEXIST") return null; throw createError; }
+      } finally {
+        try { fs.unlinkSync(staleFile); } catch (unlinkError) { if (unlinkError.code !== "ENOENT") throw unlinkError; }
+      }
+    } catch (recoveryError) {
+      if (recoveryError.code === "ENOENT") return null;
+      throw recoveryError;
     } finally {
-      try { fs.unlinkSync(staleFile); } catch (unlinkError) { if (unlinkError.code !== "ENOENT") throw unlinkError; }
+      fs.closeSync(guard);
+      try {
+        const marker = JSON.parse(fs.readFileSync(guardFile, "utf8"));
+        if (marker.owner === owner) fs.unlinkSync(guardFile);
+      } catch (unlinkError) { if (unlinkError.code !== "ENOENT" && !(unlinkError instanceof SyntaxError)) throw unlinkError; }
     }
   }
   return () => {

@@ -739,3 +739,42 @@ test("KRA-6572: a partial lock or a dead recovery marker never wedges the bridge
   assert.equal(fs.existsSync(`${pairFile}.lock`), false);
   assert.deepEqual(fs.readdirSync(directory).filter((name) => name.endsWith(".tmp")), []);
 });
+
+test("KRA-6572: concurrent pair-lock recovery admits exactly one live owner", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "t3-pair-recovery-race-"));
+  fs.chmodSync(directory, 0o700);
+  const pairFile = path.join(directory, "presence.json");
+  const lockFile = `${pairFile}.lock`;
+  for (const body of [
+    JSON.stringify({ version: 1, owner: "deadbeef-dead-4eef-8ead-deadbeefdead", pid: 999_999_999 }),
+    "{\"version\":1,",
+  ]) {
+    fs.writeFileSync(lockFile, body, { mode: 0o600 });
+    const old = new Date(Date.now() - 120_000);
+    fs.utimesSync(lockFile, old, old);
+    // B runs exactly at A's boundary: after A confirmed the stale lock, just
+    // before A renames it away.
+    let second = "not-run";
+    const rename = fs.renameSync;
+    fs.renameSync = (from, to) => {
+      if (from === lockFile && second === "not-run") {
+        second = null;
+        second = acquirePairStateLock(pairFile);
+      }
+      return rename(from, to);
+    };
+    let first;
+    try { first = acquirePairStateLock(pairFile); } finally { fs.renameSync = rename; }
+    const owners = [first, second].filter((release) => typeof release === "function");
+    assert.equal(owners.length, 1);
+    owners[0]();
+    assert.equal(fs.existsSync(lockFile), false);
+    assert.equal(fs.existsSync(`${lockFile}.recovery`), false);
+  }
+  // A guard left by a crashed recoverer does not block recovery.
+  fs.writeFileSync(lockFile, JSON.stringify({ version: 1, owner: "deadbeef-dead-4eef-8ead-deadbeefdead", pid: 999_999_999 }), { mode: 0o600 });
+  fs.writeFileSync(`${lockFile}.recovery`, JSON.stringify({ version: 1, owner: "x", pid: 999_999_998 }), { mode: 0o600 });
+  const recovered = acquirePairStateLock(pairFile);
+  assert.equal(typeof recovered, "function");
+  recovered();
+});
