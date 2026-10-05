@@ -11,6 +11,7 @@ import {
   MAX_PENDING_ACP_REQUESTS,
   requestKey,
 } from "./pi-acp.mjs";
+import { signalProcessTree } from "./platform.mjs";
 
 const SHUTDOWN_GRACE_MS = 1_000;
 const PROVIDER_VERIFY_TIMEOUT_MS = 5_000;
@@ -357,21 +358,7 @@ export function startHermesAcpProxy({
     }));
   };
 
-  const signalChildTree = (signal) => {
-    if (!Number.isInteger(child.pid)) {
-      try { child.kill(signal); } catch {}
-      return;
-    }
-    if (process.platform !== "win32") {
-      try {
-        process.kill(-child.pid, signal);
-        return;
-      } catch (error) {
-        if (error?.code === "ESRCH") return;
-      }
-    }
-    try { child.kill(signal); } catch {}
-  };
+  const signalChildTree = (signal) => signalProcessTree(child, signal);
 
   const stopRelays = () => {
     stdinRelay?.stop();

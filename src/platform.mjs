@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 
@@ -121,6 +122,40 @@ export function processTreeKillPlan(pid, { platform = process.platform, env = pr
     args: ["/PID", String(pid), "/T", "/F"],
     options: { shell: false, stdio: "ignore", windowsHide: true },
   };
+}
+
+/**
+ * KRA-6573: the one Stop path for every launcher. POSIX signals the child's
+ * process group. Windows runs the absolute System32 taskkill plan (/T /F) for
+ * both the grace and the force signal, so lab CLIs and their grandchildren
+ * stop too; a bare "taskkill" from PATH is never spawned.
+ */
+export function signalProcessTree(child, signal, {
+  platform = process.platform,
+  env = process.env,
+  spawnImpl = spawn,
+  killProcess = process.kill.bind(process),
+} = {}) {
+  const killDirect = () => { try { child.kill(signal); } catch {} };
+  if (!Number.isInteger(child.pid) || child.pid < 1) return killDirect();
+  if (platform !== "win32") {
+    try {
+      killProcess(-child.pid, signal);
+      return;
+    } catch (error) {
+      if (error?.code === "ESRCH") return;
+    }
+    return killDirect();
+  }
+  const plan = processTreeKillPlan(child.pid, { platform, env });
+  try {
+    const killer = spawnImpl(plan.file, plan.args, plan.options);
+    // A missing or failing taskkill must never crash the launcher.
+    killer.on?.("error", killDirect);
+    killer.unref?.();
+  } catch {
+    killDirect();
+  }
 }
 
 /** Replaces the user's home and well-known profile roots in diagnostics. */
