@@ -470,7 +470,7 @@ test("child-process crash recovery and a recovery barrier admit exactly one owne
   crashed.kill("SIGKILL");
   await new Promise((resolve) => crashed.once("exit", resolve));
 
-  const contenderScript = `import { acquireStateLock } from ${JSON.stringify(bridgeUrl)}; const release = acquireStateLock(process.argv[1], { staleMs: 0 }); console.log(release ? 'locked' : 'skipped'); if (release) setTimeout(() => { release(); process.exit(0); }, 150);`;
+  const contenderScript = `import { acquireStateLock } from ${JSON.stringify(bridgeUrl)}; const release = acquireStateLock(process.argv[1], { staleMs: 0 }); console.log(release ? 'locked' : 'skipped'); if (release) setTimeout(() => { release(); process.exit(0); }, 1_500);`;
   const first = spawn(process.execPath, ["--input-type=module", "-e", contenderScript, stateFile], { stdio: ["ignore", "pipe", "pipe"] });
   await waitForChildOutput(first, "locked");
   const second = spawn(process.execPath, ["--input-type=module", "-e", contenderScript, stateFile], { stdio: ["ignore", "pipe", "pipe"] });
