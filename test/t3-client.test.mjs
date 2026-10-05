@@ -207,6 +207,69 @@ test("WebSocket RPC ignores malformed frames, answers pings, and returns its mat
   assert.deepEqual(sockets[0].sent[1], { _tag: "Pong" });
 });
 
+test("KRA-6576: frames after an RPC settles never throw or reject unhandled", async () => {
+  const unhandled = [];
+  const onUnhandled = (reason) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+  class ClosingWebSocket {
+    constructor() {
+      this.listeners = new Map();
+      this.closed = false;
+      this.sent = [];
+      ClosingWebSocket.last = this;
+    }
+
+    addEventListener(type, listener) {
+      this.listeners.set(type, listener);
+    }
+
+    send(payload) {
+      if (this.closed) throw new Error("InvalidStateError: WebSocket is not open");
+      this.sent.push(JSON.parse(payload));
+    }
+
+    close() {
+      this.closed = true;
+    }
+
+    emit(type, event = {}) {
+      return this.listeners.get(type)?.(event);
+    }
+  }
+  try {
+    const client = new T3Client({
+      token: "test-token",
+      WebSocketImpl: ClosingWebSocket,
+      fetchImpl: async () => new Response(JSON.stringify({ ticket: "ticket" }), { status: 200 }),
+    });
+    // Success, then a Ping and a late open on the already closed socket.
+    const done = client.rpc("server.getSettings");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const socket = ClosingWebSocket.last;
+    socket.emit("open");
+    const { id } = socket.sent[0];
+    await socket.emit("message", {
+      data: JSON.stringify({ _tag: "Exit", requestId: id, exit: { _tag: "Success", value: { ok: 1 } } }),
+    });
+    assert.deepEqual(await done, { ok: 1 });
+    await socket.emit("message", { data: JSON.stringify({ _tag: "Ping" }) });
+    assert.doesNotThrow(() => socket.emit("open"));
+    socket.emit("close");
+
+    // Timeout first, then the socket opens: no request is written, nothing throws.
+    const timedOut = client.rpc("server.getSettings", {}, { timeoutMs: 1 });
+    await assert.rejects(timedOut, /timed out/);
+    const late = ClosingWebSocket.last;
+    assert.doesNotThrow(() => late.emit("open"));
+    await late.emit("message", { data: JSON.stringify({ _tag: "Ping" }) });
+    assert.deepEqual(late.sent, []);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+  }
+});
+
 test("runtime snapshots are immutable, reusable, and digest-verified", () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-hermes-runtime-snapshot-"));
   const overrides = { homeDir };
