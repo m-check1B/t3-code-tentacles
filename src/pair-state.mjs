@@ -143,6 +143,37 @@ function readPairLock(lockFile) {
   return { ...lock, identity: loaded.identity };
 }
 
+/**
+ * KRA-6572: publish a lock file only with its whole body. The body is written
+ * and fsynced to a private temp file, then hard-linked into place (EEXIST when
+ * held), so a crash can never leave an empty or partial lock behind.
+ * Returns an open read descriptor on the published lock.
+ */
+export function publishLockFile(lockFile, body) {
+  const temporary = `${lockFile}.${process.pid}.${randomUUID()}.tmp`;
+  const descriptor = fs.openSync(temporary, "wx", 0o600);
+  try {
+    fs.writeFileSync(descriptor, body);
+    fs.fsyncSync(descriptor);
+    fs.linkSync(temporary, lockFile);
+    return descriptor;
+  } catch (error) {
+    fs.closeSync(descriptor);
+    throw error;
+  } finally {
+    try { fs.unlinkSync(temporary); } catch (unlinkError) { if (unlinkError.code !== "ENOENT") throw unlinkError; }
+  }
+}
+
+const PAIR_LOCK_STALE_MS = 60_000;
+
+function partialPairLock(lockFile, readError) {
+  if (!/invalid/.test(String(readError?.message))) throw readError;
+  const stat = fs.lstatSync(lockFile);
+  if (stat.isSymbolicLink() || Date.now() - stat.mtimeMs <= PAIR_LOCK_STALE_MS) return null;
+  return { pid: null, identity: { dev: stat.dev, ino: stat.ino } };
+}
+
 function pidIsAlive(pid) {
   try { process.kill(pid, 0); return true; }
   catch (error) { return error.code !== "ESRCH"; }
@@ -153,20 +184,19 @@ export function acquirePairStateLock(file = DEFAULT_PAIR_STATE_FILE) {
   ensurePrivatePairDirectory(path.dirname(destination));
   const lockFile = `${destination}.lock`;
   const owner = randomUUID();
-  const create = () => {
-    const descriptor = fs.openSync(lockFile, "wx", 0o600);
-    try {
-      fs.writeFileSync(descriptor, `${JSON.stringify({ version: 1, owner, pid: process.pid })}\n`);
-    } finally {
-      fs.closeSync(descriptor);
-    }
-  };
+  // KRA-6572: the body is durable before the lock name exists (temp + link).
+  const create = () => fs.closeSync(publishLockFile(lockFile, `${JSON.stringify({ version: 1, owner, pid: process.pid })}\n`));
   try {
     create();
   } catch (error) {
     if (error.code !== "EEXIST") throw error;
-    const existing = readPairLock(lockFile);
-    if (!existing || pidIsAlive(existing.pid)) return null;
+    let existing;
+    try { existing = readPairLock(lockFile); }
+    catch (readError) {
+      // A partial body from a crash has no owner to ask: reclaim it after the stale window.
+      existing = partialPairLock(lockFile, readError);
+    }
+    if (!existing || (existing.pid !== null && pidIsAlive(existing.pid))) return null;
     const current = fs.lstatSync(lockFile);
     if (current.isSymbolicLink() || current.dev !== existing.identity.dev || current.ino !== existing.identity.ino) return null;
     const staleFile = `${lockFile}.stale.${owner}`;

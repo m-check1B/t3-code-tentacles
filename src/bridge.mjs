@@ -32,7 +32,7 @@ import {
   requireContinueSelection,
   retainedSelectionPin,
 } from "./model-selection.mjs";
-import { DEFAULT_PAIR_STATE_FILE, readPairPresence } from "./pair-state.mjs";
+import { DEFAULT_PAIR_STATE_FILE, publishLockFile, readPairPresence } from "./pair-state.mjs";
 import { inspectHermesOpenaiCodexAuth } from "./hermes-acp-launch.mjs";
 import { readBoundedResponseText, readOrchestrationSnapshot, T3HttpError, T3_REAUTH_ACTION } from "./t3-client.mjs";
 import { LAB_NAMES, labName } from "./lab-names.mjs";
@@ -770,32 +770,63 @@ function pidIsDead(pid) {
   catch (error) { return error.code === "ESRCH"; }
 }
 
+/** Lock contents plus file identity; an unreadable body is ``lock: null``. */
+function inspectLock(lockFile) {
+  const stat = fs.lstatSync(lockFile);
+  let lock = null;
+  try { lock = readLock(lockFile); }
+  catch (error) { if (error.code === "ENOENT") throw error; }
+  return { lock, ino: stat.ino, mtimeMs: stat.mtimeMs };
+}
+
+function lockIsStale(state, staleMs) {
+  // A partial body (legacy crash before the body was durable) has no owner to
+  // ask; it is reclaimed only after the same stale window as a dead owner.
+  if (!state.lock) return Date.now() - state.mtimeMs > staleMs;
+  const age = Date.now() - Date.parse(state.lock.createdAt);
+  // Never steal a lock from a live PID: PID reuse can sacrifice availability, never ownership safety.
+  return Number.isFinite(age) && age > staleMs && pidIsDead(state.lock.pid);
+}
+
+function sameLock(left, right) {
+  return left.ino === right.ino && left.lock?.owner === right.lock?.owner && left.lock?.pid === right.lock?.pid;
+}
+
+/** KRA-6572: a recovery marker left by a crashed recoverer must not block every later steal. */
+function clearDeadRecovery(recoveryFile, staleMs) {
+  let stat;
+  try { stat = fs.lstatSync(recoveryFile); } catch (error) { if (error.code === "ENOENT") return; throw error; }
+  let marker = null;
+  try { marker = JSON.parse(fs.readFileSync(recoveryFile, "utf8")); } catch { /* partial marker */ }
+  const dead = Number.isInteger(marker?.pid)
+    ? pidIsDead(marker.pid)
+    : Date.now() - stat.mtimeMs > staleMs;
+  if (!dead) return;
+  try {
+    if (fs.lstatSync(recoveryFile).ino === stat.ino) fs.unlinkSync(recoveryFile);
+  } catch (error) { if (error.code !== "ENOENT") throw error; }
+}
+
 export function acquireStateLock(stateFile, { staleMs = LOCK_STALE_MS } = {}) {
   ensurePrivateDirectory(path.dirname(stateFile));
   const lockFile = `${stateFile}.lock`;
   const owner = randomUUID();
-  const open = () => {
-    const descriptor = fs.openSync(lockFile, "wx", 0o600);
-    fs.writeFileSync(descriptor, `${JSON.stringify({ version: 1, owner, pid: process.pid, createdAt: now() })}\n`);
-    return descriptor;
-  };
+  const open = () => publishLockFile(lockFile, `${JSON.stringify({ version: 1, owner, pid: process.pid, createdAt: now() })}\n`);
   let descriptor;
   try { descriptor = open(); }
   catch (error) {
     if (error.code !== "EEXIST") throw error;
-    const existing = readLock(lockFile);
-    const age = Date.now() - Date.parse(existing.createdAt);
-    // Never steal a lock from a live PID: PID reuse can sacrifice availability, never ownership safety.
-    if (!Number.isFinite(age) || age <= staleMs || !pidIsDead(existing.pid)) return null;
+    const existing = inspectLock(lockFile);
+    if (!lockIsStale(existing, staleMs)) return null;
     const recoveryFile = `${lockFile}.recovery`;
+    clearDeadRecovery(recoveryFile, staleMs);
     let recovery;
-    try { recovery = fs.openSync(recoveryFile, "wx", 0o600); fs.writeFileSync(recovery, `${JSON.stringify({ owner, staleOwner: existing.owner })}\n`); }
+    try { recovery = publishLockFile(recoveryFile, `${JSON.stringify({ owner, pid: process.pid, createdAt: now(), staleOwner: existing.lock?.owner ?? null })}\n`); }
     catch (recoveryError) { if (recoveryError.code === "EEXIST") return null; throw recoveryError; }
     try {
-      const confirmed = readLock(lockFile);
-      const confirmedAge = Date.now() - Date.parse(confirmed.createdAt);
-      if (confirmed.owner !== existing.owner || confirmed.pid !== existing.pid || !Number.isFinite(confirmedAge) || confirmedAge <= staleMs || !pidIsDead(confirmed.pid)) return null;
-      const tombstone = `${lockFile}.stale.${confirmed.owner}`;
+      const confirmed = inspectLock(lockFile);
+      if (!sameLock(confirmed, existing) || !lockIsStale(confirmed, staleMs)) return null;
+      const tombstone = `${lockFile}.stale.${confirmed.lock?.owner ?? owner}`;
       fs.renameSync(lockFile, tombstone);
       try { descriptor = open(); } finally { try { fs.unlinkSync(tombstone); } catch (unlinkError) { if (unlinkError.code !== "ENOENT") throw unlinkError; } }
     } catch (recoveryError) {
