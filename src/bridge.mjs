@@ -35,6 +35,7 @@ import {
 import { DEFAULT_PAIR_STATE_FILE, readPairPresence } from "./pair-state.mjs";
 import { inspectHermesOpenaiCodexAuth } from "./hermes-acp-launch.mjs";
 import { readBoundedResponseText, readOrchestrationSnapshot, T3HttpError, T3_REAUTH_ACTION } from "./t3-client.mjs";
+import { LAB_NAMES, labName } from "./lab-names.mjs";
 
 const HERMES_MENTION = /(^|\s)@hermes\b/i;
 const BRIDGE_OWNER_VARIABLE = "T3_HERMES_BRIDGE_OWNER";
@@ -135,7 +136,7 @@ export async function installCodexAppProvider(client, {
     ...current,
     [instanceId]: {
       driver: "codex",
-      displayName: "Codex app",
+      displayName: LAB_NAMES["codex-app"],
       enabled: true,
       environment: [
         { name: CODEX_APP_OWNER_VARIABLE, value: CODEX_APP_OWNER_VALUE, sensitive: false },
@@ -275,7 +276,7 @@ export async function installProvider(client, {
     ...current,
     [instanceId]: {
       driver: "grok",
-      displayName: "Hermes",
+      displayName: LAB_NAMES.hermes,
       accentColor: "#8B5CF6",
       enabled: true,
       environment: [
@@ -327,7 +328,7 @@ export async function installPiProvider(client, {
     ...current,
     [instanceId]: {
       driver: "grok",
-      displayName: "Pi",
+      displayName: LAB_NAMES.pi,
       accentColor: "#F97316",
       enabled: true,
       environment: [
@@ -386,7 +387,7 @@ export async function installDeepSeekProvider(client, {
     ...current,
     [instanceId]: {
       driver: "grok",
-      displayName: "DeepSeek CLI",
+      displayName: LAB_NAMES.deepseek,
       accentColor: "#0EA5E9",
       enabled: true,
       environment,
@@ -464,7 +465,7 @@ export async function installKimiProvider(client, {
     model,
     kimiBin,
     harness: KIMI_HARNESS_VALUE,
-    displayName: "Kimi CLI",
+    displayName: LAB_NAMES.kimi,
     accentColor: "#10B981",
   });
 }
@@ -1107,6 +1108,7 @@ function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
   else if (kind !== "explicit" && !defaultAvailable) code = "default_model_unavailable";
   const row = {
     instanceId,
+    name: labName(instanceId),
     advertised,
     kind,
     enabled,
@@ -1132,7 +1134,7 @@ function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
     const driver = instance?.driver || configProvider?.driver || "codex";
     row.runtime = {
       id: expectedAppBundle ? "codex-app" : "codex-cli",
-      label: expectedAppBundle ? "Codex app" : "Codex CLI",
+      label: expectedAppBundle ? LAB_NAMES["codex-app"] : LAB_NAMES.codex,
       integration: "t3-native",
       driver,
       transport: "app-server",
@@ -1357,11 +1359,12 @@ export function formatDoctor(result = {}) {
   }
   lines.push("");
   const table = [
-    ["lab", "kind", "advertised", "enabled", "installed", "ready", "status", "count", "default", "runtime", "models"],
+    ["lab", "name", "kind", "advertised", "enabled", "installed", "ready", "status", "count", "default", "runtime", "models"],
   ];
   for (const lab of labs) {
     table.push([
       lab.instanceId || "",
+      lab.name || labName(lab.instanceId) || "",
       lab.kind || "",
       yesNo(lab.advertised),
       yesNo(lab.enabled),
