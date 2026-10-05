@@ -16,7 +16,7 @@ import {
   MAX_PENDING_ACP_REQUESTS,
   requestKey,
 } from "./pi-acp.mjs";
-import { signalProcessTree } from "./platform.mjs";
+import { defaultStateDir, signalProcessTree } from "./platform.mjs";
 
 export const DEFAULT_LAUNCH_DEEPSEEK_MODEL = "deepseek/deepseek-v4-flash";
 export const DEFAULT_DSH_PERMISSION_MODE = "workspace-write";
@@ -86,8 +86,14 @@ export function workspaceSessionsSlug(cwd) {
   return createHash("sha256").update(cwd).digest("hex").slice(0, 16);
 }
 
+/** KRA-6574: the OpenRouter token lives in the platform state dir (%LOCALAPPDATA% on Windows). */
+export function deepseekTokenFile({ env = process.env, home = os.homedir(), platform = process.platform } = {}) {
+  const platformPath = platform === "win32" ? path.win32 : path.posix;
+  return env.OPENROUTER_TOKEN_FILE || platformPath.join(defaultStateDir({ platform, env, home }), "openrouter.token");
+}
+
 export function buildLaunchPlan({ env = process.env, home = os.homedir(), configPath = BRIDGE_DSH_CONFIG_PATH, cwd = process.cwd() } = {}) {
-  const apiKey = readOpenRouterToken(env.OPENROUTER_TOKEN_FILE || path.join(home, ".local", "state", "t3-hermes-bridge", "openrouter.token"));
+  const apiKey = readOpenRouterToken(deepseekTokenFile({ env, home }));
   const binary = resolveDshAcpBinary(env);
   const sessionsRoot = env.DSH_SESSIONS_ROOT || path.join(home, ".dsh", "acp-sessions", workspaceSessionsSlug(cwd));
   fs.mkdirSync(sessionsRoot, { recursive: true, mode: 0o700 });

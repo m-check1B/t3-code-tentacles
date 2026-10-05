@@ -15,6 +15,7 @@ import {
 } from "../src/bridge.mjs";
 import {
   buildLaunchPlan,
+  deepseekTokenFile,
   openCodeAuthFile,
   readDeepSeekApiKey,
   resolveDshAcpBinary,
@@ -245,4 +246,14 @@ test("bridge DSH config bounds Claude output below its OpenRouter context window
   const config = fs.readFileSync(DSH_CONFIG, "utf8");
   assert.match(config, /maxTokens: !!js "Number\(process\.env\.DSH_MAX_TOKENS \?\? 256000\)"/);
   assert.match(config, /- id: anthropic\/claude-3-haiku/);
+});
+
+test("KRA-6574: DeepSeek reads the OpenRouter token from the platform state dir", () => {
+  const env = { USERPROFILE: "C:\\Users\\Ada", LOCALAPPDATA: "C:\\Users\\Ada\\AppData\\Local" };
+  assert.equal(
+    deepseekTokenFile({ platform: "win32", env, home: "C:\\Users\\Ada" }),
+    "C:\\Users\\Ada\\AppData\\Local\\t3-hermes-bridge\\openrouter.token",
+  );
+  assert.equal(deepseekTokenFile({ platform: "darwin", env: {}, home: "/Users/ada" }), "/Users/ada/.local/state/t3-hermes-bridge/openrouter.token");
+  assert.equal(deepseekTokenFile({ platform: "win32", env: { ...env, OPENROUTER_TOKEN_FILE: "D:\\k.token" } }), "D:\\k.token");
 });
