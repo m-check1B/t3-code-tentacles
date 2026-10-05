@@ -16,7 +16,10 @@ const PARAM_KEYS = ["requestId", "threadId", "messageId", "turnCommandId", "reas
 const TUPLE_KEYS = ["threadId", "messageId", "turnCommandId"];
 const TERMINAL_STATES = new Set(["succeeded", "failed", "cancelled"]);
 const ACTIVE_SESSION_STATES = new Set(["starting", "running"]);
-const MAX_REMEMBERED_REQUESTS = 256;
+// KRA-6578: Stop results replay exactly and a reused id never retargets, for
+// the life of the pairer. Only settled entries are ever evicted, and only past
+// this bound (a few MB of tiny envelopes); an in-flight Stop is never dropped.
+const MAX_REMEMBERED_REQUESTS = 50_000;
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -84,6 +87,7 @@ export class TurnInterrupter {
     // below Sphere's 30 s relay timeout so a real answer is never dropped.
     totalBudgetMs = 22_000,
     intervalMs = 200,
+    maxRememberedRequests = MAX_REMEMBERED_REQUESTS,
   }) {
     this.readTurnResult = readTurnResult;
     this.readThread = readThread;
@@ -93,6 +97,7 @@ export class TurnInterrupter {
     this.terminalWaitMs = terminalWaitMs;
     this.totalBudgetMs = totalBudgetMs;
     this.intervalMs = intervalMs;
+    this.maxRememberedRequests = maxRememberedRequests;
     // requestId -> { tuple, promise, result }. Final results replay exactly;
     // unavailable is not final and re-runs (dispatch is commandId-idempotent).
     this.requests = new Map();
@@ -118,8 +123,16 @@ export class TurnInterrupter {
         return result;
       });
     this.requests.set(input.requestId, entry);
-    while (this.requests.size > MAX_REMEMBERED_REQUESTS) this.requests.delete(this.requests.keys().next().value);
+    this.evictSettled();
     return entry.promise;
+  }
+
+  evictSettled() {
+    if (this.requests.size <= this.maxRememberedRequests) return;
+    for (const [requestId, entry] of this.requests) {
+      if (this.requests.size <= this.maxRememberedRequests) return;
+      if (entry.result) this.requests.delete(requestId);
+    }
   }
 
   async exactResult(input, budgetMs = Infinity) {
