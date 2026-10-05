@@ -170,10 +170,22 @@ export class T3Client {
         timeoutMs,
       );
 
+      // KRA-6576: once settled the socket is closed. Any later open, message or
+      // Ping must not write to it: a throwing send would reject unhandled and
+      // exit the pairer process.
+      const send = (frame) => {
+        if (settled) return;
+        try {
+          socket.send(JSON.stringify(frame));
+        } catch {
+          finish(reject, new Error(`T3 RPC ${tag} websocket send failed`));
+        }
+      };
       socket.addEventListener("open", () => {
-        socket.send(JSON.stringify({ _tag: "Request", id, tag, payload, headers: [] }));
+        send({ _tag: "Request", id, tag, payload, headers: [] });
       });
       socket.addEventListener("message", async (event) => {
+        if (settled) return;
         let raw;
         try {
           raw = await readBoundedWebSocketData(event.data, this.responseMaxBytes);
@@ -181,6 +193,7 @@ export class T3Client {
           finish(reject, error);
           return;
         }
+        if (settled) return;
         let message;
         try {
           message = JSON.parse(raw);
@@ -188,7 +201,7 @@ export class T3Client {
           return;
         }
         if (message?._tag === "Ping") {
-          socket.send(JSON.stringify({ _tag: "Pong" }));
+          send({ _tag: "Pong" });
           return;
         }
         if (message?._tag !== "Exit" || message.requestId !== id) return;
