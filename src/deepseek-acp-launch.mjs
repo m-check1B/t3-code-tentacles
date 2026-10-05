@@ -16,6 +16,7 @@ import {
   MAX_PENDING_ACP_REQUESTS,
   requestKey,
 } from "./pi-acp.mjs";
+import { signalProcessTree } from "./platform.mjs";
 
 export const DEFAULT_LAUNCH_DEEPSEEK_MODEL = "deepseek/deepseek-v4-flash";
 export const DEFAULT_DSH_PERMISSION_MODE = "workspace-write";
@@ -359,21 +360,7 @@ export function startDeepSeekAcpProxy({
   let stdinRelay;
   let stdoutRelay;
 
-  const signalChildTree = (signal) => {
-    if (!Number.isInteger(child.pid)) {
-      try { child.kill(signal); } catch {}
-      return;
-    }
-    if (process.platform !== "win32") {
-      try {
-        process.kill(-child.pid, signal);
-        return;
-      } catch (error) {
-        if (error?.code === "ESRCH") return;
-      }
-    }
-    try { child.kill(signal); } catch {}
-  };
+  const signalChildTree = (signal) => signalProcessTree(child, signal);
 
   const stopRelays = () => {
     stdinRelay?.stop();

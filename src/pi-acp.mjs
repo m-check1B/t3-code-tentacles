@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { signalProcessTree } from "./platform.mjs";
 
 export const MAX_ACP_LINE_BYTES = 1024 * 1024;
 export const MAX_ACP_BUFFER_BYTES = 4 * 1024 * 1024;
@@ -191,33 +192,7 @@ export function startPiAcpProxy({
   let stdinRelay;
   let stdoutRelay;
 
-  const signalChildTree = (signal) => {
-    if (!Number.isInteger(child.pid)) {
-      try { child.kill(signal); } catch {}
-      return;
-    }
-    if (process.platform !== "win32") {
-      try {
-        process.kill(-child.pid, signal);
-        return;
-      } catch (error) {
-        if (error?.code === "ESRCH") return;
-      }
-      try { child.kill(signal); } catch {}
-      return;
-    }
-    if (signal === "SIGKILL") {
-      try {
-        const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
-          stdio: "ignore",
-          windowsHide: true,
-        });
-        killer.unref();
-        return;
-      } catch {}
-    }
-    try { child.kill(signal); } catch {}
-  };
+  const signalChildTree = (signal) => signalProcessTree(child, signal);
 
   const stopRelays = () => {
     stdinRelay?.stop();

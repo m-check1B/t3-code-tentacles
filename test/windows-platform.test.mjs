@@ -9,6 +9,7 @@ import {
   executableFileNames,
   privateModeOk,
   processTreeKillPlan,
+  signalProcessTree,
   readEnvPath,
   redactHomePaths,
   windowsExecutableExtensions,
@@ -147,4 +148,45 @@ test("win32 Local Talk custody skips uid/mode bits but still refuses symlinked s
   fs.rmSync(path.join(canonical, ".jack-local-scratch"), { recursive: true });
   fs.symlinkSync(other, path.join(canonical, ".jack-local-scratch"));
   assert.throws(() => ensureLocalTalkWorkspace(workspace, { home, platform: "win32" }), /refused/);
+});
+
+test("KRA-6573: every Stop takes the Windows tree via the absolute System32 taskkill", () => {
+  const spawned = [];
+  const direct = [];
+  const child = { pid: 4242, kill: (signal) => direct.push(signal) };
+  const spawnImpl = (file, args, options) => {
+    spawned.push({ file, args, options });
+    return { on() {}, unref() {} };
+  };
+  for (const signal of ["SIGTERM", "SIGKILL", "SIGINT"]) {
+    signalProcessTree(child, signal, { platform: "win32", env: { SystemRoot: "C:\\Windows" }, spawnImpl });
+  }
+  assert.deepEqual(spawned.map((call) => call.file), Array(3).fill("C:\\Windows\\System32\\taskkill.exe"));
+  assert.deepEqual(spawned[0].args, ["/PID", "4242", "/T", "/F"]);
+  assert.equal(spawned[0].options.shell, false);
+  assert.deepEqual(direct, []);
+
+  // taskkill failing (sync or async) falls back to the direct kill, never throws.
+  let onError;
+  signalProcessTree(child, "SIGTERM", {
+    platform: "win32", env: {}, spawnImpl: () => ({ on: (type, listener) => { onError = listener; }, unref() {} }),
+  });
+  onError(new Error("ENOENT"));
+  signalProcessTree(child, "SIGKILL", { platform: "win32", env: {}, spawnImpl: () => { throw new Error("EPERM"); } });
+  assert.deepEqual(direct, ["SIGTERM", "SIGKILL"]);
+
+  // POSIX keeps the process-group signal and never spawns taskkill.
+  const groups = [];
+  signalProcessTree(child, "SIGTERM", { platform: "darwin", spawnImpl, killProcess: (pid, signal) => groups.push([pid, signal]) });
+  assert.deepEqual(groups, [[-4242, "SIGTERM"]]);
+  assert.equal(spawned.length, 3);
+});
+
+test("KRA-6573: Hermes, DeepSeek, Kimi and Pi Stop use the shared tree kill, never a PATH taskkill", () => {
+  for (const name of ["hermes-acp-launch", "deepseek-acp-launch", "kimi-acp-launch", "pi-acp"]) {
+    const source = fs.readFileSync(new URL(`../src/${name}.mjs`, import.meta.url), "utf8");
+    assert.match(source, /const signalChildTree = \(signal\) => signalProcessTree\(child, signal\);/, name);
+    assert.doesNotMatch(source, /spawn\(\s*["']taskkill/, name);
+    assert.doesNotMatch(source, /child\.kill\(/, name);
+  }
 });
