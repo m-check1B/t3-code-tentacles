@@ -1185,7 +1185,8 @@ function doctorAction(lab) {
   if (lab.code === "codex_auth_missing") return "Authenticate openai-codex through Hermes' normal local setup";
   if (lab.code === "hermes_unreachable") return "Start or recover the loopback Hermes health endpoint";
   if (lab.code === "adapter_auth_unavailable") return "Repair the adapter runtime's owner-controlled credential file, then rerun doctor";
-  if (lab.code === "assistant_unverified") return "No assistant reply is verified within the bounded probe; keep this lab skipped";
+  if (lab.code === "assistant_unverified") return "Update T3 Code so doctor can read the Claude Code sign-in state; keep this lab skipped";
+  if (lab.code === "auth_required") return "Sign in to Claude Code: run `claude auth login` in a terminal, then rerun doctor";
   if (lab.code === "disabled") return lab.instanceId === "cursor"
     ? "Enable Cursor in T3, then choose a model shown by doctor"
     : `Enable the ${lab.instanceId} instance in T3`;
@@ -1263,8 +1264,16 @@ export async function doctor(client, {
     deepseekLab.code = null;
   }
 
+  // KRA-6508: T3 checks the Claude Code login itself. Trust its ready state
+  // unless it reports a signed-out account; a T3 without auth status stays
+  // fail-closed. Only the status word is read, never the account details.
   const claudeLab = labs.find((lab) => lab.instanceId === "claudeAgent");
-  if (claudeLab?.ready) {
+  const claudeAuth = configById.get("claudeAgent")?.auth?.status;
+  if (claudeLab?.enabled && claudeLab.installed && claudeAuth === "unauthenticated") {
+    claudeLab.ready = false;
+    claudeLab.status = "unavailable";
+    claudeLab.code = "auth_required";
+  } else if (claudeLab?.ready && !["authenticated", "unknown"].includes(claudeAuth)) {
     claudeLab.ready = false;
     claudeLab.status = "unverified";
     claudeLab.code = "assistant_unverified";
