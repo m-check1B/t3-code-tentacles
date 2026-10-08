@@ -4,6 +4,23 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-10-08
+
+### Fixed
+
+- Doctor reports Claude Code (`claudeAgent`) ready when T3 reports it ready and
+  signed in, instead of always `unverified` (KRA-6508). A signed-out account is
+  `auth_required` with a `claude auth login` action; a T3 without auth status
+  stays fail-closed. Only T3's auth status word is read.
+- Stop idempotency survives more than 256 requests (KRA-6578); Local Stop never
+  dispatches after its relay budget (KRA-6575); Windows Stop kills the whole lab
+  tree via System32 `taskkill` (KRA-6573).
+- Pair-lock recovery admits exactly one live owner; a partial lock or dead
+  recovery marker no longer wedges a computer (KRA-6572).
+- One bad attachment no longer freezes a thread's journal (KRA-6577); frames
+  after an RPC settles never crash the pairer (KRA-6576).
+- Windows reads the DeepSeek OpenRouter token from `%LOCALAPPDATA%` (KRA-6574).
+
 ### Added
 
 - Windows groundwork (KRA-6491, preview, not yet VM-proved): the state
@@ -17,6 +34,31 @@ All notable changes to this project are documented here.
   with `continue` per thread, idempotent by `requestId`, and acknowledged only
   after the exact turn is terminal. Doctor reports
   `capabilities.turnInterrupt`. Requires a Sphere that accepts the extended bind.
+- CLI/App display names for providers in doctor (KRA-6506).
+
+## [0.4.1] - 2026-10-04
+
+### Fixed — KRA-6432
+
+- Stop/archive verifies provider session termination and uses supported T3 session
+  stop commands when needed. Doctor reports archived session leaks.
+- Support the `thread.session.stop` intent alias and list valid actions in help.
+- Resolve the shim's Node from an owner-recorded absolute path before known
+  macOS locations and PATH, with a clear missing-runtime error.
+- Emit explicit accepted/rejected command receipts for `--no-wait`.
+- Recover operator-rotated bearer files once on 401; report invalid authentication
+  in doctor and provide explicit supported T3 reauthentication without printing
+  credentials. Mini installation and reauthentication remain held.
+- Publish release packages and checksums to the canonical Forgejo, rather than
+  invoking GitHub release tooling from Forgejo CI.
+
+### Designed
+
+- Provenance, idle reporting, typed inbox and ephemeral thread lifecycle remain
+  design notes only; no recurring automation was added.
+
+
+### Added
 
 - `tentacles doctor --json --models full` returns complete validated model IDs
   plus safe display names and T3 thinking/speed option descriptors. Existing
