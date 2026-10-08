@@ -231,6 +231,45 @@ test("doctor prints an advertised lab matrix without secrets and keeps Cursor ex
   }
 });
 
+test("doctor trusts T3's Claude Code sign-in state and never echoes the account (KRA-6508)", async () => {
+  const run = async (auth) => {
+    const provider = { instanceId: "claudeAgent", driver: "claudeAgent", status: "ready", installed: true,
+      models: [{ slug: "claude-sonnet-5" }, { slug: "claude-opus-5-5" }] };
+    if (auth !== undefined) provider.auth = auth;
+    const client = {
+      snapshot: async () => ({ projects: [], threads: [] }),
+      getSettings: async () => ({ providerInstances: { claudeAgent: { driver: "claudeAgent", enabled: true } } }),
+      rpc: async () => ({ environment: { serverVersion: "0.0.42" }, providers: [provider] }),
+    };
+    const result = await doctor(client, { fetchImpl: async () => { throw new Error("hermes down"); } });
+    return { result, claude: result.labs.find((lab) => lab.instanceId === "claudeAgent") };
+  };
+  const account = { label: "ACCOUNT-LABEL-CANARY", email: "canary@example.invalid" };
+
+  const max = await run({ status: "authenticated", type: "Claude Max", ...account });
+  assert.equal(max.claude.ready, true);
+  assert.equal(max.claude.status, "ready");
+  assert.equal(max.claude.code, null);
+  for (const canary of ["ACCOUNT-LABEL-CANARY", "canary@example.invalid", "Claude Max"]) {
+    assert.equal(JSON.stringify(max.result).includes(canary), false);
+    assert.equal(formatDoctor(max.result).includes(canary), false);
+  }
+
+  // API-key and other logins T3 cannot classify still run on T3's ready verdict.
+  assert.equal((await run({ status: "unknown" })).claude.ready, true);
+
+  const signedOut = await run({ status: "unauthenticated", ...account });
+  assert.equal(signedOut.claude.ready, false);
+  assert.equal(signedOut.claude.code, "auth_required");
+  assert.match(signedOut.claude.action, /claude auth login/);
+  assert.match(formatDoctor(signedOut.result), /claudeAgent\s+status=unavailable\s+code=auth_required/);
+
+  // T3 builds without an auth status stay fail-closed.
+  const legacy = await run(undefined);
+  assert.equal(legacy.claude.ready, false);
+  assert.equal(legacy.claude.code, "assistant_unverified");
+});
+
 test("doctor validates the full model set and promotes the default into bounded visible choices", async () => {
   const models = [
     ...Array.from({ length: 20 }, (_, index) => ({ slug: `model-${index}` })),
