@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { reauthenticate } from "./t3-auth.mjs";
+import { COMPUTER_COMMANDS, ensureForward, loadComputer, remoteIssueSpawn } from "./computers.mjs";
 import { T3Client } from "./t3-client.mjs";
 import {
   ALLOW_ALL_MENTION_POLICY,
@@ -86,6 +87,7 @@ function assertNoReservedRemovedInstance(command, instanceId) {
 }
 
 const ORIGINATE_OPTION_KEYS = new Set([
+  "computer",
   "workspace",
   "title",
   "message",
@@ -200,6 +202,7 @@ Valid act actions:
 Usage:
   tentacles --version | -V
   tentacles reauth --t3-bin /absolute/t3 --t3-home /absolute/.t3 [--token-file /absolute/t3.token]
+  tentacles reauth --computer NAME [--t3-bin /remote/t3] [--t3-home /remote/.t3]
   tentacles doctor [--json] [--models summary|full]
   tentacles pair --pair-file OWNER_ONLY_JSON --machine-id SPHERE_MACHINE_ID [--pair-state-file PATH]
   tentacles install-provider [--instance hermes] [--profile default] [--model MODEL]
@@ -264,6 +267,9 @@ instance. They never choose a profile implicitly.
 
 Environment:
   T3_URL                    default http://127.0.0.1:3773
+  TENTACLES_COMPUTER        default for --computer NAME (doctor, observe, report, act, orchestrate, originate, reauth):
+                            run against the T3 environment on that computer through an SSH loopback forward
+  TENTACLES_COMPUTERS_FILE  default <state dir>/computers.json
   T3_HERMES_TOKEN_FILE      default ~/.local/state/t3-hermes-bridge/t3.token
   T3_HERMES_MODEL           default deepseek:deepseek-v4-flash
   CODEX_APP_BIN             optional absolute <App>.app/Contents/Resources/codex path
@@ -350,6 +356,26 @@ async function main() {
     return;
   }
 
+  const computerName = options.computer || process.env.TENTACLES_COMPUTER || null;
+  let computer = null;
+  if (computerName) {
+    if (!COMPUTER_COMMANDS.has(command)) throw new Error(`--computer is not supported for ${command}`);
+    computer = loadComputer(computerName);
+  }
+
+  if (command === "reauth" && computer) {
+    const t3Bin = options["t3-bin"] || computer.t3Bin;
+    const t3Home = options["t3-home"] || computer.t3Home;
+    if (!t3Bin || !t3Home) throw new Error(`Computer ${computer.name} needs t3Bin and t3Home in the registry or --t3-bin/--t3-home`);
+    console.log(JSON.stringify({ computer: computer.name, ...reauthenticate({
+      t3Bin,
+      t3Home,
+      tokenFile: computer.tokenFile,
+      spawnImpl: remoteIssueSpawn(computer),
+      remote: true,
+    }) }));
+    return;
+  }
   if (command === "reauth") {
     console.log(JSON.stringify(reauthenticate({
       t3Bin: required(options, "t3-bin"),
@@ -358,7 +384,8 @@ async function main() {
     })));
     return;
   }
-  const client = new T3Client();
+  if (computer) await ensureForward(computer);
+  const client = computer ? new T3Client({ baseUrl: computer.t3Url, tokenFile: computer.tokenFile }) : new T3Client();
 
   if (command === "doctor") {
     const result = await doctor(client, {
@@ -511,8 +538,11 @@ async function main() {
     if (originateSelection.instanceId === "hermes") {
       requireRequestedProviderConstructable(originateSelection.model);
     }
+    const workspace = required(options, "workspace");
+    // On another computer the workspace is a path there; never resolve it against this cwd.
+    if (computer && !path.posix.isAbsolute(workspace)) throw new Error("--workspace must be an absolute path on the target computer");
     const result = await originate(client, {
-      workspace: path.resolve(required(options, "workspace")),
+      workspace: computer ? workspace : path.resolve(workspace),
       title: required(options, "title"),
       message: required(options, "message"),
       instanceId: originateSelection.instanceId,
@@ -520,7 +550,7 @@ async function main() {
       options: originateSelection.options,
       runtimeMode,
       idempotencyKey: options["idempotency-key"],
-      stateFile: options["state-file"],
+      stateFile: options["state-file"] || computer?.stateFile,
     });
     console.log(JSON.stringify(result, null, 2));
     return;
