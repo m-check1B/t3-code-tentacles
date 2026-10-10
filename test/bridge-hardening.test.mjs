@@ -631,11 +631,13 @@ test("originate idempotency reconciles an accepted-but-ambiguous turn without du
       if (command.type === "project.create") { projectCommands += 1; projects.set(command.projectId, { id: command.projectId, workspaceRoot: command.workspaceRoot }); return {}; }
       if (command.type === "thread.create") { threadCommands += 1; threads.set(command.threadId, { id: command.threadId, messages: [] }); return {}; }
       turnCommands += 1;
+      assert.equal(command.freshProviderContext, true);
+      assert.equal("titleSeed" in command, false);
       threads.get(command.threadId).messages.push({ id: command.message.messageId });
       throw new Error("accepted before connection failure");
     },
   };
-  const options = { workspace: "/tmp/idempotent", title: "Idempotent", message: "hello", runtimeMode: "full-access", idempotencyKey: "origin-1", stateFile };
+  const options = { workspace: "/tmp/idempotent", title: "Idempotent", message: "hello", runtimeMode: "full-access", idempotencyKey: "origin-1", freshProviderContext: true, fixedTitle: true, stateFile };
   fs.writeFileSync(stateFile, `${JSON.stringify({
     version: 1,
     startedAt: "2026-01-01T00:00:00.000Z",
@@ -657,6 +659,8 @@ test("originate idempotency reconciles an accepted-but-ambiguous turn without du
   assert.equal(result.messageId, migrated.originations["origin-1"].messageId);
   assert.equal(result.turnCommandId, migrated.originations["origin-1"].turnCommandId);
   assert.deepEqual(await originate(client, options), result);
+  await assert.rejects(originate(client, { ...options, freshProviderContext: undefined }), /different input/);
+  await assert.rejects(originate(client, { ...options, fixedTitle: undefined }), /different input/);
   await assert.rejects(originate(client, { ...options, model: "changed-model" }), /different input/);
   await assert.rejects(originate(client, { ...options, message: "different" }), /different input/);
 });
@@ -724,10 +728,11 @@ test("continue returns durable caller correlation on identical retries and refus
     thread: async () => ({ thread: { id: "thread", projectId: "project", modelSelection: { instanceId: "codex", model: "gpt-6-astra", options: [{ id: "reasoningEffort", value: "high" }] }, messages } }),
     dispatch: async (command) => {
       dispatches += 1;
+      assert.equal(command.freshProviderContext, true);
       messages.push({ id: command.message.messageId, role: "user", text: command.message.text });
     },
   };
-  const input = { threadId: "thread", message: "next task", messageId: "message", turnCommandId: "command", runtimeMode: "full-access" };
+  const input = { threadId: "thread", message: "next task", messageId: "message", turnCommandId: "command", freshProviderContext: true, runtimeMode: "full-access" };
   const first = await continueThread(client, input);
   assert.deepEqual(first, { threadId: "thread", projectId: "project", messageId: "message", turnCommandId: "command" });
   assert.deepEqual(await continueThread(client, input), first);
