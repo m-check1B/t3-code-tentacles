@@ -56,9 +56,14 @@ never printed. After a transient socket loss, the same process reconnects with
 capped exponential backoff plus jitter and re-announces the host contract. The
 one-shot credential remains memory-only after the offer file is consumed. A
 relay that accepts the re-announcement restores the pair in place; a v1 relay
-that rejects the consumed credential returns `pair.unpaired`, which is treated
-as unrecoverable authorization so a launchd `KeepAlive` wrapper can mint a fresh
-offer. `pair.expired` and `pair.revoked` are terminal authorization results too.
+that rejects the consumed credential returns `pair.unpaired`. Older relays send
+the same bare frame when another socket still holds the pair (a stale or
+competing registration), so a bare `pair.unpaired` is retried with backoff and
+becomes unrecoverable authorization only after `AMBIGUOUS_DENIAL_LIMIT` (6)
+consecutive refusals without a bind; then a wrapper can mint a fresh offer.
+`pair.unpaired` with `reasonCode: "authorization_denied"` is terminal at once.
+`pair.conflict` (KRA-6929 relays) is always transient: no bind, no RPC authority.
+`pair.expired` and `pair.revoked` are terminal authorization results too.
 The advertised `expiresAt` gates only the initial bind. Once `pair.bound` consumes
 the offer, Tentacles retires that local expiry timer: it does not tear down a
 healthy socket, and a later reconnect may re-announce the memory-only credential
