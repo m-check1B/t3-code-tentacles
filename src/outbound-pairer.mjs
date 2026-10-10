@@ -241,8 +241,15 @@ export class LoopbackRuntimeAdapter {
     threadEventsImpl = threadEvents,
     threadEventsDirectory,
     selfUpdateSummaryImpl = readSelfUpdateSummary,
+    now = Date.now,
+    timingsLog,
+    cacheMaxAgeMs = 60_000,
   }) {
     if (!client) throw new Error("Loopback runtime requires a T3 client");
+    if (typeof now !== "function") throw new Error("Doctor cache clock must be a function");
+    if (!Number.isInteger(cacheMaxAgeMs) || cacheMaxAgeMs < 1_000 || cacheMaxAgeMs > 300_000) {
+      throw new Error("Doctor cache age must be between 1000ms and 300000ms");
+    }
     this.client = client;
     this.pairStateFile = pairStateFile;
     this.observeImpl = observeImpl;
@@ -253,6 +260,13 @@ export class LoopbackRuntimeAdapter {
     this.threadEventsImpl = threadEventsImpl;
     this.threadEventsDirectory = threadEventsDirectory;
     this.selfUpdateSummaryImpl = selfUpdateSummaryImpl;
+    this.now = now;
+    this.timingsLog = typeof timingsLog === "function"
+      ? timingsLog
+      : (entry) => { process.stderr.write(`${JSON.stringify(entry)}\n`); };
+    this.cacheMaxAgeMs = cacheMaxAgeMs;
+    this.doctorCache = null;
+    this.modelRefresh = null;
   }
 
   async seats() {
@@ -280,22 +294,31 @@ export class LoopbackRuntimeAdapter {
   }
 
   refreshModels() {
-    // Coalesce concurrent heartbeat/picker probes, never retain a completed
-    // pair-time catalog. Each subsequent call reads the current T3 snapshot.
+    // Explicit warm only. Heartbeats must not call this. Concurrent warms share
+    // one in-flight read, and a completed report stays cached for doctor-status.
     if (!this.modelRefresh) {
-      this.modelRefresh = Promise.resolve().then(() => this.doctorImpl(this.client, {
-        pairStateFile: this.pairStateFile,
-        models: "full",
-      })).finally(() => { this.modelRefresh = null; });
+      this.modelRefresh = this.collectDoctorReport().finally(() => { this.modelRefresh = null; });
     }
     return this.modelRefresh;
   }
 
-  async doctorStatus(params = {}) {
-    if (Object.keys(requireRecord(params, "doctor-status params")).length) {
-      throw new Error("doctor-status does not accept remote parameters");
-    }
-    const report = await this.refreshModels();
+  warmDoctor() {
+    return this.refreshModels();
+  }
+
+  async collectDoctorReport() {
+    const started = this.now();
+    const steps = {};
+    const mark = async (name, work) => {
+      const at = this.now();
+      try { return await work(); }
+      finally { steps[name] = Math.max(0, this.now() - at); }
+    };
+    const report = await mark("doctor", () => this.doctorImpl(this.client, {
+      pairStateFile: this.pairStateFile,
+      models: "full",
+    }));
+    await mark("turnResultCapability", async () => {
     let capabilities = { talkTurnResult: null };
     try {
       const upstream = await this.client.request("/api/orchestration/turn-result");
@@ -311,11 +334,48 @@ export class LoopbackRuntimeAdapter {
         }
       }
     } catch { /* Older or unavailable T3 has no exact-result capability. */ }
-    // KRA-8371 (U7): versions, codes and the computer id only; absent when the
-    // standalone updater was never installed, so desktop-bundled replies are unchanged.
+    this.doctorCapabilities = capabilities;
+    });
+    const timings = {
+      ...(isRecord(report?.timings) ? report.timings : {}),
+      ...steps,
+      totalMs: Math.max(0, this.now() - started),
+    };
+    const cached = {
+      ...(isRecord(report) ? report : {}),
+      capabilities: this.doctorCapabilities,
+      timings,
+      cache: { state: "warm", warmedAtMs: started },
+    };
     let selfUpdate = null;
     try { selfUpdate = this.selfUpdateSummaryImpl(); } catch { selfUpdate = null; }
-    return { ...report, capabilities, ...(selfUpdate ? { selfUpdate } : {}) };
+    if (selfUpdate) cached.selfUpdate = selfUpdate;
+    this.doctorCache = cached;
+    this.timingsLog({ event: "doctor.timings", timings });
+    return cached;
+  }
+
+  async doctorStatus(params = {}) {
+    if (Object.keys(requireRecord(params, "doctor-status params")).length) {
+      throw new Error("doctor-status does not accept remote parameters");
+    }
+    const cached = this.doctorCache;
+    if (cached) {
+      const ageMs = Math.max(0, this.now() - cached.cache.warmedAtMs);
+      if (ageMs >= this.cacheMaxAgeMs) void this.refreshModels().catch(() => {});
+      return {
+        ...cached,
+        cache: { ...cached.cache, state: "warm", ageMs, stale: ageMs >= this.cacheMaxAgeMs },
+      };
+    }
+    void this.refreshModels().catch(() => {});
+    return {
+      product: "Tentacles",
+      labs: [],
+      capabilities: { talkTurnResult: null },
+      timings: {},
+      cache: { state: "cold", stale: true },
+    };
   }
 
   async turnResult(params) {
@@ -856,6 +916,9 @@ export class OutboundPairer {
               return;
             }
             this.emit({ event: "pair.paired", status: "paired", reconnected });
+            if (typeof this.shim.runtime.warmDoctor === "function") {
+              void Promise.resolve().then(() => this.shim.runtime.warmDoctor()).catch(() => {});
+            }
             return;
           }
           if (message.type === "pair.expired") {
@@ -880,11 +943,6 @@ export class OutboundPairer {
           refreshPresence();
           if (message.type === "ping") {
             send({ version: PAIR_PROTOCOL_VERSION, type: "pong" });
-            // Keep heartbeat transport compatible. Slow/unavailable local labs
-            // cannot delay pong or expose diagnostics to the relay.
-            if (typeof this.shim.runtime.refreshModels === "function") {
-              void Promise.resolve().then(() => this.shim.runtime.refreshModels()).catch(() => {});
-            }
             return;
           }
           if (message.type !== "rpc.request") throw new Error("Unsupported pair relay message");

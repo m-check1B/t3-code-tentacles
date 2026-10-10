@@ -248,7 +248,10 @@ test("loopback adapter keeps the relay surface honest about full-access", async 
   assert.equal(projected.includes("stale private error"), false);
   assert.deepEqual(await adapter.originate({ workspace: "/tmp/work", title: "T", message: "M", freshProviderContext: true, fixedTitle: true }), { threadId: "t1" });
   assert.deepEqual(await adapter.continue({ threadId: "t1", message: "again", freshProviderContext: true, runtimeMode: "full-access" }), { threadId: "t1" });
-  assert.deepEqual(await adapter.doctorStatus(), { pairing: "/tmp/synthetic-pair-presence.json", capabilities: { talkTurnResult: null } });
+  await adapter.refreshModels();
+  const doctor = await adapter.doctorStatus();
+  assert.equal(doctor.pairing, "/tmp/synthetic-pair-presence.json");
+  assert.deepEqual(doctor.capabilities, { talkTurnResult: null });
   assert.deepEqual(calls.map((entry) => entry[2].runtimeMode), ["full-access", "full-access"]);
   assert.equal(calls.find(([method]) => method === "originate")[2].freshProviderContext, true);
   assert.equal(calls.find(([method]) => method === "originate")[2].fixedTitle, true);
@@ -516,7 +519,8 @@ test("fake relay socket drop reconnects, re-announces, and refreshes presence on
     "heartbeat-refreshed presence",
   );
   assert.equal(first.sent.some((message) => message.type === "pong"), true);
-  await waitFor(() => modelRefreshes === 1, "heartbeat refreshes live models");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(modelRefreshes, 0);
   assert.deepEqual(first.sent.find((message) => message.type === "pong"), { version: 1, type: "pong" });
 
   first.emit("close");
@@ -885,12 +889,15 @@ test("turn-result validates exact correlation, terminal text, bounds and negotia
     assert.deepEqual(options.body, params);
     return result;
   } }, doctorImpl: async () => ({ ready: true }) });
+  await adapter.refreshModels();
   assert.deepEqual((await adapter.doctorStatus()).capabilities, capabilities);
   for (const providers of [[], ["codex", "codex"], ["../bad"], Array(33).fill("codex"), "codex"]) {
     capabilities = { ...capabilities, talkFreshProviderContextProviders: providers };
+    await adapter.refreshModels();
     assert.deepEqual((await adapter.doctorStatus()).capabilities, { talkTurnResult: "v1" });
   }
   capabilities = { talkTurnResult: "v1" };
+  await adapter.refreshModels();
   assert.deepEqual((await adapter.doctorStatus()).capabilities, capabilities);
   assert.equal((await adapter.turnResult(params)).nativeContextGeneration, params.turnCommandId);
   for (const mutation of [{ freshProviderContext: false }, { freshProviderContext: undefined }, { nativeContextGeneration: "foreign" }, { nativeContextGeneration: undefined }]) {

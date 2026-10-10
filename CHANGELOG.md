@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added — KRA-6945
+
+- `tentacles connect --signer-fd` speaks the device relay. The connector signs
+  the hello payload; this process refuses key files and never sees the private key.
+  Auth advertises the `labs`, `turns` and `mac` channels. `mac` is empty here
+  because Mac actions stay in the connector. `interrupt` is not advertised on
+  this 0.4.1 line.
+- `doctor-status` answers from a cached report and logs sub-step timings.
+  A relay ping no longer starts `refreshModels()`.
+
 ### Added
 
 - A failed `turn-result` carries `failureDetail`, the redacted first line of

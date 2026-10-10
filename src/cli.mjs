@@ -53,6 +53,7 @@ import {
 } from "./model-selection.mjs";
 import { applyIntents, observe, report, INTENT_ACTIONS } from "./orchestrate.mjs";
 import { LoopbackRuntimeAdapter, OutboundPairer } from "./outbound-pairer.mjs";
+import { DeviceConnector, openSignerFd, requestSignature } from "./device-connect.mjs";
 import { DEFAULT_PAIR_STATE_FILE } from "./pair-state.mjs";
 import {
   installService,
@@ -70,8 +71,10 @@ const PROVIDER_INSTANCE_COMMANDS = new Set([
   "install-deepseek-provider", "remove-deepseek-provider", "install-kimi-provider", "remove-kimi-provider",
   "install-codex-app-provider", "remove-codex-app-provider",
 ]);
+const CONNECT_OPTION_KEYS = new Set(["signer-fd", "device-id", "relay", "app"]);
+const FORBIDDEN_CONNECT_KEYS = new Set(["key", "private-key", "key-file", "pem", "pkcs8"]);
 export const KNOWN_COMMANDS = new Set([
-  "reauth", "doctor", "pair", "install-provider", "remove-provider", "install-pi-provider", "remove-pi-provider",
+  "reauth", "doctor", "pair", "connect", "install-provider", "remove-provider", "install-pi-provider", "remove-pi-provider",
   "install-deepseek-provider", "remove-deepseek-provider", "install-kimi-provider", "remove-kimi-provider",
   "install-codex-app-provider", "remove-codex-app-provider",
   "restore-native-grok", "use-native-grok-cached-auth", "observe", "report", "act", "orchestrate", "originate", "watch",
@@ -109,6 +112,12 @@ export function parseArgs(argv) {
     const key = argument.slice(2);
     if (command === "originate" && !ORIGINATE_OPTION_KEYS.has(key)) {
       throw new Error(`Unknown originate option --${key}; run tentacles help for supported options`);
+    }
+    if (command === "connect" && FORBIDDEN_CONNECT_KEYS.has(key)) {
+      throw new Error("connect refuses key material; the connector signs through --signer-fd");
+    }
+    if (command === "connect" && !CONNECT_OPTION_KEYS.has(key)) {
+      throw new Error(`Unknown connect option --${key}; run tentacles help for supported options`);
     }
     if (key === "help" || key === "once" || key === "allow-all-projects" || key === "no-wait" || key === "json") {
       options[key] = true;
@@ -201,6 +210,7 @@ Usage:
   tentacles reauth --t3-bin /absolute/t3 --t3-home /absolute/.t3 [--token-file /absolute/t3.token]
   tentacles doctor [--json] [--models summary|full]
   tentacles pair --pair-file OWNER_ONLY_JSON --machine-id SPHERE_MACHINE_ID [--pair-state-file PATH]
+  tentacles connect --signer-fd FD --device-id DEVICE_UUID --relay wss://HOST/api/v1/jack/devices/connect [--app TOKEN]
   tentacles install-provider [--instance hermes] [--profile default] [--model MODEL]
   tentacles remove-provider [--instance hermes]
   tentacles install-codex-app-provider [--instance codex-app] [--codex-app-bin PATH]
@@ -246,6 +256,10 @@ Remote pairing is opt-in. The pair command opens one outbound WSS connection;
 T3 remains on loopback. The one-shot pair offer is read from a 0600 file and
 removed only after the relay acknowledges the bind. Never pass a token on the
 command line.
+
+Device connect is the pinned successor. tentacles connect reads a hello from
+the device relay and asks the connector, through --signer-fd, to sign it.
+The private key never enters this process. A key file or key flag is refused.
 
 Runtime mode safety invariant:
   Every originate and every non-empty continue runs full-access, for every lab
@@ -407,6 +421,31 @@ async function main() {
       await pairer.run({
         pairFile: path.resolve(required(options, "pair-file")),
         machineId: required(options, "machine-id"),
+        signal: controller.signal,
+      });
+    } finally {
+      process.removeListener("SIGTERM", stop);
+      process.removeListener("SIGINT", stop);
+    }
+    return;
+  }
+  if (command === "connect") {
+    const signerFd = openSignerFd(required(options, "signer-fd"));
+    const runtime = new LoopbackRuntimeAdapter({ client, pairStateFile: options["pair-state-file"] || DEFAULT_PAIR_STATE_FILE });
+    const connector = new DeviceConnector({
+      runtime,
+      signer: { sign: (payload) => requestSignature(signerFd, payload) },
+      onEvent: (event) => console.error(JSON.stringify(event)),
+    });
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    process.once("SIGTERM", stop);
+    process.once("SIGINT", stop);
+    try {
+      await connector.run({
+        relay: required(options, "relay"),
+        deviceId: required(options, "device-id"),
+        app: options.app,
         signal: controller.signal,
       });
     } finally {

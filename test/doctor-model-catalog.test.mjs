@@ -71,10 +71,11 @@ test("doctor models flag rejects invalid modes before reading the runtime", asyn
   await assert.rejects(doctor({}, { models: "all" }), /summary or full/);
 });
 
-test("doctor-status refreshes full models on every completed request and rejects remote controls", async () => {
+test("doctor-status serves one cached full catalog and rejects remote controls", async () => {
   let generation = 0;
   const adapter = new LoopbackRuntimeAdapter({
-    client: {},
+    client: { request: async () => ({ talkTurnResult: "v1" }) },
+    timingsLog: () => {},
     doctorImpl: async (_client, options) => {
       assert.equal(options.models, "full");
       generation += 1;
@@ -82,20 +83,25 @@ test("doctor-status refreshes full models on every completed request and rejects
     },
   });
   const shim = new RemoteRpcShim(adapter);
-  const first = await shim.handle({ version: 1, type: "rpc.request", id: "first", method: "doctor-status", params: {} });
-  const second = await shim.handle({ version: 1, type: "rpc.request", id: "second", method: "doctor-status", params: {} });
-  assert.deepEqual(first.result.labs[0].models, ["model-1"]);
-  assert.deepEqual(second.result.labs[0].models, ["model-2"]);
-  assert.equal(second.id, "second");
+  const cold = await shim.handle({ version: 1, type: "rpc.request", id: "first", method: "doctor-status", params: {} });
+  assert.equal(cold.result.cache.state, "cold");
+  assert.deepEqual(cold.result.labs, []);
+  await adapter.refreshModels();
+  const warm = await shim.handle({ version: 1, type: "rpc.request", id: "second", method: "doctor-status", params: {} });
+  const again = await shim.handle({ version: 1, type: "rpc.request", id: "third", method: "doctor-status", params: {} });
+  assert.deepEqual(warm.result.labs[0].models, ["model-1"]);
+  assert.deepEqual(again.result.labs[0].models, ["model-1"]);
+  assert.equal(warm.result.capabilities.talkTurnResult, "v1");
+  assert.equal(again.id, "third");
   const invalid = await shim.handle({ version: 1, type: "rpc.request", id: "invalid", method: "doctor-status", params: { models: "summary", tokenFile: "PRIVATE" } });
   assert.equal(invalid.type, "rpc.error");
-  assert.equal(generation, 2);
+  assert.equal(generation, 1);
 });
 
 test("heartbeat refresh coalesces concurrent doctor probes and retries after failure", async () => {
   let finish;
   let calls = 0;
-  const adapter = new LoopbackRuntimeAdapter({ client: {}, doctorImpl: () => {
+  const adapter = new LoopbackRuntimeAdapter({ client: {}, timingsLog: () => {}, doctorImpl: () => {
     calls += 1;
     return new Promise((resolve, reject) => { finish = { resolve, reject }; });
   } });
@@ -108,6 +114,8 @@ test("heartbeat refresh coalesces concurrent doctor probes and retries after fai
   const next = adapter.refreshModels();
   await Promise.resolve();
   finish.resolve({ labs: [] });
-  assert.deepEqual(await next, { labs: [] });
+  const report = await next;
+  assert.deepEqual(report.labs, []);
+  assert.equal(report.cache.state, "warm");
   assert.equal(calls, 2);
 });

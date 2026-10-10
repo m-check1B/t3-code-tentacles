@@ -152,8 +152,8 @@ new runtime permissions and keeps existing Sphere owner/pair authority.
 
 ## Full live model catalog
 
-The existing read-only `doctor-status` RPC with empty params reads full doctor
-output on each request. Its `labs[].models` contains every validated live model
+The existing read-only `doctor-status` RPC with empty params returns the cached
+full doctor report. Its `labs[].models` contains every validated live model
 ID; additive `labs[].modelCatalog` entries contain `{id, displayName, options}`.
 Each option is a closed projection of T3's `capabilities.optionDescriptors`:
 `{id,label,type,currentValue?,options?:[{id,label,isDefault?}]}`. Select values
@@ -161,12 +161,13 @@ and boolean values remain distinct. Descriptions, prompt-injection hints,
 authentication fields and arbitrary upstream additions are excluded. A live
 model's `isDefault` marker takes precedence over the legacy lab default.
 
-On every pairing `ping`, Tentacles also starts a background full doctor refresh.
-Concurrent probes share only an in-flight read; completed catalogs are never
-reused as pair-time snapshots. The ordinary `pong` remains unchanged and is
-sent immediately, including when a lab read fails or is slow. Jack can request
-`doctor-status` on picker open and its visible Refresh without new RPC methods,
-protocol messages, local runtime settings changes, or inbound listeners.
+A pairing `ping` only returns `pong`. It does not refresh the catalog. One warm
+read starts after a successful bind, and later `doctor-status` calls reuse that
+cached report, including its sub-step timings. Concurrent warms share one
+in-flight read. A cold cache returns immediately with `cache.state` `cold`
+instead of blocking the relay on local labs. Jack can request `doctor-status`
+on picker open and its visible Refresh without new RPC methods, protocol
+messages, local runtime settings changes, or inbound listeners.
 
 `effort` is the exact accepted command option (or null for no knob); it is not
 a new claim of provider-native effort attestation. Conflicting effort options

@@ -1199,20 +1199,36 @@ export async function doctor(client, {
   openrouterTokenFile,
   pairStateFile = DEFAULT_PAIR_STATE_FILE,
   models: modelsMode = "summary",
+  now,
+  timingsLog,
 } = {}) {
   if (!["summary", "full"].includes(modelsMode)) throw new Error("Doctor models must be summary or full");
+  const timings = {};
+  const clock = typeof now === "function" ? now : Date.now;
+  const mark = async (name, work) => {
+    const started = clock();
+    try { return await work(); }
+    finally { timings[name] = Math.max(0, clock() - started); }
+  };
+  const emitTimings = () => {
+    const entry = { event: "doctor.timings", timings };
+    if (typeof timingsLog === "function") timingsLog(entry);
+    else process.stderr.write(`${JSON.stringify(entry)}\n`);
+  };
   let shell, settings, config;
   try {
-    shell = await readOrchestrationSnapshot(client);
-    settings = await client.getSettings();
-    config = await client.rpc("server.getConfig", {});
+    shell = await mark("orchestrationSnapshot", () => readOrchestrationSnapshot(client));
+    settings = await mark("settings", () => client.getSettings());
+    config = await mark("serverConfig", () => client.rpc("server.getConfig", {}));
   } catch (error) {
     if (!(error instanceof T3HttpError) || error.status !== 401) throw error;
+    emitTimings();
     return {
       product: "Tentacles",
       t3: { reachable: true, auth: { status: "invalid", code: "t3_reauth_required", action: T3_REAUTH_ACTION } },
       pairing: readPairPresence(pairStateFile),
       labs: [],
+      timings,
     };
   }
   const providers = Array.isArray(config?.providers) ? config.providers : [];
@@ -1260,7 +1276,7 @@ export async function doctor(client, {
 
   let hermes;
   try {
-    hermes = await probeHermesHealth(hermesUrl, fetchImpl);
+    hermes = await mark("hermesHealth", () => probeHermesHealth(hermesUrl, fetchImpl));
   } catch (error) {
     void error;
     hermes = { reachable: false, code: "hermes_unreachable" };
@@ -1308,14 +1324,17 @@ export async function doctor(client, {
   };
   const projects = Array.isArray(shell?.projects) ? shell.projects.filter((entry) => entry?.deletedAt == null) : [];
   const threads = Array.isArray(shell?.threads) ? shell.threads.filter((entry) => entry?.deletedAt == null && entry?.archivedAt == null) : [];
+  const leakedSessions = await mark("leakedSessions", () => inspectLeakedSessions(client));
+  emitTimings();
   return {
     product: "Tentacles",
-    t3: { reachable: true, auth: { status: "valid" }, version: serverVersion, projects: projects.length, threads: threads.length, leakedSessions: await inspectLeakedSessions(client) },
+    t3: { reachable: true, auth: { status: "valid" }, version: serverVersion, projects: projects.length, threads: threads.length, leakedSessions },
     pairing: readPairPresence(pairStateFile),
     labs,
     adapterCredential,
     hermes,
     nativeGrok,
+    timings,
   };
 }
 
