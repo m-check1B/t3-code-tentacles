@@ -282,7 +282,7 @@ assistant content are never published.
 | Hermes | `hermes` | `deepseek:deepseek-v4-flash` when doctor advertises it | Not proved on the current receipt. Construction and runtime identity gates are landed; exact identity plus an assistant reply is required. |
 | Codex CLI | `codex` | `gpt-5.6-luna` when doctor advertises it | Originate + continue |
 | Codex app | `codex-app` | `gpt-5.6-luna` when doctor advertises it | Not proved on the current receipt. Originate + continue required. |
-| Claude Code CLI | `claudeAgent` | `claude-sonnet-5`; skipped unless a bounded assistant proof exists | Originate + continue |
+| Claude Code CLI | `claudeAgent` | `claude-sonnet-5`; ready when T3 reports it ready and signed in (`auth_required` → `claude auth login`). T3 without auth status: skipped | Originate + continue |
 | Grok Code CLI | `grok` | `grok-4.6` when doctor advertises it | Originate + continue |
 | Cursor CLI | `cursor` | always pass a model shown by doctor | Originate + continue |
 | DeepSeek CLI adapter | `deepseek` | `deepseek/deepseek-v4-flash` when doctor advertises it | Originate + continue |
