@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" width="1200" height="640">
+  <title>One orchestration loop: a chair asks doctor, originates a worker through Tentacles, T3 Code runs the lab, the chair reads report</title>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#1a1a1a"/>
+    </marker>
+  </defs>
+  <style>
+    .serif { font-family: Georgia, 'Iowan Old Style', 'Times New Roman', serif }
+    .sans { font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace }
+    .t { font-size: 30px; font-weight: 700; fill: #1a1a1a }
+    .h { font-size: 19px; font-weight: 700; fill: #1a1a1a }
+    .k { font-size: 11px; font-weight: 700; letter-spacing: .14em; fill: #555 }
+    .s { font-size: 13px; fill: #333 }
+    .m { font-size: 12.5px; fill: #1a1a1a }
+    .n { font-size: 12px; fill: #666 }
+  </style>
+
+  <rect x="0" y="0" width="1200" height="640" fill="#ffffff"/>
+  <text x="600" y="54" text-anchor="middle" class="serif t">One orchestration loop</text>
+  <rect x="510" y="68" width="180" height="3" fill="#1a1a1a"/>
+  <text x="600" y="98" text-anchor="middle" class="sans s">A chair picks a ready lab, starts a worker, steers it and reads the result. No T3 GUI clicks, no copy-paste between windows.</text>
+
+  <!-- 1 chair -->
+  <text x="40" y="140" class="sans k">1 · CHAIR</text>
+  <rect x="40" y="152" width="200" height="262" rx="8" fill="#f3f2ee" stroke="#1a1a1a" stroke-width="1.5"/>
+  <text x="60" y="186" class="serif h">Any orchestrator</text>
+  <text x="60" y="216" class="sans s">Grok Bot</text>
+  <text x="60" y="238" class="sans s">Agent Jack</text>
+  <text x="60" y="260" class="sans s">Claude Code</text>
+  <text x="60" y="282" class="sans s">Hermes</text>
+  <text x="60" y="304" class="sans s">a script, a cron job</text>
+  <text x="60" y="340" class="sans n">writes the brief and picks</text>
+  <text x="60" y="358" class="sans n">instance + model + budget</text>
+  <text x="60" y="376" class="sans n">(by hand, or with a router</text>
+  <text x="60" y="394" class="sans n">such as estate-guardian)</text>
+
+  <!-- 2 tentacles -->
+  <text x="290" y="140" class="sans k">2 · TENTACLES CHAIR CLI</text>
+  <rect x="290" y="152" width="330" height="262" rx="8" fill="#f3f2ee" stroke="#1a1a1a" stroke-width="1.5"/>
+  <text x="310" y="186" class="serif h">tentacles</text>
+  <text x="310" y="218" class="mono m">doctor --json</text>
+  <text x="462" y="218" class="sans n">which labs are ready here</text>
+  <text x="310" y="246" class="mono m">originate</text>
+  <text x="462" y="246" class="sans n">start a worker thread</text>
+  <text x="310" y="274" class="mono m">act thread.continue</text>
+  <text x="462" y="274" class="sans n">  steer it</text>
+  <text x="310" y="302" class="mono m">report --thread</text>
+  <text x="462" y="302" class="sans n">Done / generating / blocked</text>
+  <text x="310" y="330" class="mono m">act thread.session.stop</text>
+  <text x="310" y="364" class="sans n">idempotent command IDs, projection-verified;</text>
+  <text x="310" y="382" class="sans n">full-access runtime on every originate and continue;</text>
+  <text x="310" y="400" class="sans n">never prints tokens or provider secrets</text>
+
+  <!-- 3 t3 -->
+  <text x="670" y="140" class="sans k">3 · T3 CODE</text>
+  <rect x="670" y="152" width="200" height="262" rx="8" fill="#1a1a1a"/>
+  <text x="770" y="196" text-anchor="middle" class="serif h" fill="#ffffff" style="fill:#fff">T3 Code</text>
+  <text x="770" y="230" text-anchor="middle" class="sans s" style="fill:#e5e5e5">one app, many agent CLIs</text>
+  <text x="770" y="262" text-anchor="middle" class="sans s" style="fill:#e5e5e5">threads you can watch,</text>
+  <text x="770" y="282" text-anchor="middle" class="sans s" style="fill:#e5e5e5">stop and resume</text>
+  <text x="770" y="322" text-anchor="middle" class="sans n" style="fill:#bdbdbd">github.com/pingdotgg/t3code</text>
+  <text x="770" y="388" text-anchor="middle" class="sans n" style="fill:#bdbdbd">the worker commits and</text>
+  <text x="770" y="404" text-anchor="middle" class="sans n" style="fill:#bdbdbd">opens a pull request</text>
+
+  <!-- 4 labs -->
+  <text x="920" y="140" class="sans k">4 · LAB (WORKER)</text>
+  <rect x="920" y="152" width="240" height="142" rx="8" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.5"/>
+  <text x="938" y="176" class="sans k">T3 NATIVE</text>
+  <text x="938" y="202" class="sans s">Claude Code CLI</text>
+  <text x="938" y="224" class="sans s">Codex CLI</text>
+  <text x="938" y="246" class="sans s">Cursor CLI</text>
+  <text x="938" y="268" class="sans s">Grok Code CLI · OpenCode CLI</text>
+  <rect x="920" y="304" width="240" height="110" rx="8" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="938" y="328" class="sans k">TENTACLES ADDITIVE</text>
+  <text x="938" y="354" class="sans s">Kimi CLI · DeepSeek CLI</text>
+  <text x="938" y="376" class="sans s">Hermes · Pi CLI</text>
+  <text x="938" y="400" class="sans n">only where doctor says ready</text>
+
+  <!-- arrows -->
+  <path d="M240 283 H286" stroke="#1a1a1a" stroke-width="2" fill="none" marker-end="url(#a)"/>
+  <path d="M620 283 H666" stroke="#1a1a1a" stroke-width="2" fill="none" marker-end="url(#a)"/>
+  <path d="M870 283 H916" stroke="#1a1a1a" stroke-width="2" fill="none" marker-end="url(#a)"/>
+  <path d="M1040 414 V452 Q1040 462 1030 462 H150 Q140 462 140 452 V418" stroke="#1a1a1a" stroke-width="1.5" stroke-dasharray="6 4" fill="none" marker-end="url(#a)"/>
+  <text x="600" y="484" text-anchor="middle" class="sans s">result, PR link and evidence come back to the chair through tentacles report</text>
+
+  <!-- keep alive -->
+  <line x1="40" y1="516" x2="1160" y2="516" stroke="#1a1a1a" stroke-width="1"/>
+  <text x="40" y="546" class="sans k">HOW WE RUN IT ALL NIGHT</text>
+  <text x="40" y="572" class="sans s">Our estate runs many of these loops at once. estate-guardian (MIT) reads doctor readiness and plan usage, switches labs OFF and back ON,</text>
+  <text x="40" y="592" class="sans s">walks declared fallback chains when a lab is out of usage, and files every failure with its fix. Tentacles stays the only path into T3.</text>
+  <text x="40" y="620" class="sans n">github.com/m-check1B/t3-code-tentacles · github.com/m-check1B/estate-guardian · github.com/pingdotgg/t3code</text>
+</svg>

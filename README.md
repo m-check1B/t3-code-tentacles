@@ -1,7 +1,19 @@
 # Tentacles
 
-Tentacles is an early macOS integration for
-[T3 Code](https://github.com/pingdotgg/t3code).
+**Tentacles lets one AI agent hire and steer other AI agents.**
+[T3 Code](https://github.com/pingdotgg/t3code) is an app that runs many coding
+agents side by side (Claude Code, Codex, Cursor, Grok Code, OpenCode), but a
+person drives it by clicking. Tentacles is a small command line that lets an
+agent drive it instead. Your orchestrator, the "chair" (the Grok Bot, Agent
+Jack, Claude Code or a plain script), asks `tentacles doctor` which labs are
+ready, starts a worker with `tentacles originate`, steers it with
+`tentacles act` and reads the outcome with `tentacles report`. Why: so one
+chair can run a whole team of workers across vendors, day and night, without
+anyone copying prompts between windows.
+
+![One orchestration loop: chair → Tentacles → T3 Code → lab, result back through tentacles report](docs/orchestration-loop.svg)
+
+Technically, Tentacles is an early macOS integration for T3 Code.
 It gives chair CLIs a way to originate and continue T3 work without the GUI,
 and adds adapters that T3 does not ship.
 The public command is `tentacles`; `t3-agent-bridge` is an exact compatibility
@@ -69,6 +81,24 @@ tentacles originate \
   --runtime-mode full-access
 tentacles act --intent '{"action":"thread.continue","threadId":"<thread-id>","text":"Continue with the next concrete step.","runtimeMode":"full-access"}'
 ```
+
+## How we run it: many loops, all night
+
+Our own estate runs many of these loops at once, with Claude Code, Codex and
+Grok Bot as chairs. Two things sit around Tentacles:
+
+- **Picking the lab.** The open-source
+  [estate-guardian](https://github.com/m-check1B/estate-guardian) router reads
+  a brief, sorts it into a lane (everyday fix, hard judgement, clicking, sorting,
+  credentials, marketing) and picks a lab and budget that are ON right now. If a
+  lab is out of plan usage, it walks a declared fallback chain instead of
+  failing.
+- **Keeping it alive.** The same repository's no-AI guard reads
+  `tentacles doctor --json` readiness and plan usage every few minutes, switches
+  labs OFF and back ON at the reset, and files every failure with its fix.
+
+Tentacles stays the only path into T3: the router and the guard call
+`tentacles`, never the T3 GUI.
 
 ## Start here: what T3 ships and what Tentacles adds
 
