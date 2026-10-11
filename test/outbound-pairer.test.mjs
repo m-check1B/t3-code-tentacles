@@ -462,7 +462,7 @@ test("outbound pair binds one Sphere machine, consumes the offer once, and serve
     "protocol-failure rebind",
   );
   assert.equal(reconnectBind.pairToken, PAIR_TOKEN);
-  reconnectSocket.message({ version: 1, type: "pair.unpaired" });
+  reconnectSocket.message({ version: 1, type: "pair.unpaired", reasonCode: "authorization_denied" });
   const outcome = await runResult;
   assert.match(outcome.error.message, /authorization was denied/);
   assert.deepEqual(readPairPresence(stateFile), { status: "unpaired" });
@@ -899,4 +899,74 @@ test("turn-result validates exact correlation, terminal text, bounds and negotia
   const shim = new RemoteRpcShim(adapter);
   result = { ...result, threadId: "foreign" };
   assert.equal((await shim.handle({ version: 1, type: "rpc.request", id: "query", method: "turn-result", params })).type, "rpc.error");
+});
+
+
+// The pairer's bounded budget for ambiguous refusals (about 30 s at default backoff).
+const AMBIGUOUS_DENIAL_LIMIT = 6;
+
+// KRA-6929: Sphere answers a stale or competing registration of the same pair
+// with a bare pair.unpaired (older relays) or pair.conflict. Neither is an
+// authorization decision; the pairer reconnects without any RPC authority.
+for (const frame of [{ type: "pair.unpaired" }, { type: "pair.conflict" }]) {
+  test(`KRA-6929: ${frame.type} without a reason is retried, then the pair binds`, async (t) => {
+    FakeWebSocket.instances = [];
+    const directory = temporaryDirectory("pair-conflict");
+    const pairFile = writeOffer(directory);
+    const stateFile = path.join(directory, "presence.json");
+    const controller = new AbortController();
+    t.after(() => controller.abort());
+    const pairer = new OutboundPairer({ runtime: {}, WebSocketImpl: FakeWebSocket, pairStateFile: stateFile, reconnectBaseMs: 5, reconnectCapMs: 10 });
+    const run = pairer.run({ pairFile, machineId: "sphere-machine-1", signal: controller.signal }).then((value) => ({ value }), (error) => ({ error }));
+    const first = await waitFor(() => FakeWebSocket.instances[0], "first socket");
+    first.emit("open");
+    await waitFor(() => first.sent.find((message) => message.type === "pair.bind"), "first bind");
+    first.message({ version: 1, ...frame });
+    const second = await waitFor(() => FakeWebSocket.instances[1], "retry socket");
+    const presence = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    assert.equal(presence.status, "unpaired");
+    assert.equal(presence.staleReason, "relay_connection_closed");
+    assert.equal(fs.existsSync(pairFile), true, "the offer is not consumed by a refused bind");
+    second.emit("open");
+    const bind = await waitFor(() => second.sent.find((message) => message.type === "pair.bind"), "retry bind");
+    assert.equal(bind.pairToken, PAIR_TOKEN);
+    second.message({ version: 1, type: "pair.bound", requestId: bind.requestId });
+    await waitFor(() => readPairPresence(stateFile).status === "paired", "paired after retry");
+    controller.abort();
+    assert.deepEqual((await run).value, { status: "unpaired" });
+  });
+}
+
+test("KRA-6929: repeated bare pair.unpaired without a bind ends as a denial", async () => {
+  FakeWebSocket.instances = [];
+  const directory = temporaryDirectory("pair-denied-bounded");
+  const pairFile = writeOffer(directory);
+  const stateFile = path.join(directory, "presence.json");
+  const pairer = new OutboundPairer({ runtime: {}, WebSocketImpl: FakeWebSocket, pairStateFile: stateFile, reconnectBaseMs: 1, reconnectCapMs: 2 });
+  const run = pairer.run({ pairFile, machineId: "sphere-machine-1" }).then((value) => ({ value }), (error) => ({ error }));
+  for (let index = 0; index < AMBIGUOUS_DENIAL_LIMIT; index += 1) {
+    const socket = await waitFor(() => FakeWebSocket.instances[index], `socket ${index}`);
+    socket.emit("open");
+    await waitFor(() => socket.sent.find((message) => message.type === "pair.bind"), `bind ${index}`);
+    socket.message({ version: 1, type: "pair.unpaired" });
+  }
+  const outcome = await run;
+  assert.match(outcome.error.message, /authorization was denied/);
+  assert.equal(FakeWebSocket.instances.length, AMBIGUOUS_DENIAL_LIMIT);
+  assert.equal(JSON.parse(fs.readFileSync(stateFile, "utf8")).staleReason, "authorization_denied");
+});
+
+test("KRA-6929: an explicit denial still ends at once", async () => {
+  FakeWebSocket.instances = [];
+  const directory = temporaryDirectory("pair-denied-explicit");
+  const pairFile = writeOffer(directory);
+  const stateFile = path.join(directory, "presence.json");
+  const pairer = new OutboundPairer({ runtime: {}, WebSocketImpl: FakeWebSocket, pairStateFile: stateFile, reconnectBaseMs: 5, reconnectCapMs: 10 });
+  const run = pairer.run({ pairFile, machineId: "sphere-machine-1" }).then((value) => ({ value }), (error) => ({ error }));
+  const socket = await waitFor(() => FakeWebSocket.instances[0], "socket");
+  socket.emit("open");
+  await waitFor(() => socket.sent.find((message) => message.type === "pair.bind"), "bind");
+  socket.message({ version: 1, type: "pair.unpaired", reasonCode: "authorization_denied" });
+  assert.match((await run).error.message, /authorization was denied/);
+  assert.equal(FakeWebSocket.instances.length, 1);
 });

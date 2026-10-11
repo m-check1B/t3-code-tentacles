@@ -394,6 +394,11 @@ function waitForReconnect(delayMs, signal) {
   });
 }
 
+// KRA-6929: older Sphere relays answer a stale or competing registration of the
+// same pair with a bare pair.unpaired, the same frame as a denial. Retry it with
+// backoff (about 30 s at the defaults) before treating it as the denial it may be.
+export const AMBIGUOUS_DENIAL_LIMIT = 6;
+
 export class OutboundPairer {
   constructor({
     runtime,
@@ -473,6 +478,7 @@ export class OutboundPairer {
     let offerConsumed = false;
     let everBound = false;
     let reconnectAttempt = 0;
+    let ambiguousDenials = 0;
     const consumeOfferOnce = () => {
       if (offerConsumed) return;
       consumePairOffer(offer);
@@ -544,6 +550,16 @@ export class OutboundPairer {
         if (outcome.bound) {
           everBound = true;
           reconnectAttempt = 0;
+          ambiguousDenials = 0;
+        }
+        if (outcome.ambiguousDenial && !outcome.bound && ++ambiguousDenials >= AMBIGUOUS_DENIAL_LIMIT) {
+          writePairPresence("unpaired", {
+            file: this.pairStateFile,
+            now: this.now(),
+            staleReason: "authorization_denied",
+          });
+          this.emit({ event: "pair.unpaired", status: "unpaired", staleReason: "authorization_denied" });
+          throw new Error("Pair authorization was denied");
         }
         writePairPresence("unpaired", {
           file: this.pairStateFile,
@@ -713,8 +729,14 @@ export class OutboundPairer {
             authorizationFailure("unpaired", "authorization_revoked", "Pair authorization was revoked");
             return;
           }
-          if (message.type === "pair.unpaired") {
+          if (message.type === "pair.unpaired" && message.reasonCode === "authorization_denied") {
             authorizationFailure("unpaired", "authorization_denied", "Pair authorization was denied");
+            return;
+          }
+          if (message.type === "pair.unpaired" || message.type === "pair.conflict") {
+            // KRA-6929: a registration conflict, or an older relay's ambiguous
+            // refusal. No bind means no RPC authority; reconnect and re-authenticate.
+            finish({ kind: "transient", staleReason: "relay_connection_closed", ambiguousDenial: message.type === "pair.unpaired" });
             return;
           }
           if (!bound) throw new Error("Relay message arrived before a valid pair bind");
