@@ -1,7 +1,7 @@
 import net from "node:net";
 import { randomUUID } from "node:crypto";
 import { readBoundedWebSocketData } from "./t3-client.mjs";
-import { reconnectDelayMs } from "./outbound-pairer.mjs";
+import { holdWarm, reconnectDelayMs } from "./outbound-pairer.mjs";
 
 // KRA-6945 contract v1 (C1, C4, C5) with amendments A1 (connector line protocol)
 // and A2 (parentPort transport). The connector owns the key and builds the signed
@@ -27,10 +27,12 @@ const RUNTIME_METHODS = Object.freeze({
 });
 const RPC_ERROR_MESSAGES = Object.freeze({
   "computer.unavailable": "Computer unavailable",
+  "computer.warming": "Computer is warming up",
   method_unsupported: "Method unsupported",
   lab_error: "Lab error",
 });
 const PURPOSES = new Set(["enroll", "connect"]);
+const SIGN_RESULT_KEYS = new Set(["version", "type", "id", "algorithm", "keyFingerprint", "signature"]);
 const KEY_FIELDS = new Set([
   "privatekey", "private_key", "priv", "d", "pkcs8", "pkcs1", "pem", "seed", "rawkey", "keybytes",
 ]);
@@ -151,17 +153,27 @@ export function portHostChannel(port) {
   }
   const messageListeners = new Set();
   const closeListeners = new Set();
-  port.on("message", (event) => {
+  const onPortMessage = (event) => {
     const message = event?.data;
     try { encodeHostMessage(message); } catch { return; }
     for (const listener of messageListeners) listener(message);
-  });
-  port.on("close", () => { for (const listener of closeListeners) listener(); });
+  };
+  const onPortClose = () => { for (const listener of closeListeners) listener(); };
+  port.on("message", onPortMessage);
+  port.on("close", onPortClose);
+  let closed = false;
   return {
-    send(message) { encodeHostMessage(message); port.postMessage(message); },
+    send(message) { if (!closed) { encodeHostMessage(message); port.postMessage(message); } },
     onMessage(listener) { messageListeners.add(listener); },
     onClose(listener) { closeListeners.add(listener); },
-    close() {},
+    // A listening parentPort keeps a utilityProcess alive, so close drops our listeners.
+    close() {
+      if (closed) return;
+      closed = true;
+      const off = (typeof port.off === "function" ? port.off : port.removeListener)?.bind(port);
+      off?.("message", onPortMessage);
+      off?.("close", onPortClose);
+    },
   };
 }
 
@@ -262,6 +274,7 @@ export class HostLink {
       try {
         if (message.type === "sign.error") throw new Error("Connector refused to sign");
         assertNoKeyMaterial(message);
+        if (!Object.keys(message).every((key) => SIGN_RESULT_KEYS.has(key))) throw new Error("Signer reply has unexpected fields");
         if (message.algorithm !== "ECDSA-P256-SHA256") throw new Error("Signer algorithm is not ECDSA-P256-SHA256");
         if (message.keyFingerprint !== this.hello.keyFingerprint) throw new Error("Signer key fingerprint does not match host.hello");
         if (typeof message.signature !== "string" || !DER_SIGNATURE.test(message.signature)
@@ -420,7 +433,9 @@ export class DeviceConnector {
         const outcome = await this.connectOnce({ endpoint, hello, signal: controller.signal });
         if (controller.signal.aborted) break;
         if (outcome.bound) attempt = 0;
-        const policy = deviceClosePolicy(outcome.code, { attempt, random: this.random });
+        // A superseded connection waits like 4100 whatever close code follows, unless that code is terminal or suspends.
+        const code = outcome.superseded && ![4401, 4402, 4403, 4404].includes(outcome.code) ? 4100 : outcome.code;
+        const policy = deviceClosePolicy(code, { attempt, random: this.random });
         if (policy.kind === "closed") {
           this.emit({ event: "device.closed", code: policy.code });
           try { this.host.send({ version: DEVICE_PROTOCOL_VERSION, type: "device.closed", code: policy.code }); } catch { /* connector gone */ }
@@ -451,6 +466,8 @@ export class DeviceConnector {
     try { socket = new this.WebSocketImpl(endpoint.toString()); }
     catch { return Promise.resolve({ bound: false, reason: "relay_connection_error" }); }
     let settled = false;
+    let superseded = false;
+    let releaseWarm = () => {};
     let phase = "hello";
     let handshakeTimer;
     let idleTimer;
@@ -464,9 +481,10 @@ export class DeviceConnector {
         settled = true;
         clearTimeout(handshakeTimer);
         clearTimeout(idleTimer);
+        releaseWarm();
         signal.removeEventListener("abort", abort);
         try { socket.close(); } catch { /* already closed */ }
-        resolve({ code, reason, bound: phase === "bound" });
+        resolve({ code, reason, superseded, bound: phase === "bound" });
       };
       const abort = () => finish({ reason: "stopped" });
       const send = (message) => { if (!settled) socket.send(encodeBounded(message, this.maxFrameBytes)); };
@@ -503,12 +521,17 @@ export class DeviceConnector {
           answer(rpcId, () => { throw rpcFailure("lab_error"); });
           return;
         }
+        // Jack has already given up on a request past its deadline; never start it.
+        const deadlineMs = Date.parse(message.deadline);
+        if (!Number.isNaN(deadlineMs) && deadlineMs <= this.now()) {
+          answer(rpcId, () => { throw rpcFailure("computer.unavailable"); });
+          return;
+        }
         if (channel === "mac") {
           if (!hello.mac.includes(method)) {
             answer(rpcId, () => { throw rpcFailure("method_unsupported"); });
             return;
           }
-          const deadlineMs = Date.parse(message.deadline);
           const timeoutMs = Number.isNaN(deadlineMs) ? 30_000 : Math.min(30_000, Math.max(0, deadlineMs - this.now()));
           answer(rpcId, () => this.host.rpc({ id: rpcId, method, params, deadline: message.deadline, timeoutMs }));
           return;
@@ -577,9 +600,7 @@ export class DeviceConnector {
             connectionId: message.connectionId,
             licence: isRecord(message.licence) && typeof message.licence.state === "string" ? message.licence.state : null,
           });
-          if (typeof this.runtime.warmDoctor === "function") {
-            void Promise.resolve().then(() => this.runtime.warmDoctor()).catch(() => {});
-          }
+          releaseWarm = holdWarm(this.runtime);
           return;
         }
         if (message.type === "ping") {
@@ -587,6 +608,7 @@ export class DeviceConnector {
           return;
         }
         if (message.type === "device.superseded") {
+          superseded = true;
           this.emit({ event: "device.superseded" });
           return;
         }

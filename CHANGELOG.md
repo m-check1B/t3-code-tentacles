@@ -6,6 +6,14 @@ All notable changes to this project are documented here.
 
 ### Added — KRA-6945
 
+Release dependency: the signer fields are inert until Agent Jack wires the
+connector and verifies the device proof through its authority. At Jack master
+`d75df6428aa9e31258ea7764ee3ce54d1020b37d`, enrollment uses the seven-line C1
+message, but the desktop connector's `sign.request` consumer is not merged.
+The old five-field pipe-separated proof and origin-only `wss://host[:port]`
+verifier are also absent; this PR retains the later seven-line C1 contract.
+No live Mac reconnect or latency proof is claimed.
+
 - `tentacles connect (--signer-fd FD | --host-port) --relay wss://…` speaks the
   device relay from KRA-6945 contract v1 (C4/C5) with amendments A1 and A2.
   Tentacles owns the one device WebSocket. The connector owns the key: Tentacles
@@ -23,7 +31,16 @@ All notable changes to this project are documented here.
   waits 60 s ± 20 %; everything else backs off 1 → 60 s with jitter.
 - `doctor-status` answers from a cached report and logs sub-step timings.
   A relay ping no longer starts `refreshModels()`. A cold cache waits up to
-  2.5 s for the first warm, then answers `computer.unavailable`.
+  2.5 s for the first warm.
+- A9 (KRA-6931): while a relay is paired or bound, Tentacles refreshes the
+  doctor itself every 30 s ± 20 %, one refresh at a time, so `doctor-status`
+  stays a cache read (< 500 ms) after any idle. A report older than 60 s is never
+  served. A cold or stale miss is `computer.warming` on the device path; the
+  legacy pair path keeps `computer.unavailable`, which production Jack reads.
+- `connect --host-port` exits when the connector stops and drops its
+  `parentPort` listeners. An RPC whose deadline has passed is refused without
+  running. `device.superseded` keeps the 60 s wait whatever close code follows.
+  A `sign.result` with fields beyond A1 is refused.
 
 ### Added
 

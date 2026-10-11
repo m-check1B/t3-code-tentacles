@@ -1,8 +1,0 @@
-{
- "testOnlyPrivateScalarHex": "4a1c4a1c4a1c4a1c4a1c4a1c4a1c4a1c4a1c4a1c4a1c4a1c4a1c4a1c4a1c4a1c",
- "publicKeySpkiB64url": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEo9dC9mllW-1pMKBFG_XPRiWXl2DBKNlSLnLdHwRPMInyvrgayJFvLZPnihH-VGGxRsu6P33lceGSLSWiTCuhjw",
- "x963PointB64url": "BKPXQvZpZVvtaTCgRRv1z0Yll5dgwSjZUi5y3R8ETzCJ8r64GsiRby2T54oR_lRhsUbLuj995XHhki0lokwroY8",
- "keyFingerprint": "sha256:094e0c90c94bf889ef5e4fa19de092396bdcbb47585ac3988483a922a2c9080c",
- "message": "agentjack-device-v1\\nconnect\\nwss://api.kraliki.com/api/v1/jack/devices/connect\\n00000000-0000-4000-8000-000000000001\\nsha256:094e0c90c94bf889ef5e4fa19de092396bdcbb47585ac3988483a922a2c9080c\\nAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\\n2026-10-11T00:00:00Z",
- "signatureDerB64url": "MEUCIQCe49RaLYOxrTPej_WSHuVqAY16adBWs2vaH0AU0B5xsQIgWfdIBE2UVxI5BQnCzAznMZGIwIMx7LC4iFCkbcOD200"
-}

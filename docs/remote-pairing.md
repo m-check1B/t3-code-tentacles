@@ -161,15 +161,17 @@ and boolean values remain distinct. Descriptions, prompt-injection hints,
 authentication fields and arbitrary upstream additions are excluded. A live
 model's `isDefault` marker takes precedence over the legacy lab default.
 
-A pairing `ping` only returns `pong`. It does not refresh the catalog. One warm
-read starts after a successful bind, and later `doctor-status` calls reuse that
-cached report, including its sub-step timings. Concurrent warms share one
-in-flight read. A cold cache waits up to 2.5 s for the first warm. If the warm
-misses that window or fails, `doctor-status` answers the transient
-`computer.unavailable` error, never an empty report that Jack would cache as
+A pairing `ping` only returns `pong`. It does not refresh the catalog. While a
+relay is paired or bound, Tentacles warms the doctor at bind and then every
+30 s ± 20 %, one refresh at a time (A9, KRA-6931), so `doctor-status` reuses a
+cached report, including its sub-step timings, after any idle. Concurrent warms
+share one in-flight read. A cold cache waits up to 2.5 s for the first warm. If the warm
+misses that window or fails, `doctor-status` answers a transient error
+(`computer.warming` on the device path, `computer.unavailable` on the legacy
+pair path, which production Jack reads), never an empty report that Jack would cache as
 "not capable". The cached report is served only while it is younger than
 `cacheMaxAgeMs` (60 s). Past that age `doctor-status` waits for a fresh warm in
-the same window and otherwise answers `computer.unavailable`: an old report
+the same window and otherwise answers the same transient error: an old report
 never stands in for current readiness. A warm that fails drops the cache.
 Jack can request `doctor-status`
 on picker open and its visible Refresh without new RPC methods, protocol

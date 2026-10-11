@@ -245,6 +245,10 @@ export class LoopbackRuntimeAdapter {
     timingsLog,
     cacheMaxAgeMs = 60_000,
     coldWaitMs = 2_500,
+    warmEveryMs = 30_000,
+    random = Math.random,
+    setTimer = setTimeout,
+    clearTimer = clearTimeout,
   }) {
     if (!client) throw new Error("Loopback runtime requires a T3 client");
     if (typeof now !== "function") throw new Error("Doctor cache clock must be a function");
@@ -253,6 +257,9 @@ export class LoopbackRuntimeAdapter {
     }
     if (!Number.isInteger(coldWaitMs) || coldWaitMs < 1 || coldWaitMs > 5_000) {
       throw new Error("Doctor cold wait must be between 1ms and 5000ms");
+    }
+    if (!Number.isInteger(warmEveryMs) || warmEveryMs < 1_000 || warmEveryMs * 1.2 >= cacheMaxAgeMs) {
+      throw new Error("Doctor warm interval must be at least 1000ms and keep the cache inside its age bound");
     }
     this.client = client;
     this.pairStateFile = pairStateFile;
@@ -270,8 +277,14 @@ export class LoopbackRuntimeAdapter {
       : (entry) => { process.stderr.write(`${JSON.stringify(entry)}\n`); };
     this.cacheMaxAgeMs = cacheMaxAgeMs;
     this.coldWaitMs = coldWaitMs;
+    this.warmEveryMs = warmEveryMs;
+    this.random = random;
+    this.setTimer = setTimer;
+    this.clearTimer = clearTimer;
     this.doctorCache = null;
     this.modelRefresh = null;
+    this.warmHolders = 0;
+    this.warmTimer = null;
   }
 
   async seats() {
@@ -318,6 +331,38 @@ export class LoopbackRuntimeAdapter {
     return this.refreshModels();
   }
 
+  // A9 (KRA-6931): while a relay is paired or bound, keep the doctor warm here so
+  // doctor-status stays a cache read after any idle. One refresh at a time, the
+  // next one 30 s +/- 20 % after the last finished. Returns an idempotent release.
+  keepWarm() {
+    this.warmHolders += 1;
+    if (this.warmHolders === 1) this.scheduleWarm(0);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.warmHolders -= 1;
+      if (this.warmHolders === 0 && this.warmTimer) {
+        this.clearTimer(this.warmTimer);
+        this.warmTimer = null;
+      }
+    };
+  }
+
+  scheduleWarm(delayMs) {
+    const timer = this.setTimer(() => {
+      if (this.warmTimer !== timer) return;
+      this.warmTimer = null;
+      void this.refreshModels().catch(() => {}).finally(() => {
+        if (this.warmHolders > 0 && !this.warmTimer) {
+          this.scheduleWarm(Math.round(this.warmEveryMs * (0.8 + 0.4 * this.random())));
+        }
+      });
+    }, delayMs);
+    timer?.unref?.();
+    this.warmTimer = timer;
+  }
+
   async collectDoctorReport() {
     const started = this.now();
     const steps = {};
@@ -330,23 +375,23 @@ export class LoopbackRuntimeAdapter {
       pairStateFile: this.pairStateFile,
       models: "full",
     }));
-    await mark("turnResultCapability", async () => {
-    let capabilities = { talkTurnResult: null };
-    try {
-      const upstream = await this.client.request("/api/orchestration/turn-result");
-      if (upstream?.talkTurnResult === "v1") {
-        capabilities = { talkTurnResult: "v1" };
-        const providers = upstream.talkFreshProviderContextProviders;
-        if (upstream.talkFreshProviderContext === "v1" && Array.isArray(providers)
-          && providers.length >= 1 && providers.length <= 32
-          && providers.every((id) => typeof id === "string" && SAFE_ID.test(id))
-          && new Set(providers).size === providers.length) {
-          capabilities.talkFreshProviderContext = "v1";
-          capabilities.talkFreshProviderContextProviders = [...providers];
+    const capabilities = await mark("turnResultCapability", async () => {
+      let capabilities = { talkTurnResult: null };
+      try {
+        const upstream = await this.client.request("/api/orchestration/turn-result");
+        if (upstream?.talkTurnResult === "v1") {
+          capabilities = { talkTurnResult: "v1" };
+          const providers = upstream.talkFreshProviderContextProviders;
+          if (upstream.talkFreshProviderContext === "v1" && Array.isArray(providers)
+            && providers.length >= 1 && providers.length <= 32
+            && providers.every((id) => typeof id === "string" && SAFE_ID.test(id))
+            && new Set(providers).size === providers.length) {
+            capabilities.talkFreshProviderContext = "v1";
+            capabilities.talkFreshProviderContextProviders = [...providers];
+          }
         }
-      }
-    } catch { /* Older or unavailable T3 has no exact-result capability. */ }
-    this.doctorCapabilities = capabilities;
+      } catch { /* Older or unavailable T3 has no exact-result capability. */ }
+      return capabilities;
     });
     const timings = {
       ...(isRecord(report?.timings) ? report.timings : {}),
@@ -355,13 +400,10 @@ export class LoopbackRuntimeAdapter {
     };
     const cached = {
       ...(isRecord(report) ? report : {}),
-      capabilities: this.doctorCapabilities,
+      capabilities,
       timings,
       cache: { state: "warm", warmedAtMs: started },
     };
-    let selfUpdate = null;
-    try { selfUpdate = this.selfUpdateSummaryImpl(); } catch { selfUpdate = null; }
-    if (selfUpdate) cached.selfUpdate = selfUpdate;
     this.doctorCache = cached;
     this.timingsLog({ event: "doctor.timings", timings });
     return cached;
@@ -371,13 +413,19 @@ export class LoopbackRuntimeAdapter {
     if (Object.keys(requireRecord(params, "doctor-status params")).length) {
       throw new Error("doctor-status does not accept remote parameters");
     }
+    const respond = (report, ageMs) => {
+      // KRA-8371: read local updater state on every reply, even with a warm doctor.
+      let selfUpdate = null;
+      try { selfUpdate = this.selfUpdateSummaryImpl(); } catch { selfUpdate = null; }
+      return { ...report, ...(selfUpdate ? { selfUpdate } : {}), cache: { ...report.cache, ageMs, stale: false } };
+    };
     const cached = this.doctorCache;
     if (cached) {
       const ageMs = Math.max(0, this.now() - cached.cache.warmedAtMs);
       // B3 10623: Jack treats doctor-status as current readiness, so a report
       // is served only inside its age bound. Past it the call fails closed below.
       if (ageMs < this.cacheMaxAgeMs) {
-        return { ...cached, cache: { ...cached.cache, state: "warm", ageMs, stale: false } };
+        return respond(cached, ageMs);
       }
     }
     // Cold or past the age bound: wait briefly for a fresh warm. An old or empty
@@ -387,10 +435,13 @@ export class LoopbackRuntimeAdapter {
       this.refreshModels().catch(() => null),
       new Promise((resolve) => { timer = setTimeout(() => resolve(null), this.coldWaitMs); }),
     ]).finally(() => clearTimeout(timer));
-    if (!warmed) {
-      throw Object.assign(new Error(cached ? "Doctor report is stale" : "Doctor is still warming"), { code: "computer.unavailable" });
+    const ageMs = warmed ? Math.max(0, this.now() - warmed.cache.warmedAtMs) : null;
+    if (!warmed || ageMs >= this.cacheMaxAgeMs) {
+      // A9: transient. The legacy pair shim still answers computer.unavailable,
+      // because production Jack reads any other pair rpc.error as invalid.
+      throw Object.assign(new Error(cached ? "Doctor report is stale" : "Doctor is still warming"), { code: "computer.warming" });
     }
-    return { ...warmed, cache: { ...warmed.cache, ageMs: 0, stale: false } };
+    return respond(warmed, ageMs);
   }
 
   async turnResult(params) {
@@ -542,6 +593,15 @@ function unavailable(id) {
     id,
     error: { code: "computer.unavailable", message: "Computer unavailable", data: null },
   };
+}
+
+// A9: a bound relay keeps the runtime's doctor warm until the connection ends.
+export function holdWarm(runtime) {
+  if (typeof runtime?.keepWarm === "function") return runtime.keepWarm();
+  if (typeof runtime?.warmDoctor === "function") {
+    void Promise.resolve().then(() => runtime.warmDoctor()).catch(() => {});
+  }
+  return () => {};
 }
 
 export class RemoteRpcShim {
@@ -823,9 +883,11 @@ export class OutboundPairer {
     let heartbeatTimer;
     let offerExpiryTimer;
     let messageQueue = Promise.resolve();
+    let releaseWarm = () => {};
 
     return await new Promise((resolve) => {
       const cleanup = () => {
+        releaseWarm();
         clearTimeout(handshakeTimer);
         clearTimeout(heartbeatTimer);
         clearTimeout(offerExpiryTimer);
@@ -931,9 +993,8 @@ export class OutboundPairer {
               return;
             }
             this.emit({ event: "pair.paired", status: "paired", reconnected });
-            if (typeof this.shim.runtime.warmDoctor === "function") {
-              void Promise.resolve().then(() => this.shim.runtime.warmDoctor()).catch(() => {});
-            }
+            releaseWarm();
+            releaseWarm = holdWarm(this.shim.runtime);
             return;
           }
           if (message.type === "pair.expired") {

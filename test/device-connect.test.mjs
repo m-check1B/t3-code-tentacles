@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { createPublicKey, verify } from "node:crypto";
+import { createHash, generateKeyPairSync, sign, verify } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
@@ -16,14 +17,15 @@ import {
 
 const CLI = path.resolve("src/cli.mjs");
 const DEVICE_CONNECT = pathToFileURL(path.resolve("src/device-connect.mjs")).href;
-// Byte-for-byte copy of ~/Developer-artifacts/KRA-6945-CONTRACT-v1-vector.json (process rule, KRA-6945).
-// Its "message" field is the generator's display form: "\n" written as the two characters backslash, n.
-const VECTOR = JSON.parse(fs.readFileSync(path.resolve("test/fixtures/kra6945-contract-v1-vector.json"), "utf8"));
 const RELAY = "wss://api.kraliki.com/api/v1/jack/devices/connect";
 const DEVICE_ID = "00000000-0000-4000-8000-000000000001";
 const NONCE = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
 const ISSUED_AT = "2026-10-11T00:00:00Z";
-const SIGNATURE = VECTOR.signatureDerB64url;
+// The connector alone owns an ephemeral key; no persisted private-key fixture.
+const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+const keyFingerprint = `sha256:${createHash("sha256").update(publicKey.export({ format: "der", type: "spki" })).digest("hex")}`;
+const expectedMessage = ["agentjack-device-v1", "connect", RELAY, DEVICE_ID, keyFingerprint, NONCE, ISSUED_AT].join("\n");
+const SIGNATURE = sign("sha256", Buffer.from(expectedMessage), privateKey).toString("base64url");
 
 async function waitFor(check, label, timeoutMs = 2_000) {
   const deadline = Date.now() + timeoutMs;
@@ -74,11 +76,11 @@ class FakeWebSocket {
 }
 
 function hostHello(channel, mac = ["notify", "open-url"]) {
-  channel.deliver({ version: 1, type: "host.hello", deviceId: DEVICE_ID, keyFingerprint: VECTOR.keyFingerprint, mac });
+  channel.deliver({ version: 1, type: "host.hello", deviceId: DEVICE_ID, keyFingerprint, mac });
 }
 
 // The fake connector answers every sign.request the way PR6 will: it builds the C1 message from fields.
-function answerSignRequests(channel, { signature = SIGNATURE, extra = {}, fingerprint = VECTOR.keyFingerprint } = {}) {
+function answerSignRequests(channel, { signature = SIGNATURE, extra = {}, fingerprint = keyFingerprint } = {}) {
   const answered = new Set();
   const timer = setInterval(() => {
     for (const request of channel.sent.filter((message) => message.type === "sign.request")) {
@@ -138,22 +140,21 @@ async function bindSocket(index = 0) {
   return { socket, auth };
 }
 
-test("the C1 connect message matches the contract vector and verifies with its public key", () => {
+test("the C1 connect message matches the seven-line contract and verifies with an ephemeral public key", () => {
   const message = buildDeviceMessage({
     purpose: "connect",
     audience: RELAY,
     deviceId: DEVICE_ID,
-    keyFingerprint: VECTOR.keyFingerprint,
+    keyFingerprint,
     nonce: NONCE,
     issuedAt: ISSUED_AT,
   });
-  assert.equal(message, VECTOR.message.replaceAll("\\n", "\n"));
+  assert.equal(message, expectedMessage);
   assert.equal(message.split("\n").length, 7);
   assert.equal(message.endsWith("\n"), false);
-  const publicKey = createPublicKey({ key: Buffer.from(VECTOR.publicKeySpkiB64url, "base64url"), format: "der", type: "spki" });
   assert.equal(verify("sha256", Buffer.from(message, "utf8"), publicKey, Buffer.from(SIGNATURE, "base64url")), true);
-  assert.throws(() => buildDeviceMessage({ purpose: "connect", audience: `${RELAY}\nx`, deviceId: DEVICE_ID, keyFingerprint: VECTOR.keyFingerprint, nonce: NONCE, issuedAt: ISSUED_AT }), /audience/);
-  assert.throws(() => buildDeviceMessage({ purpose: "anything", audience: RELAY, deviceId: DEVICE_ID, keyFingerprint: VECTOR.keyFingerprint, nonce: NONCE, issuedAt: ISSUED_AT }), /purpose/);
+  assert.throws(() => buildDeviceMessage({ purpose: "connect", audience: `${RELAY}\nx`, deviceId: DEVICE_ID, keyFingerprint, nonce: NONCE, issuedAt: ISSUED_AT }), /audience/);
+  assert.throws(() => buildDeviceMessage({ purpose: "anything", audience: RELAY, deviceId: DEVICE_ID, keyFingerprint, nonce: NONCE, issuedAt: ISSUED_AT }), /purpose/);
   assert.throws(() => buildDeviceMessage({ purpose: "connect", audience: RELAY, deviceId: DEVICE_ID, keyFingerprint: "ab".repeat(32), nonce: NONCE, issuedAt: ISSUED_AT }), /fingerprint/);
 });
 
@@ -172,7 +173,7 @@ test("connect asks the connector for fields only and sends the C4 device.auth fr
     type: "device.auth",
     version: 1,
     deviceId: DEVICE_ID,
-    keyFingerprint: VECTOR.keyFingerprint,
+    keyFingerprint,
     signature: SIGNATURE,
     app: { version: "3.17.32", platform: "macos", arch: "arm64" },
     channels: ["labs", "turns", "mac"],
@@ -273,15 +274,15 @@ test("labs and turns rpc answer with rpcId; an unknown method is method_unsuppor
   await run.stop();
 });
 
-test("a cold doctor that cannot warm in time answers computer.unavailable, a transient error", async () => {
-  const error = Object.assign(new Error("doctor is warming"), { code: "computer.unavailable" });
+test("a cold doctor that cannot warm in time answers computer.warming, a transient error (A9)", async () => {
+  const error = Object.assign(new Error("doctor is warming"), { code: "computer.warming" });
   const run = await startConnector({ runtime: { doctorStatus: async () => { throw error; } } });
   const { socket } = await bindSocket();
   const deadline = new Date(Date.now() + 10_000).toISOString().replace(/\.\d+Z$/, "Z");
   socket.message({ type: "rpc.request", rpcId: "55555555-5555-4555-8555-555555555555", channel: "labs", method: "doctor-status", params: {}, deadline });
   const answer = await waitFor(() => socket.sent.find((message) => message.rpcId === "55555555-5555-4555-8555-555555555555"), "doctor answer");
   assert.equal(answer.type, "rpc.error");
-  assert.equal(answer.code, "computer.unavailable");
+  assert.equal(answer.code, "computer.warming");
   await run.stop();
 });
 
@@ -387,7 +388,7 @@ test("connector EOF stops the device connection", async () => {
 test("host link requires host.hello first and refuses a malformed one", async () => {
   const channel = new FakeHostChannel();
   const host = new HostLink({ channel, signTimeoutMs: 200 });
-  channel.deliver({ version: 1, type: "host.hello", deviceId: "not-a-uuid", keyFingerprint: VECTOR.keyFingerprint, mac: [] });
+  channel.deliver({ version: 1, type: "host.hello", deviceId: "not-a-uuid", keyFingerprint, mac: [] });
   await assert.rejects(host.ready(), /deviceId/);
   const plain = new HostLink({ channel: new FakeHostChannel(), signTimeoutMs: 200 });
   plain.channel.deliver({ version: 1, type: "host.hello", deviceId: DEVICE_ID, keyFingerprint: "ab".repeat(32), mac: [] });
@@ -424,7 +425,7 @@ test("the A1 line protocol works over a real inherited descriptor and EOF ends t
   `], { stdio: ["ignore", "pipe", "pipe", "pipe"] });
   const fd = child.stdio[3];
   fd.setEncoding("utf8");
-  fd.write(`${JSON.stringify({ version: 1, type: "host.hello", deviceId: DEVICE_ID, keyFingerprint: VECTOR.keyFingerprint, mac: [] })}\n`);
+  fd.write(`${JSON.stringify({ version: 1, type: "host.hello", deviceId: DEVICE_ID, keyFingerprint, mac: [] })}\n`);
   const request = await new Promise((resolve, reject) => {
     let buffer = "";
     fd.on("data", (chunk) => {
@@ -436,7 +437,7 @@ test("the A1 line protocol works over a real inherited descriptor and EOF ends t
   });
   assert.equal(request.type, "sign.request");
   assert.equal(request.purpose, "connect");
-  fd.write(`${JSON.stringify({ version: 1, type: "sign.result", id: request.id, algorithm: "ECDSA-P256-SHA256", keyFingerprint: VECTOR.keyFingerprint, signature: SIGNATURE })}\n`);
+  fd.write(`${JSON.stringify({ version: 1, type: "sign.result", id: request.id, algorithm: "ECDSA-P256-SHA256", keyFingerprint, signature: SIGNATURE })}\n`);
   let stdout = "";
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk) => { stdout += chunk; });
@@ -446,4 +447,86 @@ test("the A1 line protocol works over a real inherited descriptor and EOF ends t
   const code = await new Promise((resolve) => child.on("exit", resolve));
   assert.equal(code, 0);
   assert.match(stdout, /eof/);
+});
+
+test("A9: a bound device keeps the doctor warm and releases it when the socket ends", async () => {
+  let holds = 0;
+  let releases = 0;
+  const run = await startConnector({ runtime: { keepWarm: () => { holds += 1; return () => { releases += 1; }; } } });
+  const { socket } = await bindSocket();
+  await waitFor(() => holds === 1, "keepWarm at bind");
+  socket.serverClose(1013);
+  await waitFor(() => releases === 1, "release on close");
+  await run.stop();
+});
+
+test("an rpc whose deadline already passed is refused without running it", async () => {
+  let ran = 0;
+  const run = await startConnector({ mac: ["notify"], runtime: { seats: async () => { ran += 1; return []; } } });
+  const { socket } = await bindSocket();
+  const past = new Date(Date.now() - 5_000).toISOString().replace(/\.\d+Z$/, "Z");
+  socket.message({ type: "rpc.request", rpcId: "99999999-9999-4999-8999-999999999991", channel: "turns", method: "seats", params: {}, deadline: past });
+  socket.message({ type: "rpc.request", rpcId: "99999999-9999-4999-8999-999999999992", channel: "mac", method: "notify", params: {}, deadline: past });
+  await waitFor(() => socket.sent.filter((message) => message.type === "rpc.error").length === 2, "two refusals");
+  for (const answer of socket.sent.filter((message) => message.type === "rpc.error")) assert.equal(answer.code, "computer.unavailable");
+  assert.equal(ran, 0);
+  assert.equal(run.channel.sent.some((message) => message.type === "host.rpc"), false);
+  await run.stop();
+});
+
+test("device.superseded keeps the 60 s wait even when the close code is not 4100", async () => {
+  const run = await startConnector();
+  const { socket } = await bindSocket();
+  socket.message({ type: "device.superseded", version: 1 });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  socket.serverClose(1006);
+  await waitFor(() => run.delays.length >= 1, "reconnect wait");
+  assert.equal(run.delays[0] >= 48_000 && run.delays[0] <= 72_000, true, `delay ${run.delays[0]}`);
+  await run.stop();
+});
+
+test("a sign.result with any key beyond the A1 set is refused", async () => {
+  const channel = new FakeHostChannel();
+  const host = new HostLink({ channel, signTimeoutMs: 500 });
+  hostHello(channel);
+  await host.ready();
+  const signing = host.sign({ purpose: "connect", audience: RELAY, nonce: NONCE, issuedAt: ISSUED_AT });
+  const request = channel.sent.find((message) => message.type === "sign.request");
+  channel.deliver({ version: 1, type: "sign.result", id: request.id, algorithm: "ECDSA-P256-SHA256", keyFingerprint, signature: SIGNATURE, note: "extra" });
+  await assert.rejects(signing, /unexpected/);
+});
+
+test("--host-port exits after the connector stops, even with a parentPort holding the process", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles-hostport-"));
+  const preload = path.join(directory, "fake-parent-port.mjs");
+  // Like Electron's utilityProcess: the port keeps the process alive while it has listeners.
+  fs.writeFileSync(preload, `
+    import { EventEmitter } from "node:events";
+    const port = new EventEmitter();
+    let holder = null;
+    port.on("newListener", (name) => { if (name === "message" && !holder) holder = setInterval(() => {}, 1000); });
+    port.on("removeListener", (name) => {
+      if (name === "message" && port.listenerCount("message") === 0) { clearInterval(holder); holder = null; }
+    });
+    port.postMessage = () => {};
+    process.parentPort = port;
+    setImmediate(() => port.emit("message", { data: { version: 1, type: "host.hello", deviceId: ${JSON.stringify(DEVICE_ID)}, keyFingerprint: ${JSON.stringify(keyFingerprint)}, mac: [] } }));
+  `);
+  const tokenFile = path.join(directory, "t3.token");
+  fs.writeFileSync(tokenFile, "synthetic-test-token-not-a-secret", { mode: 0o600 });
+  const child = spawn(process.execPath, ["--import", pathToFileURL(preload).href, CLI, "connect", "--host-port", "--relay", "wss://127.0.0.1:9/api/v1/jack/devices/connect"], {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, T3_HERMES_TOKEN_FILE: tokenFile },
+  });
+  let stderr = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  await waitFor(() => stderr.includes("device.reconnecting"), "first reconnect", 5_000);
+  child.kill("SIGTERM");
+  const code = await Promise.race([
+    new Promise((resolve) => child.on("exit", (exitCode) => resolve(exitCode))),
+    new Promise((resolve) => setTimeout(() => resolve("hung"), 3_000)),
+  ]);
+  if (code === "hung") child.kill("SIGKILL");
+  assert.equal(code, 0);
 });

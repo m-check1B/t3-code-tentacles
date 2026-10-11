@@ -461,7 +461,8 @@ async function main() {
       process.removeListener("SIGINT", stop);
       host.close();
     }
-    return;
+    // A parentPort or open handles must not keep a stopped connector alive (A1/A2).
+    process.exit(process.exitCode ?? 0);
   }
   if (command === "install-provider") {
     const wrapperPath = path.join(repoRoot, "bin", "t3-hermes-acp");
