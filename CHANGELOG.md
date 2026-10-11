@@ -6,13 +6,24 @@ All notable changes to this project are documented here.
 
 ### Added — KRA-6945
 
-- `tentacles connect --signer-fd` speaks the device relay. The connector signs
-  the hello payload; this process refuses key files and never sees the private key.
-  Auth advertises the `labs`, `turns` and `mac` channels. `mac` is empty here
-  because Mac actions stay in the connector. `interrupt` is not advertised on
-  this 0.4.1 line.
+- `tentacles connect (--signer-fd FD | --host-port) --relay wss://…` speaks the
+  device relay from KRA-6945 contract v1 (C4/C5) with amendments A1 and A2.
+  Tentacles owns the one device WebSocket. The connector owns the key: Tentacles
+  sends `sign.request` with only `purpose`, `audience`, `nonce` and `issuedAt`,
+  and the connector builds the exact 7-line C1 message itself. Key flags and key
+  material in a signer reply are refused.
+- The hello audience must name the dialed relay, or nothing is signed.
+- `device.auth` advertises `labs`, `turns` and the connector's `mac` methods from
+  `host.hello`. `mac` RPCs are forwarded to the connector as `host.rpc`.
+  `interrupt` is not advertised on this 0.4.1 line.
+- Unknown relay frames are ignored. `ping` echoes `seq`. 45 s without an inbound
+  frame reconnects.
+- Close codes follow C4: 4401 and 4403 tell the connector `device.closed` and
+  exit 0; 4402 and 4404 retry hourly (4404 at once on `host.signed-in`); 4100
+  waits 60 s ± 20 %; everything else backs off 1 → 60 s with jitter.
 - `doctor-status` answers from a cached report and logs sub-step timings.
-  A relay ping no longer starts `refreshModels()`.
+  A relay ping no longer starts `refreshModels()`. A cold cache waits up to
+  2.5 s for the first warm, then answers `computer.unavailable`.
 
 ### Added
 

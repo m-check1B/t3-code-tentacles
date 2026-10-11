@@ -83,10 +83,10 @@ test("doctor-status serves one cached full catalog and rejects remote controls",
     },
   });
   const shim = new RemoteRpcShim(adapter);
+  // A cold call waits for the first warm instead of answering an empty "not capable" report.
   const cold = await shim.handle({ version: 1, type: "rpc.request", id: "first", method: "doctor-status", params: {} });
-  assert.equal(cold.result.cache.state, "cold");
-  assert.deepEqual(cold.result.labs, []);
-  await adapter.refreshModels();
+  assert.equal(cold.result.cache.state, "warm");
+  assert.deepEqual(cold.result.labs[0].models, ["model-1"]);
   const warm = await shim.handle({ version: 1, type: "rpc.request", id: "second", method: "doctor-status", params: {} });
   const again = await shim.handle({ version: 1, type: "rpc.request", id: "third", method: "doctor-status", params: {} });
   assert.deepEqual(warm.result.labs[0].models, ["model-1"]);

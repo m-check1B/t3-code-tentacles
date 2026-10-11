@@ -244,11 +244,15 @@ export class LoopbackRuntimeAdapter {
     now = Date.now,
     timingsLog,
     cacheMaxAgeMs = 60_000,
+    coldWaitMs = 2_500,
   }) {
     if (!client) throw new Error("Loopback runtime requires a T3 client");
     if (typeof now !== "function") throw new Error("Doctor cache clock must be a function");
     if (!Number.isInteger(cacheMaxAgeMs) || cacheMaxAgeMs < 1_000 || cacheMaxAgeMs > 300_000) {
       throw new Error("Doctor cache age must be between 1000ms and 300000ms");
+    }
+    if (!Number.isInteger(coldWaitMs) || coldWaitMs < 1 || coldWaitMs > 5_000) {
+      throw new Error("Doctor cold wait must be between 1ms and 5000ms");
     }
     this.client = client;
     this.pairStateFile = pairStateFile;
@@ -265,6 +269,7 @@ export class LoopbackRuntimeAdapter {
       ? timingsLog
       : (entry) => { process.stderr.write(`${JSON.stringify(entry)}\n`); };
     this.cacheMaxAgeMs = cacheMaxAgeMs;
+    this.coldWaitMs = coldWaitMs;
     this.doctorCache = null;
     this.modelRefresh = null;
   }
@@ -368,14 +373,17 @@ export class LoopbackRuntimeAdapter {
         cache: { ...cached.cache, state: "warm", ageMs, stale: ageMs >= this.cacheMaxAgeMs },
       };
     }
-    void this.refreshModels().catch(() => {});
-    return {
-      product: "Tentacles",
-      labs: [],
-      capabilities: { talkTurnResult: null },
-      timings: {},
-      cache: { state: "cold", stale: true },
-    };
+    // Cold: wait briefly for the first warm. An empty report would be cached by Jack
+    // as "not capable", so a warm that misses the wait is a transient error instead.
+    let timer;
+    const warmed = await Promise.race([
+      this.refreshModels().catch(() => null),
+      new Promise((resolve) => { timer = setTimeout(() => resolve(null), this.coldWaitMs); }),
+    ]).finally(() => clearTimeout(timer));
+    if (!warmed) {
+      throw Object.assign(new Error("Doctor is still warming"), { code: "computer.unavailable" });
+    }
+    return { ...warmed, cache: { ...warmed.cache, ageMs: 0, stale: false } };
   }
 
   async turnResult(params) {

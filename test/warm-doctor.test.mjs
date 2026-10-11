@@ -69,6 +69,7 @@ test("doctor-status answers from the cache and stays under 500ms while doctor is
   const adapter = new LoopbackRuntimeAdapter({
     client: { request: async () => ({ talkTurnResult: "v1" }) },
     timingsLog: (entry) => logs.push(entry),
+    coldWaitMs: 50,
     now: () => 1_000 + calls,
     doctorImpl: async () => {
       calls += 1;
@@ -81,13 +82,9 @@ test("doctor-status answers from the cache and stays under 500ms while doctor is
     },
   });
   const started = Date.now();
-  const cold = await Promise.race([
-    adapter.doctorStatus({}),
-    new Promise((_, reject) => setTimeout(() => reject(new Error("doctor-status blocked on a slow doctor")), 200)),
-  ]);
+  // Cold and still warming past the cold wait: a transient error, never an empty "not capable" report.
+  await assert.rejects(adapter.doctorStatus({}), (error) => error.code === "computer.unavailable");
   assert.equal(Date.now() - started < 500, true);
-  assert.equal(cold.cache.state, "cold");
-  assert.equal(cold.labs.length, 0);
   release();
   await adapter.refreshModels();
   const warm = await adapter.doctorStatus({});
@@ -108,6 +105,34 @@ test("doctor-status answers from the cache and stays under 500ms while doctor is
   const p95 = samples[Math.ceil(samples.length * 0.95) - 1];
   assert.equal(p95 < 500, true, `cached doctor-status p95 was ${p95}ms`);
   assert.equal(calls, 1);
+});
+
+test("a cold doctor-status waits for the first warm instead of answering empty", async () => {
+  let calls = 0;
+  const adapter = new LoopbackRuntimeAdapter({
+    client: { request: async () => ({ talkTurnResult: "v1" }) },
+    timingsLog: () => {},
+    doctorImpl: async () => {
+      calls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      return { product: "Tentacles", labs: [{ instanceId: "codex", models: ["gpt-6.1-sol"] }] };
+    },
+  });
+  const first = await adapter.doctorStatus({});
+  assert.equal(first.cache.state, "warm");
+  assert.equal(first.capabilities.talkTurnResult, "v1");
+  assert.deepEqual(first.labs, [{ instanceId: "codex", models: ["gpt-6.1-sol"] }]);
+  assert.equal(calls, 1);
+  assert.throws(() => new LoopbackRuntimeAdapter({ client: {}, coldWaitMs: 10_000 }), /cold wait/);
+});
+
+test("a cold doctor-status whose warm fails is a transient error", async () => {
+  const adapter = new LoopbackRuntimeAdapter({
+    client: { request: async () => ({}) },
+    timingsLog: () => {},
+    doctorImpl: async () => { throw new Error("T3 unreachable"); },
+  });
+  await assert.rejects(adapter.doctorStatus({}), (error) => error.code === "computer.unavailable");
 });
 
 test("a pairing ping pongs without refreshModels", async () => {

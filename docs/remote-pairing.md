@@ -164,8 +164,10 @@ model's `isDefault` marker takes precedence over the legacy lab default.
 A pairing `ping` only returns `pong`. It does not refresh the catalog. One warm
 read starts after a successful bind, and later `doctor-status` calls reuse that
 cached report, including its sub-step timings. Concurrent warms share one
-in-flight read. A cold cache returns immediately with `cache.state` `cold`
-instead of blocking the relay on local labs. Jack can request `doctor-status`
+in-flight read. A cold cache waits up to 2.5 s for the first warm. If the warm
+misses that window or fails, `doctor-status` answers the transient
+`computer.unavailable` error, never an empty report that Jack would cache as
+"not capable". Jack can request `doctor-status`
 on picker open and its visible Refresh without new RPC methods, protocol
 messages, local runtime settings changes, or inbound listeners.
 
@@ -204,3 +206,22 @@ This code requires the reviewed Tentacles pairer runtime to be released on the
 paired computer. A Jack API/web release alone cannot update an old machine-side
 pairer. No desktop source/build/install is required by this patch, and no live
 Local reply is claimed from synthetic tests.
+
+## Device connect (KRA-6945 contract v1)
+
+`tentacles connect` is the successor to pair offers. It runs under the Agent
+Jack connector, which owns the device key, and talks to it over exactly one of:
+
+- `--signer-fd N`: an inherited bidirectional descriptor, one JSON object per
+  line, each at most 64 KiB (Linux, development and tests);
+- `--host-port`: the Electron `utilityProcess` `parentPort`, one JSON object per
+  message (macOS bundle, no system Node).
+
+The connector's first message is `host.hello` with `deviceId`, `keyFingerprint`
+(`sha256:<hex>`) and its `mac` methods. For each relay `device.hello` whose
+`audience` names the dialed relay, Tentacles sends `sign.request` with only
+`purpose`, `audience`, `nonce` and `issuedAt`. The connector builds the C1
+message and answers `sign.result` with a DER signature. Tentacles never receives
+key material and never signs. `mac` RPCs travel to the connector as `host.rpc`.
+On close 4401 or 4403 Tentacles writes `device.closed` and exits 0. Connector
+EOF stops the process.
