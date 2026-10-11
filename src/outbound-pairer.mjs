@@ -302,7 +302,14 @@ export class LoopbackRuntimeAdapter {
     // Explicit warm only. Heartbeats must not call this. Concurrent warms share
     // one in-flight read, and a completed report stays cached for doctor-status.
     if (!this.modelRefresh) {
-      this.modelRefresh = this.collectDoctorReport().finally(() => { this.modelRefresh = null; });
+      this.modelRefresh = this.collectDoctorReport()
+        .catch((error) => {
+          // B3 10623: a failed warm drops the cache. A lab or T3 that just went
+          // away must never keep answering with its last good report.
+          this.doctorCache = null;
+          throw error;
+        })
+        .finally(() => { this.modelRefresh = null; });
     }
     return this.modelRefresh;
   }
@@ -367,21 +374,21 @@ export class LoopbackRuntimeAdapter {
     const cached = this.doctorCache;
     if (cached) {
       const ageMs = Math.max(0, this.now() - cached.cache.warmedAtMs);
-      if (ageMs >= this.cacheMaxAgeMs) void this.refreshModels().catch(() => {});
-      return {
-        ...cached,
-        cache: { ...cached.cache, state: "warm", ageMs, stale: ageMs >= this.cacheMaxAgeMs },
-      };
+      // B3 10623: Jack treats doctor-status as current readiness, so a report
+      // is served only inside its age bound. Past it the call fails closed below.
+      if (ageMs < this.cacheMaxAgeMs) {
+        return { ...cached, cache: { ...cached.cache, state: "warm", ageMs, stale: false } };
+      }
     }
-    // Cold: wait briefly for the first warm. An empty report would be cached by Jack
-    // as "not capable", so a warm that misses the wait is a transient error instead.
+    // Cold or past the age bound: wait briefly for a fresh warm. An old or empty
+    // report would mislead Jack, so a warm that misses the wait is a transient error.
     let timer;
     const warmed = await Promise.race([
       this.refreshModels().catch(() => null),
       new Promise((resolve) => { timer = setTimeout(() => resolve(null), this.coldWaitMs); }),
     ]).finally(() => clearTimeout(timer));
     if (!warmed) {
-      throw Object.assign(new Error("Doctor is still warming"), { code: "computer.unavailable" });
+      throw Object.assign(new Error(cached ? "Doctor report is stale" : "Doctor is still warming"), { code: "computer.unavailable" });
     }
     return { ...warmed, cache: { ...warmed.cache, ageMs: 0, stale: false } };
   }

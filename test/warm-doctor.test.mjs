@@ -174,3 +174,51 @@ test("a pairing ping pongs without refreshModels", async () => {
   controller.abort();
   await runResult;
 });
+
+// B3 10623: a stale doctor report must never stand in for current readiness.
+function boundedAdapter() {
+  const state = { now: 10_000, calls: 0, fail: false };
+  const adapter = new LoopbackRuntimeAdapter({
+    client: { request: async () => ({ talkTurnResult: "v1" }) },
+    timingsLog: () => {},
+    cacheMaxAgeMs: 60_000,
+    coldWaitMs: 50,
+    now: () => state.now,
+    doctorImpl: async () => {
+      state.calls += 1;
+      if (state.fail) throw new Error("T3 unreachable");
+      return { product: "Tentacles", t3: { reachable: true }, labs: [{ instanceId: "codex", ready: true, models: ["gpt-6.1-sol"] }] };
+    },
+  });
+  return { adapter, state };
+}
+
+test("B3 10623: past the age bound a failing doctor is an error, never the old ready report", async () => {
+  const { adapter, state } = boundedAdapter();
+  await adapter.refreshModels();
+  assert.equal((await adapter.doctorStatus({})).labs[0].ready, true);
+  state.fail = true;
+  state.now += 60_001;
+  await assert.rejects(adapter.doctorStatus({}), (error) => error.code === "computer.unavailable");
+  // Time moving back inside the bound cannot resurrect the dropped report.
+  state.now -= 30_000;
+  await assert.rejects(adapter.doctorStatus({}), (error) => error.code === "computer.unavailable");
+  state.fail = false;
+  const recovered = await adapter.doctorStatus({});
+  assert.equal(recovered.labs[0].ready, true);
+  assert.equal(recovered.cache.stale, false);
+});
+
+test("B3 10623: past the age bound a working doctor answers with a fresh report", async () => {
+  const { adapter, state } = boundedAdapter();
+  await adapter.refreshModels();
+  state.now += 120_000;
+  const report = await adapter.doctorStatus({});
+  assert.equal(report.cache.ageMs, 0);
+  assert.equal(report.cache.stale, false);
+  assert.equal(state.calls, 2);
+  // Inside the bound the cache answers without another doctor run.
+  state.now += 1_000;
+  assert.equal((await adapter.doctorStatus({})).cache.ageMs, 1_000);
+  assert.equal(state.calls, 2);
+});

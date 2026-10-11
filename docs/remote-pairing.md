@@ -167,7 +167,11 @@ cached report, including its sub-step timings. Concurrent warms share one
 in-flight read. A cold cache waits up to 2.5 s for the first warm. If the warm
 misses that window or fails, `doctor-status` answers the transient
 `computer.unavailable` error, never an empty report that Jack would cache as
-"not capable". Jack can request `doctor-status`
+"not capable". The cached report is served only while it is younger than
+`cacheMaxAgeMs` (60 s). Past that age `doctor-status` waits for a fresh warm in
+the same window and otherwise answers `computer.unavailable`: an old report
+never stands in for current readiness. A warm that fails drops the cache.
+Jack can request `doctor-status`
 on picker open and its visible Refresh without new RPC methods, protocol
 messages, local runtime settings changes, or inbound listeners.
 
