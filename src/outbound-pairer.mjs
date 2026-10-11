@@ -21,10 +21,10 @@ const offerSecrets = new WeakMap();
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const MAX_TIMER_MS = 2_147_483_647;
 const ORIGINATE_PARAM_KEYS = new Set([
-  "workspace", "title", "message", "instanceId", "model", "options", "budget", "runtimeMode", "idempotencyKey",
+  "workspace", "title", "message", "instanceId", "model", "options", "budget", "runtimeMode", "idempotencyKey", "freshProviderContext", "fixedTitle",
 ]);
 const CONTINUE_PARAM_KEYS = new Set([
-  "threadId", "message", "instanceId", "model", "options", "budget", "runtimeMode", "turnCommandId", "messageId",
+  "threadId", "message", "instanceId", "model", "options", "budget", "runtimeMode", "turnCommandId", "messageId", "freshProviderContext",
 ]);
 
 function isRecord(value) {
@@ -121,6 +121,9 @@ function fullAccessParams(params, label, allowedKeys) {
   if (unknown) throw new Error(`${label} does not accept remote parameter ${unknown}`);
   if (input.runtimeMode !== undefined && input.runtimeMode !== "full-access") {
     throw new Error(`${label} requires runtimeMode full-access`);
+  }
+  for (const key of ["freshProviderContext", "fixedTitle"]) {
+    if (input[key] !== undefined && input[key] !== true) throw new Error(`${label} ${key} must be true when supplied`);
   }
   return { ...input, runtimeMode: "full-access" };
 }
@@ -290,12 +293,22 @@ export class LoopbackRuntimeAdapter {
       throw new Error("doctor-status does not accept remote parameters");
     }
     const report = await this.refreshModels();
-    let supported = false;
+    let capabilities = { talkTurnResult: null };
     try {
-      const capabilities = await this.client.request("/api/orchestration/turn-result");
-      supported = capabilities?.talkTurnResult === "v1";
+      const upstream = await this.client.request("/api/orchestration/turn-result");
+      if (upstream?.talkTurnResult === "v1") {
+        capabilities = { talkTurnResult: "v1" };
+        const providers = upstream.talkFreshProviderContextProviders;
+        if (upstream.talkFreshProviderContext === "v1" && Array.isArray(providers)
+          && providers.length >= 1 && providers.length <= 32
+          && providers.every((id) => typeof id === "string" && SAFE_ID.test(id))
+          && new Set(providers).size === providers.length) {
+          capabilities.talkFreshProviderContext = "v1";
+          capabilities.talkFreshProviderContextProviders = [...providers];
+        }
+      }
     } catch { /* Older or unavailable T3 has no exact-result capability. */ }
-    return { ...report, capabilities: { talkTurnResult: supported ? "v1" : null } };
+    return { ...report, capabilities };
   }
 
   async turnResult(params) {
@@ -318,8 +331,12 @@ export class LoopbackRuntimeAdapter {
       || (typeof result.outputText === "string" && Buffer.byteLength(result.outputText, "utf8") > 32 * 1024)) {
       throw new Error("Invalid correlated turn result");
     }
+    const fresh = Object.hasOwn(result, "freshProviderContext") || Object.hasOwn(result, "nativeContextGeneration");
+    if (fresh && (result.freshProviderContext !== true || result.nativeContextGeneration !== input.turnCommandId)) {
+      throw new Error("Invalid correlated fresh-context turn result");
+    }
     // Closed projection excludes all upstream additions and internal diagnostics.
-    return Object.fromEntries([...keys, "turnId", "assistantMessageId", "instanceId", "model", "effort", "state", "outputText"].map((key) => [key, result[key]]));
+    return Object.fromEntries([...keys, ...(fresh ? ["freshProviderContext", "nativeContextGeneration"] : []), "turnId", "assistantMessageId", "instanceId", "model", "effort", "state", "outputText"].map((key) => [key, result[key]]));
   }
 }
 
