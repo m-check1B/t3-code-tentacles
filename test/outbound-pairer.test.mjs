@@ -245,10 +245,18 @@ test("loopback adapter keeps the relay surface honest about full-access", async 
   const projected = JSON.stringify(await adapter.seats());
   assert.equal(projected.includes("private"), false);
   assert.equal(projected.includes("stale private error"), false);
-  assert.deepEqual(await adapter.originate({ workspace: "/tmp/work", title: "T", message: "M" }), { threadId: "t1" });
-  assert.deepEqual(await adapter.continue({ threadId: "t1", message: "again", runtimeMode: "full-access" }), { threadId: "t1" });
+  assert.deepEqual(await adapter.originate({ workspace: "/tmp/work", title: "T", message: "M", freshProviderContext: true, fixedTitle: true }), { threadId: "t1" });
+  assert.deepEqual(await adapter.continue({ threadId: "t1", message: "again", freshProviderContext: true, runtimeMode: "full-access" }), { threadId: "t1" });
   assert.deepEqual(await adapter.doctorStatus(), { pairing: "/tmp/synthetic-pair-presence.json", capabilities: { talkTurnResult: null } });
   assert.deepEqual(calls.map((entry) => entry[2].runtimeMode), ["full-access", "full-access"]);
+  assert.equal(calls.find(([method]) => method === "originate")[2].freshProviderContext, true);
+  assert.equal(calls.find(([method]) => method === "originate")[2].fixedTitle, true);
+  assert.equal(calls.find(([method]) => method === "continue")[2].freshProviderContext, true);
+  for (const value of [false, "true", null, 1]) {
+    assert.throws(() => adapter.originate({ freshProviderContext: value }), /must be true/);
+    assert.throws(() => adapter.originate({ fixedTitle: value }), /must be true/);
+    assert.throws(() => adapter.continue({ freshProviderContext: value }), /must be true/);
+  }
   assert.throws(() => adapter.originate({ runtimeMode: "approval-required" }), /requires runtimeMode full-access/);
   assert.throws(() => adapter.continue({ runtimeMode: "auto" }), /requires runtimeMode full-access/);
   assert.throws(() => adapter.originate({ stateFile: "/tmp/remote-controlled.json" }), /does not accept remote parameter stateFile/);
@@ -868,14 +876,28 @@ test("expired pair offers fail closed without exposing pair tokens", async () =>
 
 test("turn-result validates exact correlation, terminal text, bounds and negotiated support", async () => {
   const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
-  let result = { ...params, turnId: "turn", assistantMessageId: "assistant-message", instanceId: "codex", model: "model", effort: "high", state: "succeeded", outputText: "actual reply", internal: "must not escape" };
+  let capabilities = { talkTurnResult: "v1", talkFreshProviderContext: "v1", talkFreshProviderContextProviders: ["codex"] };
+  let result = { ...params, freshProviderContext: true, nativeContextGeneration: params.turnCommandId, turnId: "turn", assistantMessageId: "assistant-message", instanceId: "codex", model: "model", effort: "high", state: "succeeded", outputText: "actual reply", internal: "must not escape" };
   const adapter = new LoopbackRuntimeAdapter({ client: { request: async (url, options) => {
     assert.equal(url, "/api/orchestration/turn-result");
-    if (!options) return { talkTurnResult: "v1" };
+    if (!options) return capabilities;
     assert.deepEqual(options.body, params);
     return result;
   } }, doctorImpl: async () => ({ ready: true }) });
-  assert.deepEqual((await adapter.doctorStatus()).capabilities, { talkTurnResult: "v1" });
+  assert.deepEqual((await adapter.doctorStatus()).capabilities, capabilities);
+  for (const providers of [[], ["codex", "codex"], ["../bad"], Array(33).fill("codex"), "codex"]) {
+    capabilities = { ...capabilities, talkFreshProviderContextProviders: providers };
+    assert.deepEqual((await adapter.doctorStatus()).capabilities, { talkTurnResult: "v1" });
+  }
+  capabilities = { talkTurnResult: "v1" };
+  assert.deepEqual((await adapter.doctorStatus()).capabilities, capabilities);
+  assert.equal((await adapter.turnResult(params)).nativeContextGeneration, params.turnCommandId);
+  for (const mutation of [{ freshProviderContext: false }, { freshProviderContext: undefined }, { nativeContextGeneration: "foreign" }, { nativeContextGeneration: undefined }]) {
+    const original = result;
+    result = { ...result, ...mutation };
+    await assert.rejects(adapter.turnResult(params), /Invalid correlated/);
+    result = original;
+  }
   assert.equal((await adapter.turnResult(params)).outputText, "actual reply");
   assert.equal((await adapter.turnResult(params)).assistantMessageId, "assistant-message");
   assert.equal("internal" in await adapter.turnResult(params), false);

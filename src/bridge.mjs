@@ -567,6 +567,7 @@ export function validateBridgeState(state) {
   for (const [key, origin] of Object.entries(state.originations)) {
     identifier(key, "originations key");
     if (!isPlainObject(origin)) throw new Error(`Invalid bridge state: originations.${key}`);
+    requireFreshContextHints(origin);
     for (const field of ["workspace", "title", "messageDigest", "projectId", "projectCommandId", "threadId", "threadCommandId", "turnCommandId", "messageId"]) identifier(origin[field], `originations.${key}.${field}`);
   }
   return state;
@@ -673,7 +674,8 @@ export async function ensureProject(client, { workspace, title, instanceId = DEF
   return { project: projected, created: true, shell: snapshot };
 }
 
-export async function startThread(client, { projectId, title, message, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, options, budget, runtimeMode, threadId = randomUUID(), threadCommandId = randomUUID(), turnCommandId = randomUUID(), messageId = randomUUID() }) {
+export async function startThread(client, { projectId, title, message, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, options, budget, runtimeMode, freshProviderContext, fixedTitle, threadId = randomUUID(), threadCommandId = randomUUID(), turnCommandId = randomUUID(), messageId = randomUUID() }) {
+  requireFreshContextHints({ freshProviderContext, fixedTitle });
   const modelSelection = resolveModelSelection({ instanceId, model, options, budget });
   runtimeMode = requireExplicitRuntimeMode(runtimeMode);
   let detail = await getThreadIfProjected(client, threadId);
@@ -684,7 +686,7 @@ export async function startThread(client, { projectId, title, message, instanceI
   const existingMessage = (detail.thread.messages || []).find((entry) => entry.id === messageId);
   if (existingMessage && existingMessage.text !== undefined && existingMessage.text !== message) throw new Error("messageId was already used with different input");
   if (!existingMessage) {
-    await client.dispatch({ type: "thread.turn.start", commandId: turnCommandId, threadId, message: userMessage(message, messageId), modelSelection, titleSeed: title, runtimeMode, interactionMode: "default", createdAt: now() });
+    await client.dispatch({ type: "thread.turn.start", commandId: turnCommandId, threadId, message: userMessage(message, messageId), modelSelection, ...(fixedTitle === true ? {} : { titleSeed: title }), ...(freshProviderContext === true ? { freshProviderContext: true } : {}), runtimeMode, interactionMode: "default", createdAt: now() });
     await waitForMessage(client, threadId, messageId);
   }
   return { threadId, projectId, messageId, turnCommandId };
@@ -698,9 +700,11 @@ export async function continueThread(client, {
   options,
   budget,
   runtimeMode,
+  freshProviderContext,
   turnCommandId = randomUUID(),
   messageId = randomUUID(),
 }) {
+  requireFreshContextHints({ freshProviderContext });
   // Partial selection input is refused before any read or dispatch.
   const retained = !requireContinueSelection({ instanceId, model, options, budget });
   let modelSelection = retained ? undefined : resolveModelSelection({ instanceId, model, options, budget });
@@ -717,6 +721,7 @@ export async function continueThread(client, {
       threadId,
       message: userMessage(message, messageId),
       ...(modelSelection !== undefined ? { modelSelection } : {}),
+      ...(freshProviderContext === true ? { freshProviderContext: true } : {}),
       runtimeMode,
       interactionMode: "default",
       createdAt: now(),
@@ -726,13 +731,20 @@ export async function continueThread(client, {
   return { threadId, projectId: detail.thread.projectId, messageId, turnCommandId };
 }
 
+function requireFreshContextHints({ freshProviderContext, fixedTitle }) {
+  for (const [key, value] of Object.entries({ freshProviderContext, fixedTitle })) {
+    if (value !== undefined && value !== true) throw new Error(`${key} must be true when supplied`);
+  }
+}
+
 function digest(message) { return createHash("sha256").update(message).digest("hex"); }
-export async function originate(client, { workspace, title, message, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, options, budget, runtimeMode, idempotencyKey, stateFile = DEFAULT_BRIDGE_STATE_FILE } = {}) {
+export async function originate(client, { workspace, title, message, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, options, budget, runtimeMode, freshProviderContext, fixedTitle, idempotencyKey, stateFile = DEFAULT_BRIDGE_STATE_FILE } = {}) {
+  requireFreshContextHints({ freshProviderContext, fixedTitle });
   const modelSelection = resolveModelSelection({ instanceId, model, options, budget });
   runtimeMode = requireExplicitRuntimeMode(runtimeMode);
   if (!idempotencyKey) {
     const { project, created } = await ensureProject(client, { workspace, title: path.basename(workspace), instanceId: modelSelection.instanceId, model: modelSelection.model, options: modelSelection.options });
-    return { ...(await startThread(client, { projectId: project.id, title, message, instanceId: modelSelection.instanceId, model: modelSelection.model, options: modelSelection.options, runtimeMode })), projectCreated: created };
+    return { ...(await startThread(client, { projectId: project.id, title, message, instanceId: modelSelection.instanceId, model: modelSelection.model, options: modelSelection.options, runtimeMode, freshProviderContext, fixedTitle })), projectCreated: created };
   }
   if (typeof idempotencyKey !== "string" || !/^[A-Za-z0-9._:-]{1,256}$/.test(idempotencyKey)) throw new Error("originate idempotencyKey must be 1-256 safe characters");
   const release = acquireStateLock(stateFile);
@@ -742,15 +754,15 @@ export async function originate(client, { workspace, title, message, instanceId 
     const state = loaded.state;
     if (loaded.migrated) writeBridgeState(state, stateFile);
     let intent = state.originations[idempotencyKey];
-    if (intent && (intent.workspace !== workspace || intent.title !== title || intent.messageDigest !== digest(message) || (intent.modelSelectionDigest && intent.modelSelectionDigest !== digest(JSON.stringify(modelSelection))))) throw new Error("originate idempotencyKey was already used with different input");
+    if (intent && ((intent.freshProviderContext === true) !== (freshProviderContext === true) || (intent.fixedTitle === true) !== (fixedTitle === true) || intent.workspace !== workspace || intent.title !== title || intent.messageDigest !== digest(message) || (intent.modelSelectionDigest && intent.modelSelectionDigest !== digest(JSON.stringify(modelSelection))))) throw new Error("originate idempotencyKey was already used with different input");
     if (!intent) {
       if (Object.keys(state.originations).length >= ORIGINATION_LIMIT) throw new Error("Bridge origination ledger is full; rotate state explicitly after audit");
-      intent = { workspace, title, messageDigest: digest(message), modelSelectionDigest: digest(JSON.stringify(modelSelection)), projectId: randomUUID(), projectCommandId: randomUUID(), threadId: randomUUID(), threadCommandId: randomUUID(), turnCommandId: randomUUID(), messageId: randomUUID() };
+      intent = { workspace, title, ...(freshProviderContext === true ? { freshProviderContext: true } : {}), ...(fixedTitle === true ? { fixedTitle: true } : {}), messageDigest: digest(message), modelSelectionDigest: digest(JSON.stringify(modelSelection)), projectId: randomUUID(), projectCommandId: randomUUID(), threadId: randomUUID(), threadCommandId: randomUUID(), turnCommandId: randomUUID(), messageId: randomUUID() };
       state.originations[idempotencyKey] = intent;
       writeBridgeState(state, stateFile);
     }
     const { project, created } = await ensureProject(client, { workspace, title: path.basename(workspace), instanceId: modelSelection.instanceId, model: modelSelection.model, options: modelSelection.options, projectId: intent.projectId, projectCommandId: intent.projectCommandId });
-    const result = await startThread(client, { projectId: project.id, title, message, instanceId: modelSelection.instanceId, model: modelSelection.model, options: modelSelection.options, runtimeMode, threadId: intent.threadId, threadCommandId: intent.threadCommandId, turnCommandId: intent.turnCommandId, messageId: intent.messageId });
+    const result = await startThread(client, { projectId: project.id, title, message, instanceId: modelSelection.instanceId, model: modelSelection.model, options: modelSelection.options, runtimeMode, freshProviderContext, fixedTitle, threadId: intent.threadId, threadCommandId: intent.threadCommandId, turnCommandId: intent.turnCommandId, messageId: intent.messageId });
     return { ...result, projectCreated: created, idempotencyKey };
   } finally {
     release();
