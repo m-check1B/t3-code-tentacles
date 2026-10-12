@@ -36,3 +36,19 @@ test("checksum mismatch fails before publishing and existing assets are never ov
 test("upstream error payloads are never copied into diagnostics", async () => {
   await assert.rejects(publishRelease({ environment, readFileImpl, fetchImpl: async () => new Response("synthetic-ci-token", { status: 500 }) }), error => !error.message.includes(environment.BRIDGE_RELEASE_TOKEN) && error.message.includes("500"));
 });
+
+test("a Jack maintenance tag publishes its matching package; other suffixes are refused (KRA-6915)", async () => {
+  const jackChecksum = Buffer.from(`${createHash("sha256").update(payload).digest("hex")}  tentacles-0.4.1-jack.1.tgz\n`);
+  const jackRead = name => name.endsWith(".sha256") ? jackChecksum : payload;
+  const jack = { ...environment, FORGEJO_REF_NAME: "v0.4.1-jack.1", BRIDGE_PACKAGE_FILE: "tentacles-0.4.1-jack.1.tgz" };
+  const calls = [];
+  const result = await publishRelease({ environment: jack, readFileImpl: jackRead, fetchImpl: async (url, options) => {
+    calls.push({ url, options });
+    if (calls.length === 1) return new Response(null, { status: 404 });
+    return Response.json({ id: 7 });
+  } });
+  assert.equal(result.tag, "v0.4.1-jack.1"); assert.equal(JSON.parse(calls[1].options.body).tag_name, "v0.4.1-jack.1");
+  for (const tag of ["v0.4.1-rc.1", "v0.4.1-jack", "v0.4.1-jack.1.2", "v0.4.1-jack.x"]) {
+    await assert.rejects(publishRelease({ environment: { ...jack, FORGEJO_REF_NAME: tag, BRIDGE_PACKAGE_FILE: `tentacles-${tag.slice(1)}.tgz` }, readFileImpl: jackRead, fetchImpl: async () => assert.fail("must not send a credential") }), /configuration/);
+  }
+});
