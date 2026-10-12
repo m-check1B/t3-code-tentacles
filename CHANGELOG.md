@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.4.1-jack.1] - 2026-10-12
+
+Jack maintenance build of 0.4.1 for the Founder's Mac Pro (KRA-6915).
+
+### Fixed
+
+- Doctor reports a signed-in Claude Code (claudeAgent) as ready instead of
+  `assistant_unverified` ("update required") — backport of #39 (#43).
+- A bare `pair.unpaired` is a transient conflict, not a denial (KRA-6929, #45).
+- Pairing forwards the fresh-context Talk contract to Jack (#44).
+- The release workflow accepts `vX.Y.Z-jack.N` maintenance tags.
+
 ## [0.4.1] - 2026-10-04
 
 ### Fixed — KRA-6432

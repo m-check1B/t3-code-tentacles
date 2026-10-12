@@ -12,7 +12,7 @@ export async function publishRelease({ environment = process.env, fetchImpl = gl
   const filename = environment.BRIDGE_PACKAGE_FILE;
   if (!["http:", "https:"].includes(api.protocol) || api.origin !== server.origin || api.pathname.replace(/\/$/, "") !== "/api/v1"
     || api.username || api.password || api.search || api.hash
-    || repository !== "matej/t3-code-tentacles" || !/^v\d+\.\d+\.\d+$/.test(tag || "")
+    || repository !== "matej/t3-code-tentacles" || !/^v\d+\.\d+\.\d+(?:-jack\.\d+)?$/.test(tag || "")
     || !token || filename !== `tentacles-${tag.slice(1)}.tgz` || path.basename(filename) !== filename) {
     throw new Error("Invalid canonical Forgejo release configuration");
   }
