@@ -215,29 +215,32 @@ Skills are trimmed first, then plugins, then MCP rows, with `truncated` flags.
 CLI rows always stay. A future `capabilities` RPC is an additive Sphere +
 Tentacles change; this field stays for older relays.
 
-Jack side (separate agent-jack-3 PR):
+Jack side (agent-jack-3 PR, `api/src/jack_api/capability_inventory.py`):
 
-1. **Ingest.** On every successful `doctor-status` read, validate
-   `capabilityInventory` with a closed pydantic projection (`extra="forbid"`,
-   bounded strings, the enums above). Upsert it into a new
-   `tentacles_capabilities` table keyed by `pair_id`, with
-   `ON DELETE CASCADE` from `tentacles_pairs`. Store the owner tuple, `host_id`,
-   `schema`, `payload jsonb`, a digest and `observed_at`. Revoking a pair drops
-   its inventory. A colocated Jack runs `tentacles capabilities scan --json`
-   locally instead.
-2. **Agent tools.** `capabilities.list` returns one row per computer and
-   capability for the seat's business. `capabilities.find(need)` normalizes the
-   need through `SERVICE_KEYWORDS` (and estate classify when a free-text brief
-   is passed). It returns:
-   - the signed-in paths first, for example "Linear: `linear` CLI signed in on
-     Mac Pro; Linear MCP (codex) signed in on dev-workers";
-   - otherwise the best one-click fix: install on the computer whose lab is
-     ready, or sign in where the CLI/MCP is already installed;
-   - `estate.route` when the agent also needs a lab.
-   These tools are read-only (not in `MUTATING_TOOLS`), operator seats only,
-   like the `estate.*` tools.
-3. **Freshness.** Rows older than 3× the refresh cadence are returned as
-   `stale` with their `observed_at`. They are never presented as current.
+1. **Read, do not copy.** `capabilities.list` / `capabilities.find` read each
+   seat computer's inventory live. They go through the same owner-scoped
+   paired-host registry and 30 s doctor cache as the lab picker
+   (`paired_hosts.list_seat_hosts` → `runtime.lab_doctor()`), so the answer is
+   never older than the computer's last scan plus that TTL. Revoking a pair
+   removes it at once.
+   - A closed projection (`project_inventory`) keeps only the v1 fields above:
+     bounded names, known enums, and fixes without `[redacted]`.
+   - `where`, the version source and unknown keys never reach an agent.
+   - A computer that cannot be reached is `offline`; one whose Tentacles sends
+     no inventory is `no_inventory`. Neither is ever guessed.
+   - A durable per-pair table is a later option if an offline computer's last
+     inventory is needed.
+2. **Agent tools.** Both tools are read-only (not in `MUTATING_TOOLS`) and
+   granted to operator seats only. Friends and Team turns do not get them.
+   `capabilities.find(need)` maps plain words ("file this in Linear") to
+   services on word boundaries. Its `status` is one of:
+   - `available`: the signed-in paths;
+   - `unverified`: installed or configured, sign-in unknown;
+   - `needs_sign_in`: the sign-in command and the computer to run it on;
+   - `missing`: the install command and where to run it;
+   - `unknown_need`.
+3. **Freshness.** An inventory older than 15 minutes (3× the cadence) is
+   `stale`. It is ranked last and never counted as signed in.
 
 ## 6. Redaction rules
 
