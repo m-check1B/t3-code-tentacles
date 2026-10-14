@@ -11,6 +11,7 @@ import {
   CAPABILITIES_SCHEMA,
   codexTomlMcpServers,
   formatCapabilities,
+  LAB_CONFIG_READERS,
   looksSecret,
   parseVersion,
   probeEnvironment,
@@ -384,4 +385,170 @@ test("capabilities scan is a known command with --json and --no-labs flags", () 
     command: "capabilities",
     options: { _: ["scan"], json: true, "no-labs": true },
   });
+});
+
+// B3 #51 (comment 12161): token-shaped names a user chose must never leave the computer.
+const TOKEN_SHAPED_NAMES = [
+  "AIzaSyD-SYNTHETIC0123456789abcdefghijk",
+  "sk_live_SYNTHETIC0123456789abcd",
+  "sk_test_SYNTHETIC0123456789abcd",
+  "rk_live_SYNTHETIC0123456789abcd",
+  "123456789:AAHsyntheticTelegramBotToken012345",
+  "hf_SYNTHETICabcdefghijklmnop0123",
+  "xapp-1-A0SYNTHETIC-0123456789-abcdef",
+  "ntn_SYNTHETIC0123456789abcdefghij",
+  "secret_SYNTHETIC0123456789abcdefgh",
+  "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y",
+  "api-key-ABCDEF1234567890ABCDEF",
+  "abcdefghijklmnopqrstuvwxyzabcdefgh",
+];
+
+test("token-shaped names are caught by the gate and dropped as names", () => {
+  for (const name of TOKEN_SHAPED_NAMES) {
+    assert.equal(looksSecret(name), true, `token shape passed the gate: ${name}`);
+  }
+  for (const safe of ["alibaba-open-code-review", "clickup-verduona", "github@claude-plugins", "playwright", "google-workspace-mcp", "27037243-41c5-42b6-9465-da5ba7dfeb8a"]) {
+    assert.equal(looksSecret(safe), false, `false positive: ${safe}`);
+  }
+});
+
+test("names reject colons, a leading dash, and more than 64 characters", { skip: !posix }, async (t) => {
+  const box = sandbox(t);
+  const servers = Object.fromEntries([
+    ...TOKEN_SHAPED_NAMES,
+    "--version",
+    "host:port",
+    `a${"b".repeat(64)}`,
+    "kept-server",
+  ].map((name) => [name, { command: "x" }]));
+  fs.writeFileSync(path.join(box.home, ".claude.json"), JSON.stringify({ mcpServers: servers }));
+  const document = await scanCapabilities({ env: { PATH: "/bin" }, home: box.home, registry: [], readers: { claude: LAB_CONFIG_READERS.claude } });
+  assert.deepEqual(document.mcp.map((row) => row.name), ["kept-server"]);
+  assert.equal(document.dropped, TOKEN_SHAPED_NAMES.length + 3);
+  const text = JSON.stringify(document);
+  for (const name of TOKEN_SHAPED_NAMES) assert.equal(text.includes(name), false);
+});
+
+test("root and other user homes are folded to ~", () => {
+  const document = redactCapabilities({ where: ["/root/.local/bin/gh", "/rootless/bin/x"] }, { home: "/home/none" });
+  assert.deepEqual(document.where, ["~/.local/bin/gh", "/rootless/bin/x"]);
+});
+
+test("a failing scan backs off instead of rescanning on every heartbeat", async () => {
+  let clock = 0;
+  let scans = 0;
+  const cache = new CapabilityCache({ scan: async () => { scans += 1; throw new Error("scan failed"); }, file: null, refreshMs: 300_000, minIntervalMs: 30_000, now: () => clock });
+  await assert.rejects(cache.refreshIfStale());
+  await cache.refreshIfStale();
+  clock += 10_000;
+  await cache.refreshIfStale();
+  assert.equal(scans, 1, "a failed scan is not retried inside minIntervalMs");
+  clock += 30_000;
+  await assert.rejects(cache.refreshIfStale());
+  assert.equal(scans, 2);
+});
+
+test("the state directory is tightened to 0700 when the file is written", { skip: !posix }, (t) => {
+  const box = sandbox(t);
+  const directory = path.join(box.root, "state");
+  fs.mkdirSync(directory, { mode: 0o755 });
+  fs.chmodSync(directory, 0o755);
+  writeCapabilitiesFile({ ok: true }, path.join(directory, "capabilities.v1.json"));
+  assert.equal(fs.statSync(directory).mode & 0o777, 0o700);
+  // A directory owned by someone else (sticky /tmp) is written into, never chmodded.
+  if (process.getuid() !== 0 && fs.statSync("/tmp").uid !== process.getuid()) {
+    const shared = path.join("/tmp", `kra7369-shared-${process.pid}.json`);
+    try {
+      writeCapabilitiesFile({ ok: true }, shared);
+      assert.equal(fs.statSync(shared).mode & 0o777, 0o600);
+    } finally {
+      fs.rmSync(shared, { force: true });
+    }
+  }
+});
+
+// B3 #51 blocking 1: a near-full lab catalog must not turn doctor-status into "unavailable".
+function bigInventory(rows) {
+  return {
+    schema: CAPABILITIES_SCHEMA,
+    clis: [{ id: "gh", state: "signed_in" }],
+    mcp: [],
+    plugins: [],
+    skills: Array.from({ length: rows }, (_, index) => ({ lab: "claude", name: `skill-${index}-${"x".repeat(40)}` })),
+    truncated: { mcp: false, plugins: false, skills: false },
+  };
+}
+
+test("the inventory is sized to the room the lab catalog leaves in the frame", async () => {
+  const frameBytes = 64 * 1024;
+  const catalog = { labs: [{ instanceId: "codex", models: ["m".repeat(60 * 1024)] }] };
+  const cache = new CapabilityCache({ scan: async () => bigInventory(500), file: null });
+  await cache.refresh();
+  const adapter = new LoopbackRuntimeAdapter({
+    client: { request: async () => ({}) },
+    doctorImpl: async () => catalog,
+    capabilityCache: cache,
+    frameBytes,
+  });
+  const reply = await adapter.doctorStatus();
+  const envelope = JSON.stringify({ version: 1, type: "rpc.result", id: "x".repeat(128), result: reply });
+  assert.ok(Buffer.byteLength(envelope) <= frameBytes, "the whole reply fits the frame");
+  assert.equal(reply.capabilityInventory.truncated.skills, true, "skills are trimmed to the room left");
+  assert.deepEqual(reply.capabilityInventory.clis, [{ id: "gh", state: "signed_in" }]);
+  assert.deepEqual(reply.labs, catalog.labs, "the lab catalog is never trimmed");
+  // Near-full catalog at the real 1 MiB pair frame: 990 KiB of models, 128 KiB inventory wanted.
+  const nearFull = new LoopbackRuntimeAdapter({
+    client: { request: async () => ({}) },
+    doctorImpl: async () => ({ labs: [{ instanceId: "cursor", models: Array.from({ length: 990 }, (_, i) => `${i}-${"m".repeat(1012)}`) }] }),
+    capabilityCache: cache,
+  });
+  const nearReply = await nearFull.doctorStatus();
+  const nearEnvelope = JSON.stringify({ version: 1, type: "rpc.result", id: "x".repeat(128), result: nearReply });
+  assert.ok(Buffer.byteLength(nearEnvelope) <= 1024 * 1024, "a near-full catalog plus inventory still fits 1 MiB");
+  assert.equal(nearReply.labs[0].models.length, 990);
+  const full = new LoopbackRuntimeAdapter({
+    client: { request: async () => ({}) },
+    doctorImpl: async () => ({ labs: [{ instanceId: "codex", models: ["m".repeat(frameBytes)] }] }),
+    capabilityCache: cache,
+    frameBytes,
+  });
+  assert.equal((await full.doctorStatus()).capabilityInventory, null, "no room means no inventory, not an error");
+});
+
+test("a doctor-status reply that still overflows is resent without the inventory, never unavailable", async () => {
+  const sent = [];
+  const sockets = [];
+  class FakeSocket {
+    constructor() { sockets.push(this); this.listeners = {}; setTimeout(() => this.emit("open"), 0); }
+    addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); }
+    emit(type, event = {}) { for (const fn of this.listeners[type] ?? []) fn(event); }
+    send(data) { sent.push(JSON.parse(data)); }
+    close() {}
+  }
+  const box = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles-capabilities-pair-"));
+  try {
+    const pairFile = path.join(box, "offer.json");
+    fs.writeFileSync(pairFile, JSON.stringify({ version: 1, endpoint: "wss://jack.example.invalid/api/tentacles/pair", pairToken: "synthetic-pair-token-value", expiresAt: new Date(Date.now() + 60_000).toISOString() }), { mode: 0o600 });
+    const runtime = {
+      seats: async () => null, originate: async () => null, continue: async () => null,
+      doctorStatus: async () => ({ pairing: { status: "paired" }, labs: [], capabilityInventory: { schema: CAPABILITIES_SCHEMA, filler: "y".repeat(4096) } }),
+    };
+    const { OutboundPairer } = await import("../src/outbound-pairer.mjs");
+    const controller = new AbortController();
+    const pairer = new OutboundPairer({ runtime, WebSocketImpl: FakeSocket, pairStateFile: path.join(box, "pair-presence.json"), maxFrameBytes: 2048 });
+    const running = pairer.run({ pairFile, machineId: "synthetic-machine", signal: controller.signal });
+    const until = async (predicate) => { for (let i = 0; i < 200 && !predicate(); i += 1) await new Promise((resolve) => setTimeout(resolve, 5)); };
+    await until(() => sent.some((frame) => frame.type === "pair.bind"));
+    const bind = sent.find((frame) => frame.type === "pair.bind");
+    sockets[0].emit("message", { data: JSON.stringify({ version: 1, type: "pair.bound", requestId: bind.requestId }) });
+    sockets[0].emit("message", { data: JSON.stringify({ version: 1, type: "rpc.request", id: "rpc-1", method: "doctor-status", params: {} }) });
+    await until(() => sent.some((frame) => frame.id === "rpc-1"));
+    controller.abort();
+    await running;
+    const reply = sent.find((frame) => frame.id === "rpc-1");
+    assert.equal(reply.type, "rpc.result");
+    assert.deepEqual(reply.result, { pairing: { status: "paired" }, labs: [], capabilityInventory: null });
+  } finally {
+    fs.rmSync(box, { recursive: true, force: true });
+  }
 });

@@ -13,7 +13,7 @@ import {
   writePairPresence,
 } from "./pair-state.mjs";
 import { createThreadLock, TURN_INTERRUPT_CONTRACT, TurnInterrupter } from "./turn-interrupt.mjs";
-import { boundForPublish } from "./capabilities.mjs";
+import { boundForPublish, MAX_PUBLISH_BYTES } from "./capabilities.mjs";
 
 export const PAIR_PROTOCOL_VERSION = 1;
 export const SPHERE_PRODUCT_ID = "agentjack-desktop";
@@ -244,6 +244,7 @@ export class LoopbackRuntimeAdapter {
     threadEventsDirectory,
     interruptOptions = {},
     capabilityCache = null,
+    frameBytes = DEFAULT_MAX_FRAME_BYTES,
   }) {
     if (!client) throw new Error("Loopback runtime requires a T3 client");
     this.client = client;
@@ -256,6 +257,7 @@ export class LoopbackRuntimeAdapter {
     this.threadEventsImpl = threadEventsImpl;
     this.threadEventsDirectory = threadEventsDirectory;
     this.capabilityCache = capabilityCache;
+    this.frameBytes = frameBytes;
     this.withThreadLock = createThreadLock();
     this.interrupter = new TurnInterrupter({
       readTurnResult: (tuple) => this.turnResult(tuple),
@@ -326,7 +328,9 @@ export class LoopbackRuntimeAdapter {
       // Sphere admits only the advertised v1 methods. A scan never delays this
       // reply: Jack gets the last inventory (null before the first scan).
       void this.refreshCapabilities().catch(() => {});
-      result.capabilityInventory = this.capabilityCache.current ? boundForPublish(this.capabilityCache.current) : null;
+      result.capabilityInventory = this.capabilityCache.current
+        ? boundForPublish(this.capabilityCache.current, inventoryRoom(result, this.frameBytes))
+        : null;
     }
     return result;
   }
@@ -393,6 +397,26 @@ export class RemoteRpcShim {
   }
 }
 
+export const DEFAULT_MAX_FRAME_BYTES = 1024 * 1024;
+// The rpc.result envelope around a reply: version, type and a 128-byte id.
+const RESULT_ENVELOPE_MARGIN = 1024;
+
+/**
+ * KRA-7369 (B3 #51): the inventory gets only the room the lab catalog leaves in
+ * the frame, capped at MAX_PUBLISH_BYTES. The catalog is never trimmed for it.
+ */
+export function inventoryRoom(reply, frameBytes = DEFAULT_MAX_FRAME_BYTES) {
+  const base = Buffer.byteLength(JSON.stringify({ ...reply, capabilityInventory: null }), "utf8");
+  // "null" is replaced by the document, so its 4 bytes are free room.
+  return Math.max(0, Math.min(MAX_PUBLISH_BYTES, frameBytes - RESULT_ENVELOPE_MARGIN - base + 4));
+}
+
+/** An oversized reply that carries an inventory is resent without it, never as unavailable. */
+export function withoutInventory(message) {
+  if (message?.type !== "rpc.result" || !isRecord(message.result) || !message.result.capabilityInventory) return null;
+  return { ...message, result: { ...message.result, capabilityInventory: null } };
+}
+
 function encodeBounded(message, maxBytes) {
   const encoded = JSON.stringify(message);
   if (Buffer.byteLength(encoded, "utf8") > maxBytes) throw new Error("Pair relay response exceeds the frame bound");
@@ -437,7 +461,7 @@ export class OutboundPairer {
     WebSocketImpl = globalThis.WebSocket,
     pairStateFile = DEFAULT_PAIR_STATE_FILE,
     handshakeTimeoutMs = 15_000,
-    maxFrameBytes = 1024 * 1024,
+    maxFrameBytes = DEFAULT_MAX_FRAME_BYTES,
     leaseMs = 30_000,
     heartbeatTimeoutMs = leaseMs,
     reconnectBaseMs = 500,
@@ -466,6 +490,8 @@ export class OutboundPairer {
     this.pairStateFile = pairStateFile;
     this.handshakeTimeoutMs = handshakeTimeoutMs;
     this.maxFrameBytes = maxFrameBytes;
+    // The runtime sizes the inventory to this pairer's real frame bound.
+    if (Number.isInteger(runtime?.frameBytes)) runtime.frameBytes = Math.min(runtime.frameBytes, maxFrameBytes);
     this.leaseMs = leaseMs;
     this.heartbeatTimeoutMs = heartbeatTimeoutMs;
     this.reconnectBaseMs = reconnectBaseMs;
@@ -781,7 +807,12 @@ export class OutboundPairer {
             try {
               send(result);
             } catch {
-              send(unavailable(id));
+              const slim = withoutInventory(result);
+              try {
+                send(slim ?? unavailable(id));
+              } catch {
+                send(unavailable(id));
+              }
             }
           }).catch(() => protocolFailure()).finally(() => inFlightRpcIds.delete(id));
         }).catch(() => protocolFailure());

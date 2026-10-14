@@ -21,7 +21,9 @@ export const CAPABILITY_MIN_SCAN_INTERVAL_MS = 30_000;
 const MAX_PROBE_STDOUT_BYTES = 4096;
 const MAX_CONFIG_BYTES = 16 * 1024 * 1024;
 const LIMITS = Object.freeze({ clis: 64, mcp: 256, plugins: 256, skills: 512 });
-const SAFE_NAME = /^[A-Za-z0-9@._:+\/-]{1,128}$/;
+// No ':' (Telegram-style tokens), no leading '-' (option injection into a fix
+// command such as `codex mcp login <name>`), at most 64 characters.
+export const SAFE_NAME = /^[A-Za-z0-9@][A-Za-z0-9@._+\/-]{0,63}$/;
 const SAFE_VERSION = /^[0-9][A-Za-z0-9.+-]{0,63}$/;
 const VERSION_TOKEN = /\b(\d+\.\d+(?:\.\d+)?(?:[-+][A-Za-z0-9.]+)?)\b/;
 
@@ -497,29 +499,45 @@ export const LAB_CONFIG_READERS = Object.freeze({
 
 const SECRET_SHAPES = [
   /\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}/,
+  /\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{8,}/,
+  /\bpk_[A-Za-z0-9_]{16,}/,
   /\bgh[pousr]_[A-Za-z0-9]{8,}/,
   /\bgithub_pat_[A-Za-z0-9_]{8,}/,
   /\bglpat-[A-Za-z0-9_-]{8,}/,
   /\bxox[abprs]-[A-Za-z0-9-]{8,}/,
+  /\bxapp-[A-Za-z0-9-]{8,}/,
   /\blin_(?:api|oauth)_[A-Za-z0-9]{8,}/,
-  /\bpk_[A-Za-z0-9_]{16,}/,
+  /\bhf_[A-Za-z0-9]{8,}/,
+  /\b(?:ntn|secret)_[A-Za-z0-9]{8,}/,
+  /\bAIza[0-9A-Za-z_-]{20,}/,
   /\bya29\.[A-Za-z0-9_-]{8,}/,
   /\bAKIA[0-9A-Z]{12,}/,
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/,
+  /\b\d{6,}:[A-Za-z0-9_-]{20,}/,
+  /\bapi[-_]?key[-_]?[A-Za-z0-9]{8,}/i,
   /\b(?:bearer|basic|token|password|passwd|secret|api[_-]?key)\s*[:=]/i,
   /\bbearer\s+\S{8,}/i,
-  /[0-9a-f]{32,}/i,
   /:\/\/[^/\s:@]+:[^/\s@]+@/,
   /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/,
 ];
 
-// A long base64/base64url run with mixed case and digits. Path separators end a
-// run, so long directory names (lowercase words and dashes) are not flagged.
-const LONG_TOKEN = /[A-Za-z0-9+_=-]{40,}/g;
+const ALNUM_RUN = /[A-Za-z0-9]{20,}/g;
+const BASE64_RUN = /[A-Za-z0-9+_=-]{40,}/g;
 
+/**
+ * Token check by shape, then by run. Separators (- _ . / @ space) end an
+ * alphanumeric run, so word-like names ("alibaba-open-code-review") pass.
+ * A run of 20+ is a token when it mixes letters and digits or cases; 32+ is
+ * a token whatever its case. A 40+ base64url run with all classes is one too.
+ */
 export function looksSecret(value) {
-  if (SECRET_SHAPES.some((shape) => shape.test(value))) return true;
-  return (String(value).match(LONG_TOKEN) ?? []).some((run) => /[a-z]/.test(run) && /[A-Z]/.test(run) && /[0-9]/.test(run));
+  const text = String(value);
+  if (SECRET_SHAPES.some((shape) => shape.test(text))) return true;
+  const tokenRun = (run) => run.length >= 32
+    || (/[0-9]/.test(run) && /[A-Za-z]/.test(run))
+    || (/[a-z]/.test(run) && /[A-Z]/.test(run));
+  if ((text.match(ALNUM_RUN) ?? []).some(tokenRun)) return true;
+  return (text.match(BASE64_RUN) ?? []).some((run) => /[a-z]/.test(run) && /[A-Z]/.test(run) && /[0-9]/.test(run));
 }
 
 /**
@@ -531,7 +549,7 @@ export function redactCapabilities(document, { home = os.homedir() } = {}) {
   let redactions = 0;
   const walk = (value) => {
     if (typeof value === "string") {
-      const folded = redactHomePaths(value, home);
+      const folded = redactHomePaths(value, home).replace(/(^|[\s"'(=])\/root(?=\/|$|\s)/g, "$1~");
       if (looksSecret(folded)) { redactions += 1; return "[redacted]"; }
       return folded;
     }
@@ -672,6 +690,10 @@ export function boundForPublish(document, maxBytes = MAX_PUBLISH_BYTES) {
 export function writeCapabilitiesFile(document, file = DEFAULT_CAPABILITIES_FILE) {
   const destination = path.resolve(file);
   fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
+  // An existing state dir keeps its mode under mkdir; tighten one we own, like
+  // the other state writers. A shared directory (an explicit /tmp path) is left alone.
+  const directory = path.dirname(destination);
+  if (process.platform !== "win32" && fs.statSync(directory).uid === process.getuid()) fs.chmodSync(directory, 0o700);
   const temporary = `${destination}.${process.pid}.tmp`;
   try {
     fs.writeFileSync(temporary, `${JSON.stringify(document, null, 2)}\n`, { mode: 0o600, flag: "wx" });
@@ -702,7 +724,13 @@ export class CapabilityCache {
     this.now = now;
     this.current = null;
     this.scannedAt = 0;
+    this.attemptedAt = null;
     this.pending = null;
+  }
+
+  /** True while the last attempt, good or failed, is inside minIntervalMs. */
+  recentlyAttempted() {
+    return this.attemptedAt !== null && this.now() - this.attemptedAt < this.minIntervalMs;
   }
 
   ageMs() {
@@ -711,6 +739,7 @@ export class CapabilityCache {
 
   refresh() {
     if (!this.pending) {
+      this.attemptedAt = this.now();
       this.pending = Promise.resolve().then(() => this.scanImpl()).then((document) => {
         this.current = document;
         this.scannedAt = this.now();
@@ -723,8 +752,10 @@ export class CapabilityCache {
 
   /** Background refresh hook for the heartbeat: rescans only when the inventory is stale. */
   refreshIfStale() {
-    if (this.ageMs() >= this.refreshMs) return this.refresh();
-    return Promise.resolve(this.current);
+    // A failed scan keeps scannedAt unset; backing off by attempt stops a
+    // broken scan from respawning probes on every heartbeat and doctor read.
+    if (this.ageMs() >= this.refreshMs && !this.recentlyAttempted()) return this.refresh();
+    return this.pending ?? Promise.resolve(this.current);
   }
 
   /** maxAgeMs bounds staleness; never rescans more often than minIntervalMs. */

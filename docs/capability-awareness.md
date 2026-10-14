@@ -98,6 +98,14 @@ Every probe follows these rules:
   `GH_PROMPT_DISABLED=1`, `GIT_TERMINAL_PROMPT=0` and `NONINTERACTIVE=1`.
   `BROWSER` is set to a no-op. A probe that tries to start a login flow cannot
   open a browser, and it hits its timeout.
+  - The full environment is kept on purpose. Some CLIs sign in through it
+    (`GH_TOKEN`), and an agent on the same computer sees the same environment,
+    so a reduced one would report false sign-outs.
+  - No probe output is kept, so the environment never leaves the computer.
+- Some status probes **make network calls**. `gh auth status`,
+  `claude auth status` and possibly `codex mcp list` check with their services.
+  A running pair does this at most every 5 minutes, and a failed scan backs
+  off by the same 30 s minimum interval as a forced refresh.
 - It only runs read-only status commands (`--version`, `auth status`,
   `login status`, `mcp list --json`). There are no login, refresh or install
   commands.
@@ -176,8 +184,8 @@ Field notes:
 - The document carries no hostname: on a Mac it often holds the owner's name.
   Jack already knows which computer it is from the pair.
 - Limits: 64 CLI rows, 256 MCP rows, 256 plugin rows and 512 skill rows.
-- `dropped` counts names that failed `^[A-Za-z0-9@._:+/-]{1,128}$` or looked
-  like a secret.
+- `dropped` counts names that failed `^[A-Za-z0-9@][A-Za-z0-9@._+/-]{0,63}$`
+  (no `:`, no leading `-`, at most 64 characters) or looked like a secret.
 - `redactions` counts strings replaced by the final gate.
 
 Additive fields are allowed inside v1. A rename or removal is a v2 schema.
@@ -210,9 +218,18 @@ closed `Literal`. Advertising a new method before Sphere ships it would unpair
 every computer. Sphere passes `rpc.result.result` through as `Any` under a
 1 MiB frame.
 
-The published copy is therefore bounded to **128 KiB** (`boundForPublish`).
-Skills are trimmed first, then plugins, then MCP rows, with `truncated` flags.
-CLI rows always stay. A future `capabilities` RPC is an additive Sphere +
+The published copy is bounded twice, so the inventory can never take
+`doctor-status` down:
+
+- **Room left.** `inventoryRoom` gives the inventory only the room the lab
+  catalog leaves in the pairer's frame, minus the envelope, capped at
+  **128 KiB**. The catalog is never trimmed for it. Within that room,
+  `boundForPublish` trims skills first, then plugins, then MCP rows, with
+  `truncated` flags. CLI rows always stay. No room means
+  `capabilityInventory: null`.
+- **Overflow fallback.** If an encoded reply still exceeds the frame, the
+  pairer resends it with `capabilityInventory: null`. It never answers
+  `computer.unavailable` because of the inventory. A future `capabilities` RPC is an additive Sphere +
 Tentacles change; this field stays for older relays.
 
 Jack side (agent-jack-3 PR, `api/src/jack_api/capability_inventory.py`):
@@ -253,22 +270,28 @@ The rules are enforced in code and covered by `test/capabilities.test.mjs`:
    `stdout-nonempty` probe. Stderr is never read.
 3. **Never environment.** No env name or value is emitted.
 4. **Paths** are folded to `~` (`redactHomePaths`). `/Users/<x>`,
-   `/home/<x>` and `C:\Users\<x>` become `~`.
+   `/home/<x>`, `C:\Users\<x>` and `/root` become `~`.
 5. **Names** must match the safe-name pattern and not look secret. Otherwise
    they are dropped and counted.
 6. **Final gate.** `redactCapabilities` walks the whole document and replaces
    any string with a credential shape with `"[redacted]"`. Credential shapes
    cover:
-   - `sk-`, `ghp_`, `github_pat_`, `glpat-`, `xox?-`, `lin_api_`, `ya29.`,
-     `AKIA` and JWT prefixes;
+   - prefixes: `sk-`, `sk_live_`/`sk_test_` (and `rk_`/`pk_`), `ghp_`,
+     `github_pat_`, `glpat-`, `xox?-`, `xapp-`, `lin_api_`, `hf_`, `ntn_`,
+     `secret_`, `AIza`, `ya29.`, `AKIA`, JWT, Telegram bot tokens
+     (`<digits>:<20+>`) and `api-key-…`;
    - `Bearer …`, `token=`, `password:` and similar;
-   - 32+ hex characters, or a 40+ character mixed-case base64 run;
+   - an alphanumeric run (separators end a run) of 20+ characters that mixes
+     letters and digits or cases, or any run of 32+ characters whatever its
+     case;
+   - a 40+ character base64url run with all character classes;
    - URL userinfo and email addresses.
 
    Then it counts `redactions`. A non-zero count on a real computer is a bug to
    report by field name only.
 7. **No hostname, username or machine id** in the document.
-8. **The file is owner-only** (0600, in the 0700 state dir).
+8. **The file is owner-only**: 0600, in a state dir tightened to 0700 on every
+   write.
 
 ## 7. Covered computers
 
