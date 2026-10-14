@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -41,6 +42,15 @@ function sandbox(t) {
   fs.mkdirSync(home, { recursive: true });
   fs.mkdirSync(bin, { recursive: true });
   return { root, home, bin };
+}
+
+// Containers without an init leave killed orphans as unreaped zombies, which
+// still answer kill(pid, 0). A zombie is not running.
+function processRunning(pid) {
+  try { process.kill(pid, 0); } catch (error) { return error.code !== "ESRCH"; }
+  try { return !/^\d+ \(.*\) [ZX]/s.test(fs.readFileSync(`/proc/${pid}/stat`, "utf8")); } catch { /* no procfs */ }
+  const result = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" });
+  return result.status === 0 && !/^[ZX]/.test(result.stdout.trim());
 }
 
 function fakeCli(bin, name, script) {
@@ -121,7 +131,7 @@ test("a hanging probe is killed at its timeout and the scan still completes", { 
   assert.equal(rows.fakeok.state, "signed_in");
   const pid = Number(fs.readFileSync(pidFile, "utf8"));
   await new Promise((resolve) => setTimeout(resolve, 100));
-  assert.throws(() => process.kill(pid, 0), /ESRCH/, "the whole probe process group is killed");
+  assert.equal(processRunning(pid), false, "the whole probe process group is killed");
 });
 
 test("the scan deadline bounds total time and marks the document incomplete", { skip: !posix }, async (t) => {
