@@ -81,6 +81,12 @@ the pair token and this non-secret host contract:
 }
 ```
 
+The method list is exact: Sphere rejects a bind that advertises a method it
+does not know, so new methods need a Sphere release first. The connector
+inventory (KRA-7369) therefore rides inside the `doctor-status` result as
+`capabilityInventory` (bounded to 128 KiB, names and states only); see
+[capability-awareness.md](capability-awareness.md).
+
 After `pair.bound`, the endpoint may send bounded `rpc.request` frames for only
 those advertised methods. Tentacles returns `rpc.result`, or this fail-closed envelope
 without reflecting local error text:
