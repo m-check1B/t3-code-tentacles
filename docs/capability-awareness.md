@@ -249,22 +249,33 @@ Jack side (agent-jack-3 PR, `api/src/jack_api/capability_inventory.py`):
      inventory is needed.
 2. **Agent tools.** Both tools are read-only (not in `MUTATING_TOOLS`) and
    granted to operator seats only. Friends and Team turns do not get them.
-   - **Need → service.** `capabilities.find(need)` maps plain words ("file
-     this in Linear") to services on word boundaries. For the Founder
-     business it also reuses estate-guardian:
+   - **Need routing.** For the Founder business the need goes through
+     estate-guardian first:
      - `estate.classify` gates a `restricted` need to the Founder path, with
        no install or sign-in suggestion;
+     - `estate.route` supplies the lab and host that rank equally ready paths;
      - `estate.capability` names (`linear`, `clickup.verduona`,
-       `gmail.read_draft`) extend the vocabulary and supply a worker route.
+       `gmail.read_draft`) give a worker route.
+   - **Inventory matching.** Only matching stays local. A need names a
+     service when a term on its word boundaries is a CLI id, an MCP or plugin
+     name, or a `services` value in the seat's inventories, Jack's reviewed
+     MCP catalog (`tool_registry.MCP_CATALOG`), or an estate capability.
+     Jack keeps no private synonym table.
+   - **No dead ends.** `fixes` holds one concrete fix per computer:
+     - sign in where the connector is signed out;
+     - install the CLI (from the registry hint) where it is missing;
+     - for a catalog MCP such as ClickUp, add it through the computer's
+       signed-in or installed lab (installing the lab first if needed),
+       with the Market link `/app/marketplace?tab=catalog`;
+     - reconnect an offline computer, or update a Tentacles that sends no
+       inventory;
+     - pair a computer when the seat has none.
    - **Statuses, in this order:**
      - `available`: the signed-in paths;
      - `unverified`: installed or configured, sign-in unknown;
-     - `needs_sign_in`: the sign-in command and the computer to run it on;
-     - `via_worker`: no paired computer has it; the estate worker's hire line;
-     - `missing`: either the CLI install command and where to run it, or, for
-       an MCP-only service such as ClickUp, the exact
-       `codex mcp add … && codex mcp login …` / `claude mcp add --transport
-       http …` command on a computer whose lab is signed in;
+     - `needs_sign_in`;
+     - `via_worker`: the estate worker's hire line;
+     - `missing`, with the first concrete fix;
      - `restricted`;
      - `unknown_need`.
    - **Names.** The Jack projection applies the same name rule and token
