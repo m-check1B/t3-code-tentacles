@@ -18,6 +18,9 @@ import { boundForPublish } from "./capabilities.mjs";
 export const PAIR_PROTOCOL_VERSION = 1;
 export const SPHERE_PRODUCT_ID = "agentjack-desktop";
 export const SPHERE_ABILITY = "desktop.use";
+// Sphere rejects a pair.bind whose rpc advert names a method it does not know
+// (jack_pairing.py _valid_rpc_capabilities), so a new method needs a Sphere
+// release first. Additive data rides an existing answer (KRA-7369).
 export const REMOTE_RPC_METHODS = Object.freeze(["seats", "originate", "continue", "doctor-status", "turn-result", "thread-events", "thread-artifact", "interrupt"]);
 
 const offerSecrets = new WeakMap();
