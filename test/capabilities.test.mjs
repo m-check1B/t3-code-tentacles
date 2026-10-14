@@ -20,7 +20,6 @@ import {
   writeCapabilitiesFile,
 } from "../src/capabilities.mjs";
 import { LoopbackRuntimeAdapter } from "../src/outbound-pairer.mjs";
-import { redactHomePaths } from "../src/platform.mjs";
 import { KNOWN_COMMANDS, parseArgs } from "../src/cli.mjs";
 
 const posix = process.platform !== "win32";
@@ -88,8 +87,9 @@ test("present, signed-out, missing and unverified CLIs report state, version and
     { state: rows.fakegh.state, auth: rows.fakegh.auth, version: rows.fakegh.version, onPath: rows.fakegh.onPath, fix: rows.fakegh.fix },
     { state: "signed_in", auth: "signed_in", version: "2.61.0", onPath: true, fix: null },
   );
-  // The fixture lives under TMPDIR, which some runners put inside a home directory.
-  assert.equal(rows.fakegh.where, redactHomePaths(path.join(box.bin, "fakegh"), box.home));
+  // The fixture lives under TMPDIR, which CI runners put inside a home or a
+  // hash-named directory; the gate folds the first and fails closed on the second.
+  assert.equal(rows.fakegh.where, redactCapabilities({ where: path.join(box.bin, "fakegh") }, { home: box.home }).where);
   assert.deepEqual([rows.fakeout.state, rows.fakeout.fix], ["signed_out", { kind: "sign_in", command: "fakeout auth login" }]);
   assert.equal(rows.fakeunverified.auth, "unknown", "an unverified probe never claims signed out");
   assert.equal(rows.fakeunverified.state, "installed");
