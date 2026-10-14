@@ -13,6 +13,7 @@ import {
   writePairPresence,
 } from "./pair-state.mjs";
 import { createThreadLock, TURN_INTERRUPT_CONTRACT, TurnInterrupter } from "./turn-interrupt.mjs";
+import { boundForPublish } from "./capabilities.mjs";
 
 export const PAIR_PROTOCOL_VERSION = 1;
 export const SPHERE_PRODUCT_ID = "agentjack-desktop";
@@ -239,6 +240,7 @@ export class LoopbackRuntimeAdapter {
     threadEventsImpl = threadEvents,
     threadEventsDirectory,
     interruptOptions = {},
+    capabilityCache = null,
   }) {
     if (!client) throw new Error("Loopback runtime requires a T3 client");
     this.client = client;
@@ -250,6 +252,7 @@ export class LoopbackRuntimeAdapter {
     this.doctorImpl = doctorImpl;
     this.threadEventsImpl = threadEventsImpl;
     this.threadEventsDirectory = threadEventsDirectory;
+    this.capabilityCache = capabilityCache;
     this.withThreadLock = createThreadLock();
     this.interrupter = new TurnInterrupter({
       readTurnResult: (tuple) => this.turnResult(tuple),
@@ -299,6 +302,10 @@ export class LoopbackRuntimeAdapter {
     return this.modelRefresh;
   }
 
+  refreshCapabilities() {
+    return this.capabilityCache ? this.capabilityCache.refreshIfStale() : Promise.resolve(null);
+  }
+
   async doctorStatus(params = {}) {
     if (Object.keys(requireRecord(params, "doctor-status params")).length) {
       throw new Error("doctor-status does not accept remote parameters");
@@ -310,7 +317,15 @@ export class LoopbackRuntimeAdapter {
       supported = capabilities?.talkTurnResult === "v1";
     } catch { /* Older or unavailable T3 has no exact-result capability. */ }
     // Exact interruption is only provable through the exact turn-result query.
-    return { ...report, capabilities: { talkTurnResult: supported ? "v1" : null, turnInterrupt: supported ? TURN_INTERRUPT_CONTRACT : null } };
+    const result = { ...report, capabilities: { talkTurnResult: supported ? "v1" : null, turnInterrupt: supported ? TURN_INTERRUPT_CONTRACT : null } };
+    if (this.capabilityCache) {
+      // KRA-7369: the connector inventory rides the lab-catalog answer, because
+      // Sphere admits only the advertised v1 methods. A scan never delays this
+      // reply: Jack gets the last inventory (null before the first scan).
+      void this.refreshCapabilities().catch(() => {});
+      result.capabilityInventory = this.capabilityCache.current ? boundForPublish(this.capabilityCache.current) : null;
+    }
+    return result;
   }
 
   interrupt(params) {
@@ -744,6 +759,9 @@ export class OutboundPairer {
             // cannot delay pong or expose diagnostics to the relay.
             if (typeof this.shim.runtime.refreshModels === "function") {
               void Promise.resolve().then(() => this.shim.runtime.refreshModels()).catch(() => {});
+            }
+            if (typeof this.shim.runtime.refreshCapabilities === "function") {
+              void Promise.resolve().then(() => this.shim.runtime.refreshCapabilities()).catch(() => {});
             }
             return;
           }

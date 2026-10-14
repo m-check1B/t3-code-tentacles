@@ -54,6 +54,13 @@ import {
 } from "./model-selection.mjs";
 import { applyIntents, observe, report, INTENT_ACTIONS } from "./orchestrate.mjs";
 import { LoopbackRuntimeAdapter, OutboundPairer } from "./outbound-pairer.mjs";
+import {
+  CapabilityCache,
+  DEFAULT_CAPABILITIES_FILE,
+  formatCapabilities,
+  scanCapabilities,
+  writeCapabilitiesFile,
+} from "./capabilities.mjs";
 import { DEFAULT_PAIR_STATE_FILE } from "./pair-state.mjs";
 import { redactHomePaths } from "./platform.mjs";
 import {
@@ -77,7 +84,7 @@ export const KNOWN_COMMANDS = new Set([
   "install-deepseek-provider", "remove-deepseek-provider", "install-kimi-provider", "remove-kimi-provider",
   "install-codex-app-provider", "remove-codex-app-provider",
   "restore-native-grok", "use-native-grok-cached-auth", "observe", "report", "act", "orchestrate", "originate", "watch",
-  "install-service", "service-status", "restart-service", "uninstall-service",
+  "install-service", "service-status", "restart-service", "uninstall-service", "capabilities",
 ]);
 
 function assertNoReservedRemovedInstance(command, instanceId) {
@@ -113,7 +120,7 @@ export function parseArgs(argv) {
     if (command === "originate" && !ORIGINATE_OPTION_KEYS.has(key)) {
       throw new Error(`Unknown originate option --${key}; run tentacles help for supported options`);
     }
-    if (key === "help" || key === "once" || key === "allow-all-projects" || key === "no-wait" || key === "json") {
+    if (key === "help" || key === "once" || key === "allow-all-projects" || key === "no-wait" || key === "json" || key === "no-labs") {
       options[key] = true;
       continue;
     }
@@ -204,6 +211,7 @@ Usage:
   tentacles reauth --t3-bin /absolute/t3 --t3-home /absolute/.t3 [--token-file /absolute/t3.token]
   tentacles reauth --computer NAME [--t3-bin /remote/t3] [--t3-home /remote/.t3]
   tentacles doctor [--json] [--models summary|full]
+  tentacles capabilities scan [--json] [--no-labs]
   tentacles pair --pair-file OWNER_ONLY_JSON --machine-id SPHERE_MACHINE_ID [--pair-state-file PATH]
   tentacles install-provider [--instance hermes] [--profile default] [--model MODEL]
   tentacles remove-provider [--instance hermes]
@@ -240,6 +248,13 @@ ready/idle | blocked, plus an error-presence marker and a bounded model label)
 from one per-thread HTTP read; provider error text is never printed.
 It does not scrape the observe snapshot. observe remains the additive full-state
 read.
+
+capabilities scan lists the connectors on this computer: vendor CLIs from the
+curated registry (installed, version, signed in or out), MCP servers, plugins and
+skills configured per lab (names only), and lab readiness. Each missing or
+signed-out row carries its one fix. Probes are time-boxed and never start a
+login. The result is also written owner-only to <state dir>/capabilities.v1.json.
+A running pair refreshes it every 5 minutes and sends it with doctor-status.
 
 Codex routes are explicit: --instance codex uses T3's standalone CLI runtime;
 --instance codex-app uses the separately configured Codex app-bundled runtime.
@@ -339,6 +354,26 @@ async function main() {
     });
   }
 
+  if (command === "capabilities") {
+    const [subcommand = "scan"] = options._;
+    if (subcommand !== "scan") throw new Error(`Unknown capabilities subcommand: ${subcommand}; use capabilities scan`);
+    let doctorReport;
+    if (options["no-labs"] !== true) {
+      try {
+        doctorReport = await Promise.race([
+          doctor(new T3Client(), { pairStateFile: DEFAULT_PAIR_STATE_FILE }),
+          delay(10_000).then(() => null),
+        ]);
+      } catch {
+        doctorReport = null;
+      }
+    }
+    const document = await scanCapabilities({ version: PACKAGE_VERSION, doctorReport });
+    writeCapabilitiesFile(document, options["capabilities-file"] || DEFAULT_CAPABILITIES_FILE);
+    console.log(options.json ? JSON.stringify(document, null, 2) : formatCapabilities(document));
+    return;
+  }
+
   if (command === "install-service") {
     console.log(JSON.stringify(installService({ cliPath: fileURLToPath(import.meta.url), ...serviceOptions(options) }), null, 2));
     return;
@@ -399,7 +434,9 @@ async function main() {
   }
   if (command === "pair") {
     const pairStateFile = options["pair-state-file"] || DEFAULT_PAIR_STATE_FILE;
-    const runtime = new LoopbackRuntimeAdapter({ client, pairStateFile });
+    const capabilityCache = new CapabilityCache({ scan: () => scanCapabilities({ version: PACKAGE_VERSION }) });
+    void capabilityCache.refresh().catch(() => {});
+    const runtime = new LoopbackRuntimeAdapter({ client, pairStateFile, capabilityCache });
     const pairer = new OutboundPairer({
       runtime,
       pairStateFile,

@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- `tentacles capabilities scan [--json]` (KRA-7369): which vendor CLIs, MCP
+  servers, plugins and skills this computer has, signed in or not, with the one
+  fix when missing. Probes are time-boxed, shell-free and never start a login;
+  lab configs are read for names only and a redaction gate checks the result.
+  A running `tentacles pair` refreshes it every 5 minutes and sends it to Jack
+  inside `doctor-status` as `capabilityInventory`. See
+  [docs/capability-awareness.md](docs/capability-awareness.md).
+
 ## [0.4.2] - 2026-10-08
 
 ### Fixed
