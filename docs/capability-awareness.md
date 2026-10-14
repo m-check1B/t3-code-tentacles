@@ -249,13 +249,27 @@ Jack side (agent-jack-3 PR, `api/src/jack_api/capability_inventory.py`):
      inventory is needed.
 2. **Agent tools.** Both tools are read-only (not in `MUTATING_TOOLS`) and
    granted to operator seats only. Friends and Team turns do not get them.
-   `capabilities.find(need)` maps plain words ("file this in Linear") to
-   services on word boundaries. Its `status` is one of:
-   - `available`: the signed-in paths;
-   - `unverified`: installed or configured, sign-in unknown;
-   - `needs_sign_in`: the sign-in command and the computer to run it on;
-   - `missing`: the install command and where to run it;
-   - `unknown_need`.
+   - **Need → service.** `capabilities.find(need)` maps plain words ("file
+     this in Linear") to services on word boundaries. For the Founder
+     business it also reuses estate-guardian:
+     - `estate.classify` gates a `restricted` need to the Founder path, with
+       no install or sign-in suggestion;
+     - `estate.capability` names (`linear`, `clickup.verduona`,
+       `gmail.read_draft`) extend the vocabulary and supply a worker route.
+   - **Statuses, in this order:**
+     - `available`: the signed-in paths;
+     - `unverified`: installed or configured, sign-in unknown;
+     - `needs_sign_in`: the sign-in command and the computer to run it on;
+     - `via_worker`: no paired computer has it; the estate worker's hire line;
+     - `missing`: either the CLI install command and where to run it, or, for
+       an MCP-only service such as ClickUp, the exact
+       `codex mcp add … && codex mcp login …` / `claude mcp add --transport
+       http …` command on a computer whose lab is signed in;
+     - `restricted`;
+     - `unknown_need`.
+   - **Names.** The Jack projection applies the same name rule and token
+     check as Tentacles. A token-shaped name or fix from an older Tentacles
+     never reaches an agent.
 3. **Freshness.** An inventory older than 15 minutes (3× the cadence) is
    `stale`. It is ranked last and never counted as signed in.
 
