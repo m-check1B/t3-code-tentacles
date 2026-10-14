@@ -552,3 +552,28 @@ test("a doctor-status reply that still overflows is resent without the inventory
     fs.rmSync(box, { recursive: true, force: true });
   }
 });
+
+test("a failing scan under rapid relay pings scans at most once per minIntervalMs", async () => {
+  let clock = 1_000;
+  let scans = 0;
+  const cache = new CapabilityCache({
+    scan: async () => { scans += 1; throw new Error("scan failed"); },
+    file: null, refreshMs: 300_000, minIntervalMs: 30_000, now: () => clock,
+  });
+  const adapter = new LoopbackRuntimeAdapter({
+    client: { request: async () => ({}) },
+    doctorImpl: async () => ({ labs: [] }),
+    capabilityCache: cache,
+  });
+  // The pairer calls refreshCapabilities on every ping and doctor-status on every read.
+  for (let ping = 0; ping < 50; ping += 1) {
+    await adapter.refreshCapabilities().catch(() => {});
+    await adapter.doctorStatus();
+    clock += 500;
+  }
+  assert.equal(scans, 1, "25 s of pings after a failed scan start no second scan");
+  assert.equal(typeof cache.lastAttemptAt, "number");
+  clock += 30_000;
+  await adapter.refreshCapabilities().catch(() => {});
+  assert.equal(scans, 2, "the next interval allows exactly one retry");
+});

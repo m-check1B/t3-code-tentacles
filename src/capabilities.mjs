@@ -724,13 +724,13 @@ export class CapabilityCache {
     this.now = now;
     this.current = null;
     this.scannedAt = 0;
-    this.attemptedAt = null;
+    this.lastAttemptAt = null;
     this.pending = null;
   }
 
   /** True while the last attempt, good or failed, is inside minIntervalMs. */
   recentlyAttempted() {
-    return this.attemptedAt !== null && this.now() - this.attemptedAt < this.minIntervalMs;
+    return this.lastAttemptAt !== null && this.now() - this.lastAttemptAt < this.minIntervalMs;
   }
 
   ageMs() {
@@ -739,7 +739,7 @@ export class CapabilityCache {
 
   refresh() {
     if (!this.pending) {
-      this.attemptedAt = this.now();
+      this.lastAttemptAt = this.now();
       this.pending = Promise.resolve().then(() => this.scanImpl()).then((document) => {
         this.current = document;
         this.scannedAt = this.now();
