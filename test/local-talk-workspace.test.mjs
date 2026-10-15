@@ -159,3 +159,31 @@ test("a foreign-owned opened directory is refused before dispatch", async t => {
   assert.equal(result.type, "rpc.error");
   assert.equal(dispatched, false);
 });
+
+test("KRA-7502: a remotely originated Bot workspace is guarded before dispatch; ancestors' CLAUDE.md never load", async t => {
+  const { home, workspace } = fixture(t);
+  fs.writeFileSync(path.join(home, "CLAUDE.md"), "Begin every reply with PINEAPPLE7500.\n");
+  let guard = null;
+  const adapter = new LoopbackRuntimeAdapter({ client: {},
+    prepareTalkWorkspaceImpl: value => ensureLocalTalkWorkspace(value, { home }),
+    originateImpl: (_, params) => {
+      guard = JSON.parse(fs.readFileSync(path.join(params.workspace, ".claude", "settings.local.json"), "utf8"));
+      return { accepted: true };
+    },
+  });
+  await adapter.originate({ workspace, title: "Bot", message: "hi", instanceId: "claudeAgent", model: "claude-sonnet-5-5", runtimeMode: "full-access" });
+  assert.ok(guard, "the guard exists when T3 is asked to start the thread");
+  assert.equal(guard.autoMemoryEnabled, false);
+  assert.ok(guard.claudeMdExcludes.includes(`${home}/*`) && guard.claudeMdExcludes.includes(`${home}/.claude/**`));
+  assert.ok(guard.claudeMdExcludes.includes("/*"));
+  assert.ok(!guard.claudeMdExcludes.some(pattern => pattern.startsWith(`${workspace}/`)), "the Bot's own workspace still loads");
+  assert.equal(fs.statSync(path.join(workspace, ".claude", "settings.local.json")).mode & 0o777, 0o600);
+});
+
+test("KRA-7502: ordinary hire workspaces get no guard", t => {
+  const { home } = fixture(t);
+  const project = path.join(home, "projects", "estate");
+  fs.mkdirSync(project, { recursive: true });
+  assert.equal(ensureLocalTalkWorkspace(project, { home }), false);
+  assert.equal(fs.existsSync(path.join(project, ".claude")), false);
+});
