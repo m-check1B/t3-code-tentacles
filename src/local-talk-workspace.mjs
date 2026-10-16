@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { guardTalkWorkspace } from "./talk-instruction-guard.mjs";
 
 const PRIVATE_ROOT = ".jack-local-scratch";
 const HEX_ID = /^[a-f0-9]{32}$/;
@@ -51,5 +52,8 @@ export function ensureLocalTalkWorkspace(workspace, { home = os.homedir() } = {}
     directory = path.join(directory, part);
     privateDirectory(directory);
   }
+  // KRA-7500/KRA-7502: Claude Code loads CLAUDE.md, AGENTS.md and user memory from
+  // every ancestor; the Bot must obey only its own instructions. Same file as Jack's.
+  guardTalkWorkspace(directory);
   return true;
 }
