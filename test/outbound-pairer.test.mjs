@@ -1036,17 +1036,33 @@ test("redactFailureLine removes every shared secret shape and keeps limit text",
 });
 
 // B3: exercise the real wire projection, not only the redaction helper.
-test("failed turn-result never exports any shared credential shape", async () => {
+test("failed turn-result never exports any shared credential shape", async (t) => {
   const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
   const base = { ...params, state: "failed", turnId: "turn", assistantMessageId: null,
     instanceId: "claudeAgent", model: "fixture", effort: "high", outputText: null };
   const vectors = JSON.parse(fs.readFileSync(new URL("./fixtures/redaction_vectors.json", import.meta.url), "utf8"));
-  for (const lastError of vectors.secrets) {
+  for (const [index, lastError] of vectors.secrets.entries()) {
+    await t.test(`shared credential vector ${index + 1}`, async () => {
+      const adapter = new LoopbackRuntimeAdapter({ client: {
+        request: async () => base,
+        thread: async () => ({ thread: { id: "thread", session: { lastError } } })
+      } });
+      const result = await adapter.turnResult(params);
+      assert.equal(JSON.stringify(result).includes("SECRET"), false, lastError);
+    });
+  }
+});
+
+// Cross-language first-line contract covers CR/LF/CRLF, LS, PS and NEL.
+test("failed turn-result selects the first nonempty line across all line boundaries", async () => {
+  const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
+  const vectors = JSON.parse(fs.readFileSync(new URL("./fixtures/redaction_vectors.json", import.meta.url), "utf8"));
+  for (const { input: lastError, expected } of vectors.lines) {
     const adapter = new LoopbackRuntimeAdapter({ client: {
-      request: async () => base,
+      request: async () => ({ ...params, state: "failed", turnId: "turn", assistantMessageId: null,
+        instanceId: "claudeAgent", model: "fixture", effort: "high", outputText: null }),
       thread: async () => ({ thread: { id: "thread", session: { lastError } } })
     } });
-    const result = await adapter.turnResult(params);
-    assert.equal(JSON.stringify(result).includes("SECRET"), false, lastError);
+    assert.equal((await adapter.turnResult(params)).failureDetail, expected, JSON.stringify(lastError));
   }
 });
