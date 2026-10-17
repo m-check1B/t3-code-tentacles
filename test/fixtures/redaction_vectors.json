@@ -1,0 +1,33 @@
+{
+  "comment": "Shared redaction vectors: Tentacles #53 redactFailureLine, Jack API safe_line and the web refusal filter all test these. No output may contain 'SECRET'.",
+  "secrets": [
+    "{\"access_token\":\"abcdefSECRET1234\"}",
+    "{\"api_key\": \"plainSECRETvalue\"}",
+    "API Error: 500 {\"error\":{\"access_token\":\"abcSECRET\"}} failed",
+    "client_secret=XYZSECRET123",
+    "x_auth_token=SECRETtok",
+    "aws_secret_access_key=SECRETaws",
+    "private_key: SECRETpk",
+    "token \"quotedSECRET\"",
+    "password='SECRETpw'",
+    "Authorization: Bearer SECRETbearer",
+    "auth Basic SECRETbasic==",
+    "ghp_SECRETabcdefghijklmnop1234",
+    "gho_SECRETabcdefghijklmnop1234",
+    "github_pat_11SECRET_abcdefghijkl",
+    "AKIASECRET1234567890",
+    "xoxb-SECRET-1234567890",
+    "xoxp-SECRET-1234567890",
+    "glpat-SECRETabcdef123456",
+    "sk-ant-api03-SECRETabcdef",
+    "sk-SECRETabcdefgh",
+    "eyJhbGciOiJIUzI1NiJ9.SECRETpayload.signature",
+    "opaque SECRETabcdefghijklmnopqrstuvwxyz0123456789",
+    "\u001b]8;;https://example.com/SECRETlink\u0007click\u001b]8;;\u0007"
+  ],
+  "unchanged": [
+    "Claude usage limit reached. Send the message again once the limit resets.",
+    "Codex usage limit reached. The weekly limit resets in 1d 6h. Send the message again once the limit resets.",
+    "You've hit your weekly limit · resets Oct 20, 11pm (Europe/Prague)"
+  ]
+}

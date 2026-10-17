@@ -1022,3 +1022,15 @@ test("failed turn-result carries the session's last error, redacted, first line 
   assert.equal(result.state, "failed");
   assert.equal("failureDetail" in result, false);
 });
+
+// Review P1 (17 Oct): one shared vector set with Jack (api/tests/fixtures/redaction_vectors.json).
+test("redactFailureLine removes every shared secret shape and keeps limit text", async () => {
+  const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
+  const vectors = JSON.parse(fs.readFileSync(new URL("./fixtures/redaction_vectors.json", import.meta.url), "utf8"));
+  for (const secret of vectors.secrets) {
+    const out = redactFailureLine(secret);
+    assert.equal(/SECRET/.test(out ?? ""), false, `${JSON.stringify(secret)} -> ${out}`);
+    assert.equal(/\u001b/.test(out ?? ""), false);
+  }
+  for (const text of vectors.unchanged) assert.equal(redactFailureLine(text), text);
+});

@@ -359,21 +359,39 @@ export class LoopbackRuntimeAdapter {
   }
 }
 
+// Shared with Agent Jack (api/src/jack_api/local_claude_failure.py safe_line and
+// web/src/lib/local_claude_failure.ts); test/fixtures/redaction_vectors.json is the
+// common vector set. Keys may be quoted (JSON) or compound (client_secret, x_auth_token).
+const SECRET_KEY = String.raw`[A-Za-z0-9_.-]*(?:authorization|cookie|password|passwd|pwd|secret|token|api[_-]?key|private[_-]?key|access[_-]?key|session[_-]?key|credentials?|_key)`;
+const KEYED_SECRET = new RegExp(String.raw`(?<![A-Za-z0-9])(["']?${SECRET_KEY}["']?)(\s*[:=]\s*|\s+(?=["']))(?!\[redacted\])(?:"[^"]*"|'[^']*'|[^\s"',;}\]]+)`, "gi");
+const VENDOR_TOKENS = [
+  /\bgh[pousr]_[A-Za-z0-9_]{6,}/g,
+  /\bgithub_pat_[A-Za-z0-9_]{6,}/g,
+  /\bAKIA[0-9A-Z]{16}\b/g,
+  /\bxox[abprs]-[A-Za-z0-9-]{6,}/g,
+  /\bglpat-[A-Za-z0-9_-]{6,}/g,
+  /\bsk-[A-Za-z0-9_-]{6,}/g,
+  /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_.-]+/g,
+  /[A-Za-z0-9_\-+/=]{32,}/g,
+];
+
 /** First nonempty line of a provider error, without credentials, accounts, paths or links. */
 export function redactFailureLine(value) {
   if (typeof value !== "string") return null;
-  const first = value.split(/\r?\n/).map((line) => line.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").trim()).find(Boolean);
+  const cleaned = value
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
+  const first = cleaned.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
   if (!first) return null;
   let line = first
-    .replace(/\b(?:Bearer|Basic)\s+\S+/gi, "[redacted]")
-    .replace(/\b(authorization|cookie|password|api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret)\b(\s*[:=]\s*)\S+/gi, "$1$2[redacted]")
-    .replace(/\b(?:sk-[A-Za-z0-9_-]{8,}|eyJ[A-Za-z0-9_.-]{10,})/g, "[redacted]")
-    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[account]")
+    .replace(/https?:\/\/\S+/g, "[link]")
     .replace(/(?:\/Users|\/home)\/[^/\s]+/g, "~")
     .replace(/[A-Za-z]:\\Users\\[^\\\s]+/g, "~")
-    .replace(/https?:\/\/\S+/g, "[link]")
-    .replace(/[\u0000-\u001f\u007f]/g, " ")
-    .replace(/\s+/g, " ").trim();
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[account]")
+    .replace(/\b(?:Bearer|Basic)\s+[^\s"',;}]+/gi, "[redacted]")
+    .replace(KEYED_SECRET, "$1$2[redacted]");
+  for (const pattern of VENDOR_TOKENS) line = line.replace(pattern, "[redacted]");
+  line = line.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
   if (line.length > 200) line = `${line.slice(0, 199).trimEnd()}…`;
   return line || null;
 }
