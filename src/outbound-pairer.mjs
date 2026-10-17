@@ -336,8 +336,46 @@ export class LoopbackRuntimeAdapter {
       throw new Error("Invalid correlated fresh-context turn result");
     }
     // Closed projection excludes all upstream additions and internal diagnostics.
-    return Object.fromEntries([...keys, ...(fresh ? ["freshProviderContext", "nativeContextGeneration"] : []), "turnId", "assistantMessageId", "instanceId", "model", "effort", "state", "outputText"].map((key) => [key, result[key]]));
+    const projected = Object.fromEntries([...keys, ...(fresh ? ["freshProviderContext", "nativeContextGeneration"] : []), "turnId", "assistantMessageId", "instanceId", "model", "effort", "state", "outputText"].map((key) => [key, result[key]]));
+    if (result.state === "failed") {
+      // T3 keeps why a turn failed (e.g. a plan limit) only in session.lastError.
+      // Jack names that reason; one redacted first line crosses, nothing else.
+      const failureDetail = await this.sessionFailureDetail(input.threadId);
+      if (failureDetail) projected.failureDetail = failureDetail;
+    }
+    return projected;
   }
+
+  async sessionFailureDetail(threadId) {
+    if (typeof this.client.thread !== "function") return null;
+    try {
+      const response = await this.client.thread(threadId);
+      const thread = response?.thread ?? response;
+      if (!thread || typeof thread !== "object" || thread.id !== threadId) return null;
+      return redactFailureLine(thread.session?.lastError);
+    } catch {
+      return null;
+    }
+  }
+}
+
+/** First nonempty line of a provider error, without credentials, accounts, paths or links. */
+export function redactFailureLine(value) {
+  if (typeof value !== "string") return null;
+  const first = value.split(/\r?\n/).map((line) => line.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").trim()).find(Boolean);
+  if (!first) return null;
+  let line = first
+    .replace(/\b(?:Bearer|Basic)\s+\S+/gi, "[redacted]")
+    .replace(/\b(authorization|cookie|password|api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret)\b(\s*[:=]\s*)\S+/gi, "$1$2[redacted]")
+    .replace(/\b(?:sk-[A-Za-z0-9_-]{8,}|eyJ[A-Za-z0-9_.-]{10,})/g, "[redacted]")
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[account]")
+    .replace(/(?:\/Users|\/home)\/[^/\s]+/g, "~")
+    .replace(/[A-Za-z]:\\Users\\[^\\\s]+/g, "~")
+    .replace(/https?:\/\/\S+/g, "[link]")
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ").trim();
+  if (line.length > 200) line = `${line.slice(0, 199).trimEnd()}…`;
+  return line || null;
 }
 
 function unavailable(id) {

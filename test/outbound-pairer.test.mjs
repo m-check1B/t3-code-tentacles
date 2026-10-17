@@ -992,3 +992,33 @@ test("KRA-6929: an explicit denial still ends at once", async () => {
   assert.match((await run).error.message, /authorization was denied/);
   assert.equal(FakeWebSocket.instances.length, 1);
 });
+
+// Jack #1021: a failed turn carries why (T3 keeps it only in session.lastError).
+test("failed turn-result carries the session's last error, redacted, first line only", async () => {
+  const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
+  const base = { ...params, turnId: "turn", assistantMessageId: null, instanceId: "claudeAgent", model: "claude-opus", effort: "high", outputText: null };
+  let state = "failed";
+  let lastError = "Claude usage limit reached. Send the message again once the limit resets.\nstack: /Users/someone/x";
+  let threadReads = 0;
+  const adapter = new LoopbackRuntimeAdapter({ client: {
+    request: async () => ({ ...base, state }),
+    thread: async (id) => { threadReads += 1; assert.equal(id, "thread"); return { thread: { id, session: { status: "error", lastError } } }; }
+  }, doctorImpl: async () => ({ ready: true }) });
+  assert.equal((await adapter.turnResult(params)).failureDetail, "Claude usage limit reached. Send the message again once the limit resets.");
+  lastError = "Codex failed: Authorization: Bearer sk-SECRETSECRETSECRET for a@b.example at /Users/someone/project token=abc";
+  const redacted = (await adapter.turnResult(params)).failureDetail;
+  for (const secret of ["sk-SECRET", "a@b.example", "/Users/someone", "abc"]) assert.equal(redacted.includes(secret), false, secret);
+  lastError = "x".repeat(900);
+  assert.ok((await adapter.turnResult(params)).failureDetail.length <= 200);
+  lastError = null;
+  assert.equal("failureDetail" in await adapter.turnResult(params), false);
+  state = "succeeded";
+  const before = threadReads;
+  await assert.rejects(adapter.turnResult(params), /Invalid correlated/); // succeeded still needs output
+  assert.equal(threadReads, before, "only a failed turn reads the session");
+  state = "failed";
+  const broken = new LoopbackRuntimeAdapter({ client: { request: async () => ({ ...base, state: "failed" }), thread: async () => { throw new Error("T3 down"); } }, doctorImpl: async () => ({ ready: true }) });
+  const result = await broken.turnResult(params);
+  assert.equal(result.state, "failed");
+  assert.equal("failureDetail" in result, false);
+});
