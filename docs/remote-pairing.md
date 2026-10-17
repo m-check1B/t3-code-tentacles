@@ -137,6 +137,10 @@ That ID comes from the same joined assistant row as the output; it is null for
 pending, failed and cancelled results. Journal consumers can link this source
 message to the reply they already persisted without importing a duplicate.
 Oversize/mismatched results fail closed.
+A `failed` result may add `failureDetail`: the first line of T3's
+`session.lastError` (for example a plan limit), with credentials, accounts, home
+paths and links redacted and at most 200 characters. It is absent when T3 has
+no error or the session cannot be read.
 
 Doctor adds `capabilities.talkTurnResult`, which is `"v1"` only when authenticated
 T3 `GET /api/orchestration/turn-result` confirms support; otherwise it is null.

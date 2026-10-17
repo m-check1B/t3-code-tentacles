@@ -992,3 +992,77 @@ test("KRA-6929: an explicit denial still ends at once", async () => {
   assert.match((await run).error.message, /authorization was denied/);
   assert.equal(FakeWebSocket.instances.length, 1);
 });
+
+// Jack #1021: a failed turn carries why (T3 keeps it only in session.lastError).
+test("failed turn-result carries the session's last error, redacted, first line only", async () => {
+  const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
+  const base = { ...params, turnId: "turn", assistantMessageId: null, instanceId: "claudeAgent", model: "claude-opus", effort: "high", outputText: null };
+  let state = "failed";
+  let lastError = "Claude usage limit reached. Send the message again once the limit resets.\nstack: /Users/someone/x";
+  let threadReads = 0;
+  const adapter = new LoopbackRuntimeAdapter({ client: {
+    request: async () => ({ ...base, state }),
+    thread: async (id) => { threadReads += 1; assert.equal(id, "thread"); return { thread: { id, session: { status: "error", lastError } } }; }
+  }, doctorImpl: async () => ({ ready: true }) });
+  assert.equal((await adapter.turnResult(params)).failureDetail, "Claude usage limit reached. Send the message again once the limit resets.");
+  lastError = "Codex failed: Authorization: Bearer sk-SECRETSECRETSECRET for a@b.example at /Users/someone/project token=abc";
+  const redacted = (await adapter.turnResult(params)).failureDetail;
+  for (const secret of ["sk-SECRET", "a@b.example", "/Users/someone", "abc"]) assert.equal(redacted.includes(secret), false, secret);
+  lastError = "x".repeat(900);
+  assert.ok((await adapter.turnResult(params)).failureDetail.length <= 200);
+  lastError = null;
+  assert.equal("failureDetail" in await adapter.turnResult(params), false);
+  state = "succeeded";
+  const before = threadReads;
+  await assert.rejects(adapter.turnResult(params), /Invalid correlated/); // succeeded still needs output
+  assert.equal(threadReads, before, "only a failed turn reads the session");
+  state = "failed";
+  const broken = new LoopbackRuntimeAdapter({ client: { request: async () => ({ ...base, state: "failed" }), thread: async () => { throw new Error("T3 down"); } }, doctorImpl: async () => ({ ready: true }) });
+  const result = await broken.turnResult(params);
+  assert.equal(result.state, "failed");
+  assert.equal("failureDetail" in result, false);
+});
+
+// Review P1 (17 Oct): one shared vector set with Jack (api/tests/fixtures/redaction_vectors.json).
+test("redactFailureLine removes every shared secret shape and keeps limit text", async () => {
+  const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
+  const vectors = JSON.parse(fs.readFileSync(new URL("./fixtures/redaction_vectors.json", import.meta.url), "utf8"));
+  for (const secret of vectors.secrets) {
+    const out = redactFailureLine(secret);
+    assert.equal(/SECRET/.test(out ?? ""), false, `${JSON.stringify(secret)} -> ${out}`);
+    assert.equal(/\u001b/.test(out ?? ""), false);
+  }
+  for (const text of vectors.unchanged) assert.equal(redactFailureLine(text), text);
+});
+
+// B3: exercise the real wire projection, not only the redaction helper.
+test("failed turn-result never exports any shared credential shape", async (t) => {
+  const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
+  const base = { ...params, state: "failed", turnId: "turn", assistantMessageId: null,
+    instanceId: "claudeAgent", model: "fixture", effort: "high", outputText: null };
+  const vectors = JSON.parse(fs.readFileSync(new URL("./fixtures/redaction_vectors.json", import.meta.url), "utf8"));
+  for (const [index, lastError] of vectors.secrets.entries()) {
+    await t.test(`shared credential vector ${index + 1}`, async () => {
+      const adapter = new LoopbackRuntimeAdapter({ client: {
+        request: async () => base,
+        thread: async () => ({ thread: { id: "thread", session: { lastError } } })
+      } });
+      const result = await adapter.turnResult(params);
+      assert.equal(JSON.stringify(result).includes("SECRET"), false, lastError);
+    });
+  }
+});
+
+// Cross-language first-line contract covers CR/LF/CRLF, LS, PS and NEL.
+test("failed turn-result selects the first nonempty line across all line boundaries", async () => {
+  const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
+  const vectors = JSON.parse(fs.readFileSync(new URL("./fixtures/redaction_vectors.json", import.meta.url), "utf8"));
+  for (const { input: lastError, expected } of vectors.lines) {
+    const adapter = new LoopbackRuntimeAdapter({ client: {
+      request: async () => ({ ...params, state: "failed", turnId: "turn", assistantMessageId: null,
+        instanceId: "claudeAgent", model: "fixture", effort: "high", outputText: null }),
+      thread: async () => ({ thread: { id: "thread", session: { lastError } } })
+    } });
+    assert.equal((await adapter.turnResult(params)).failureDetail, expected, JSON.stringify(lastError));
+  }
+});

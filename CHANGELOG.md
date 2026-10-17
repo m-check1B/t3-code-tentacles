@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- A failed `turn-result` carries `failureDetail`, the redacted first line of
+  T3's `session.lastError`, so Jack can name a plan limit or sign-in failure.
+
 ## [0.4.1-jack.1] - 2026-10-12
 
 Jack maintenance build of 0.4.1 for the Founder's Mac Pro (KRA-6915).

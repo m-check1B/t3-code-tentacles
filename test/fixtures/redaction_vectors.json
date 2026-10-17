@@ -1,0 +1,96 @@
+{
+  "comment": "Shared redaction vectors: Tentacles #53 redactFailureLine, Jack API safe_line and the web refusal filter all test these. No output may contain 'SECRET'.",
+  "secrets": [
+    "{\"access_token\":\"abcdefSECRET1234\"}",
+    "{\"api_key\": \"plainSECRETvalue\"}",
+    "API Error: 500 {\"error\":{\"access_token\":\"abcSECRET\"}} failed",
+    "client_secret=XYZSECRET123",
+    "x_auth_token=SECRETtok",
+    "aws_secret_access_key=SECRETaws",
+    "private_key: SECRETpk",
+    "token \"quotedSECRET\"",
+    "password='SECRETpw'",
+    "Authorization: Bearer SECRETbearer",
+    "auth Basic SECRETbasic==",
+    "ghp_SECRETabcdefghijklmnop1234",
+    "gho_SECRETabcdefghijklmnop1234",
+    "github_pat_11SECRET_abcdefghijkl",
+    "AKIASECRET1234567890",
+    "xoxb-SECRET-1234567890",
+    "xoxp-SECRET-1234567890",
+    "glpat-SECRETabcdef123456",
+    "sk-ant-api03-SECRETabcdef",
+    "sk-SECRETabcdefgh",
+    "eyJhbGciOiJIUzI1NiJ9.SECRETpayload.signature",
+    "opaque SECRETabcdefghijklmnopqrstuvwxyz0123456789",
+    "\u001b]8;;https://example.com/SECRETlink\u0007click\u001b]8;;\u0007",
+    "{\"client_secret\": \"prefix\\\"SYNTHETIC_SECRET_LEAK\"}",
+    "client_secret='prefix\\'SYNTHETIC_SECRET_LEAK'",
+    "Error: Cookie: name=value; sid=SYNTHETIC_SECRET_LEAK; theme=light",
+    "Error: Set-Cookie: name=value; sid=SYNTHETIC_SECRET_LEAK; HttpOnly",
+    "Error: redis://user:SYNTHETIC_SECRET_LEAK@127.0.0.1:6379/0",
+    "Error: HTTPS://user:SYNTHETIC_SECRET_LEAK@127.0.0.1/",
+    "Error: custom+db://user:SYNTHETIC_SECRET_LEAK@127.0.0.1/",
+    "{\"client_secret\":\"unterminated SYNTHETIC_SECRET_LEAK}",
+    "Error: redis://user:prefix\"SYNTHETIC_SECRET_LEAK@127.0.0.1/",
+    "Error: redis://user:prefix SYNTHETIC_SECRET_LEAK@127.0.0.1/",
+    "Error: Cookie: name=value;\rsid=SYNTHETIC_SECRET_LEAK",
+    "{\"client_secret\":\"prefix\u2028SYNTHETIC_SECRET_LEAK\"}",
+    "{\"client_secret\":\"prefix\u2029SYNTHETIC_SECRET_LEAK\"}",
+    "Error: redis://user:prefix\rSYNTHETIC_SECRET_LEAK@127.0.0.1/",
+    "Error: redis://user:prefix\u2028SYNTHETIC_SECRET_LEAK@127.0.0.1/",
+    "{\"client_secret\":\"prefix\\rSYNTHETIC_SECRET_LEAK\"}",
+    "Error: Cookie: name=value;\nsid=SYNTHETIC_SECRET_LEAK",
+    "{\"client_secret\":\"prefix\\nSYNTHETIC_SECRET_LEAK\"}",
+    "Error: redis://user:prefix\nSYNTHETIC_SECRET_LEAK@127.0.0.1/",
+    "Error: Cookie: name=value;\r\nsid=SYNTHETIC_SECRET_LEAK",
+    "{\"client_secret\":\"prefix\\r\\nSYNTHETIC_SECRET_LEAK\"}",
+    "Error: redis://user:prefix\r\nSYNTHETIC_SECRET_LEAK@127.0.0.1/",
+    "Error: Cookie: name=value;\u2028sid=SYNTHETIC_SECRET_LEAK",
+    "Error: Cookie: name=value;\u2029sid=SYNTHETIC_SECRET_LEAK",
+    "Error: redis://user:prefix\u2029SYNTHETIC_SECRET_LEAK@127.0.0.1/",
+    "Error: Cookie: name=value;\u0085sid=SYNTHETIC_SECRET_LEAK",
+    "{\"client_secret\":\"prefix\u0085SYNTHETIC_SECRET_LEAK\"}",
+    "Error: redis://user:prefix\u0085SYNTHETIC_SECRET_LEAK@127.0.0.1/"
+  ],
+  "unchanged": [
+    "Claude usage limit reached. Send the message again once the limit resets.",
+    "Codex usage limit reached. The weekly limit resets in 1d 6h. Send the message again once the limit resets.",
+    "You've hit your weekly limit \u00b7 resets Oct 20, 11pm (Europe/Prague)"
+  ],
+  "unsafeResets": [
+    "sk-SYNTHETIC_SECRET_LEAK",
+    "in 1d sk-SYNTHETIC_SECRET_LEAK",
+    "Oct 20, 11pm SYNTHETIC_SECRET_LEAK",
+    "Oct 20, 11pm Europe/SYNTHETIC_SECRET_LEAK",
+    "password=SYNTHETIC_SECRET_LEAK",
+    "in 1d 6h SECRET",
+    "tomorrow SECRET"
+  ],
+  "lines": [
+    {
+      "input": "\r  \rError: temporary failure\rSYNTHETIC_SECRET_LEAK",
+      "expected": "Error: temporary failure"
+    },
+    {
+      "input": "\n  \nError: temporary failure\nSYNTHETIC_SECRET_LEAK",
+      "expected": "Error: temporary failure"
+    },
+    {
+      "input": "\r\n  \r\nError: temporary failure\r\nSYNTHETIC_SECRET_LEAK",
+      "expected": "Error: temporary failure"
+    },
+    {
+      "input": "\u2028  \u2028Error: temporary failure\u2028SYNTHETIC_SECRET_LEAK",
+      "expected": "Error: temporary failure"
+    },
+    {
+      "input": "\u2029  \u2029Error: temporary failure\u2029SYNTHETIC_SECRET_LEAK",
+      "expected": "Error: temporary failure"
+    },
+    {
+      "input": "\u0085  \u0085Error: temporary failure\u0085SYNTHETIC_SECRET_LEAK",
+      "expected": "Error: temporary failure"
+    }
+  ]
+}

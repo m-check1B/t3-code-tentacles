@@ -336,8 +336,67 @@ export class LoopbackRuntimeAdapter {
       throw new Error("Invalid correlated fresh-context turn result");
     }
     // Closed projection excludes all upstream additions and internal diagnostics.
-    return Object.fromEntries([...keys, ...(fresh ? ["freshProviderContext", "nativeContextGeneration"] : []), "turnId", "assistantMessageId", "instanceId", "model", "effort", "state", "outputText"].map((key) => [key, result[key]]));
+    const projected = Object.fromEntries([...keys, ...(fresh ? ["freshProviderContext", "nativeContextGeneration"] : []), "turnId", "assistantMessageId", "instanceId", "model", "effort", "state", "outputText"].map((key) => [key, result[key]]));
+    if (result.state === "failed") {
+      // T3 keeps why a turn failed (e.g. a plan limit) only in session.lastError.
+      // Jack names that reason; one redacted first line crosses, nothing else.
+      const failureDetail = await this.sessionFailureDetail(input.threadId);
+      if (failureDetail) projected.failureDetail = failureDetail;
+    }
+    return projected;
   }
+
+  async sessionFailureDetail(threadId) {
+    if (typeof this.client.thread !== "function") return null;
+    try {
+      const response = await this.client.thread(threadId);
+      const thread = response?.thread ?? response;
+      if (!thread || typeof thread !== "object" || thread.id !== threadId) return null;
+      return redactFailureLine(thread.session?.lastError);
+    } catch {
+      return null;
+    }
+  }
+}
+
+// Shared with Agent Jack (api/src/jack_api/local_claude_failure.py safe_line and
+// web/src/lib/local_claude_failure.ts); test/fixtures/redaction_vectors.json is the
+// common vector set. Keys may be quoted (JSON) or compound (client_secret, x_auth_token).
+const SECRET_KEY = String.raw`[A-Za-z0-9_.-]*(?:authorization|cookie|password|passwd|pwd|secret|token|api[_-]?key|private[_-]?key|access[_-]?key|session[_-]?key|credentials?|_key)`;
+// Fail closed at a credential field: discard the rest of this diagnostic line.
+// Quoted/escaped/malformed values, JSON containers and all later cookies must
+// stay local; attempting to find a value terminator can export a secret suffix.
+const KEYED_SECRET = new RegExp(String.raw`(?<![A-Za-z0-9])(["']?${SECRET_KEY}["']?)(\s*[:=]\s*|\s+(?=["']))[\s\S]*`, "gi");
+const VENDOR_TOKENS = [
+  /\bgh[pousr]_[A-Za-z0-9_]{6,}/g,
+  /\bgithub_pat_[A-Za-z0-9_]{6,}/g,
+  /\bAKIA[0-9A-Z]{16}\b/g,
+  /\bxox[abprs]-[A-Za-z0-9-]{6,}/g,
+  /\bglpat-[A-Za-z0-9_-]{6,}/g,
+  /\bsk-[A-Za-z0-9_-]{6,}/g,
+  /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_.-]+/g,
+  /[A-Za-z0-9_\-+/=]{32,}/g,
+];
+
+/** First nonempty line of a provider error, without credentials, accounts, paths or links. */
+export function redactFailureLine(value) {
+  if (typeof value !== "string") return null;
+  const cleaned = value
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
+  const first = cleaned.replace(/\r\n|[\r\n\u0085\u2028\u2029]/g, "\n").split("\n").map((line) => line.trim()).find(Boolean);
+  if (!first) return null;
+  let line = first
+    .replace(/[A-Za-z][A-Za-z0-9+.-]*:\/\/[\s\S]*$/g, "[link]")
+    .replace(/(?:\/Users|\/home)\/[^/\s]+/g, "~")
+    .replace(/[A-Za-z]:\\Users\\[^\\\s]+/g, "~")
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[account]")
+    .replace(/\b(?:Bearer|Basic)\s+[^\s"',;}]+/gi, "[redacted]")
+    .replace(KEYED_SECRET, "$1$2[redacted]");
+  for (const pattern of VENDOR_TOKENS) line = line.replace(pattern, "[redacted]");
+  line = line.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+  if (line.length > 200) line = `${line.slice(0, 199).trimEnd()}…`;
+  return line || null;
 }
 
 function unavailable(id) {
