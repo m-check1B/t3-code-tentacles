@@ -1,0 +1,82 @@
+name: Author email guard
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  author-email-guard:
+    runs-on: jack-ci-x64
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Reject internal author and committer emails in new commits
+        env:
+          GUARD_EVENT: ${{ github.event_name }}
+          GUARD_BEFORE: ${{ github.event.before }}
+          GUARD_AFTER: ${{ github.sha }}
+          GUARD_BASE: ${{ github.event.pull_request.base.sha }}
+          GUARD_HEAD: ${{ github.event.pull_request.head.sha }}
+          GUARD_DEFAULT: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re, subprocess, sys
+
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True, stderr=subprocess.DEVNULL).strip()
+
+          def commit(value):
+              if not re.fullmatch(r'[0-9a-fA-F]{40}|[0-9a-fA-F]{64}', value):
+                  raise ValueError('missing or invalid commit identity')
+              return git('rev-parse', '--verify', value + '^{commit}')
+
+          try:
+              event = os.environ['GUARD_EVENT']
+              if event == 'pull_request':
+                  head = commit(os.environ['GUARD_HEAD'])
+                  base = commit(os.environ['GUARD_BASE'])
+                  revisions = [head, '^' + base]
+              elif event == 'push':
+                  after = os.environ['GUARD_AFTER']
+                  if after and set(after) == {'0'}:
+                      sys.exit(0)  # Deletion adds no commits.
+                  head = commit(after)
+                  before = os.environ.get('GUARD_BEFORE', '')
+                  revisions = [head]
+                  if before and set(before) != {'0'}:
+                      revisions.append('^' + commit(before))
+                  else:
+                      # A new ref may reuse published history. Exclude the current
+                      # default branch, except when this is its initial creation.
+                      default = 'refs/remotes/origin/' + os.environ['GUARD_DEFAULT']
+                      known = subprocess.run(['git', 'rev-parse', '--verify', default + '^{commit}'],
+                                             text=True, capture_output=True)
+                      if known.returncode == 0 and known.stdout.strip() != head:
+                          revisions.append('^' + known.stdout.strip())
+              else:
+                  raise ValueError('unsupported event')
+              bad = re.compile(r'\.ts\.net|ocelotnas|tailnet|192\.168\.|\.local$|\.lan$', re.I)
+              commits = git('rev-list', *revisions, '--').splitlines()
+              rejected = False
+              for sha in commits:
+                  emails = git('show', '-s', '--format=%ae%n%ce', sha).splitlines()
+                  for field, email in zip(('author', 'committer'), emails):
+                      if bad.search(email):
+                          print(f'::error::Internal {field} email in commit {sha}; use a public noreply identity.')
+                          rejected = True
+              if rejected:
+                  sys.exit(1)
+              print(f'Author email guard passed: {len(commits)} new commit(s).')
+          except (KeyError, ValueError, subprocess.CalledProcessError):
+              print('::error::Cannot establish the complete commit range; refusing an unchecked change.')
+              sys.exit(1)
+          PY
