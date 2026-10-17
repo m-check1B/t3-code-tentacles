@@ -25,6 +25,7 @@ jobs:
           GUARD_BASE: ${{ github.event.pull_request.base.sha }}
           GUARD_HEAD: ${{ github.event.pull_request.head.sha }}
           GUARD_DEFAULT: ${{ github.event.repository.default_branch }}
+          GUARD_REF: ${{ github.ref }}
         shell: bash
         run: |
           set -euo pipefail
@@ -55,12 +56,13 @@ jobs:
                   if before and set(before) != {'0'}:
                       revisions.append('^' + commit(before))
                   else:
-                      # A new ref may reuse published history. Exclude the current
-                      # default branch, except when this is its initial creation.
-                      default = 'refs/remotes/origin/' + os.environ['GUARD_DEFAULT']
+                      # A new branch/tag may point exactly at published history.
+                      # Initial default-branch creation still checks all commits.
+                      default_name = os.environ['GUARD_DEFAULT']
+                      default = 'refs/remotes/origin/' + default_name
                       known = subprocess.run(['git', 'rev-parse', '--verify', default + '^{commit}'],
                                              text=True, capture_output=True)
-                      if known.returncode == 0 and known.stdout.strip() != head:
+                      if known.returncode == 0 and os.environ['GUARD_REF'] != 'refs/heads/' + default_name:
                           revisions.append('^' + known.stdout.strip())
               else:
                   raise ValueError('unsupported event')
