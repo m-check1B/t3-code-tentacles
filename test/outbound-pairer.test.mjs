@@ -1034,3 +1034,19 @@ test("redactFailureLine removes every shared secret shape and keeps limit text",
   }
   for (const text of vectors.unchanged) assert.equal(redactFailureLine(text), text);
 });
+
+// B3: exercise the real wire projection, not only the redaction helper.
+test("failed turn-result never exports any shared credential shape", async () => {
+  const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
+  const base = { ...params, state: "failed", turnId: "turn", assistantMessageId: null,
+    instanceId: "claudeAgent", model: "fixture", effort: "high", outputText: null };
+  const vectors = JSON.parse(fs.readFileSync(new URL("./fixtures/redaction_vectors.json", import.meta.url), "utf8"));
+  for (const lastError of vectors.secrets) {
+    const adapter = new LoopbackRuntimeAdapter({ client: {
+      request: async () => base,
+      thread: async () => ({ thread: { id: "thread", session: { lastError } } })
+    } });
+    const result = await adapter.turnResult(params);
+    assert.equal(JSON.stringify(result).includes("SECRET"), false, lastError);
+  }
+});

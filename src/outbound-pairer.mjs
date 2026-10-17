@@ -363,7 +363,10 @@ export class LoopbackRuntimeAdapter {
 // web/src/lib/local_claude_failure.ts); test/fixtures/redaction_vectors.json is the
 // common vector set. Keys may be quoted (JSON) or compound (client_secret, x_auth_token).
 const SECRET_KEY = String.raw`[A-Za-z0-9_.-]*(?:authorization|cookie|password|passwd|pwd|secret|token|api[_-]?key|private[_-]?key|access[_-]?key|session[_-]?key|credentials?|_key)`;
-const KEYED_SECRET = new RegExp(String.raw`(?<![A-Za-z0-9])(["']?${SECRET_KEY}["']?)(\s*[:=]\s*|\s+(?=["']))(?!\[redacted\])(?:"[^"]*"|'[^']*'|[^\s"',;}\]]+)`, "gi");
+// Fail closed at a credential field: discard the rest of this diagnostic line.
+// Quoted/escaped/malformed values, JSON containers and all later cookies must
+// stay local; attempting to find a value terminator can export a secret suffix.
+const KEYED_SECRET = new RegExp(String.raw`(?<![A-Za-z0-9])(["']?${SECRET_KEY}["']?)(\s*[:=]\s*|\s+(?=["'])).*`, "gi");
 const VENDOR_TOKENS = [
   /\bgh[pousr]_[A-Za-z0-9_]{6,}/g,
   /\bgithub_pat_[A-Za-z0-9_]{6,}/g,
@@ -384,7 +387,7 @@ export function redactFailureLine(value) {
   const first = cleaned.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
   if (!first) return null;
   let line = first
-    .replace(/https?:\/\/\S+/g, "[link]")
+    .replace(/[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'<>]+/g, "[link]")
     .replace(/(?:\/Users|\/home)\/[^/\s]+/g, "~")
     .replace(/[A-Za-z]:\\Users\\[^\\\s]+/g, "~")
     .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[account]")

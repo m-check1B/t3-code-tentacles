@@ -23,11 +23,28 @@
     "sk-SECRETabcdefgh",
     "eyJhbGciOiJIUzI1NiJ9.SECRETpayload.signature",
     "opaque SECRETabcdefghijklmnopqrstuvwxyz0123456789",
-    "\u001b]8;;https://example.com/SECRETlink\u0007click\u001b]8;;\u0007"
+    "\u001b]8;;https://example.com/SECRETlink\u0007click\u001b]8;;\u0007",
+    "{\"client_secret\": \"prefix\\\"SYNTHETIC_SECRET_LEAK\"}",
+    "client_secret='prefix\\'SYNTHETIC_SECRET_LEAK'",
+    "Error: Cookie: name=value; sid=SYNTHETIC_SECRET_LEAK; theme=light",
+    "Error: Set-Cookie: name=value; sid=SYNTHETIC_SECRET_LEAK; HttpOnly",
+    "Error: redis://user:SYNTHETIC_SECRET_LEAK@127.0.0.1:6379/0",
+    "Error: HTTPS://user:SYNTHETIC_SECRET_LEAK@127.0.0.1/",
+    "Error: custom+db://user:SYNTHETIC_SECRET_LEAK@127.0.0.1/",
+    "{\"client_secret\":\"unterminated SYNTHETIC_SECRET_LEAK}"
   ],
   "unchanged": [
     "Claude usage limit reached. Send the message again once the limit resets.",
     "Codex usage limit reached. The weekly limit resets in 1d 6h. Send the message again once the limit resets.",
     "You've hit your weekly limit · resets Oct 20, 11pm (Europe/Prague)"
+  ],
+  "unsafeResets": [
+    "sk-SYNTHETIC_SECRET_LEAK",
+    "in 1d sk-SYNTHETIC_SECRET_LEAK",
+    "Oct 20, 11pm SYNTHETIC_SECRET_LEAK",
+    "Oct 20, 11pm Europe/SYNTHETIC_SECRET_LEAK",
+    "password=SYNTHETIC_SECRET_LEAK",
+    "in 1d 6h SECRET",
+    "tomorrow SECRET"
   ]
 }
