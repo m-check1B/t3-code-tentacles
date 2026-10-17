@@ -31,7 +31,9 @@
     "Error: redis://user:SYNTHETIC_SECRET_LEAK@127.0.0.1:6379/0",
     "Error: HTTPS://user:SYNTHETIC_SECRET_LEAK@127.0.0.1/",
     "Error: custom+db://user:SYNTHETIC_SECRET_LEAK@127.0.0.1/",
-    "{\"client_secret\":\"unterminated SYNTHETIC_SECRET_LEAK}"
+    "{\"client_secret\":\"unterminated SYNTHETIC_SECRET_LEAK}",
+    "Error: redis://user:prefix\"SYNTHETIC_SECRET_LEAK@127.0.0.1/",
+    "Error: redis://user:prefix SYNTHETIC_SECRET_LEAK@127.0.0.1/"
   ],
   "unchanged": [
     "Claude usage limit reached. Send the message again once the limit resets.",

@@ -387,7 +387,7 @@ export function redactFailureLine(value) {
   const first = cleaned.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
   if (!first) return null;
   let line = first
-    .replace(/[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'<>]+/g, "[link]")
+    .replace(/[A-Za-z][A-Za-z0-9+.-]*:\/\/.*$/g, "[link]")
     .replace(/(?:\/Users|\/home)\/[^/\s]+/g, "~")
     .replace(/[A-Za-z]:\\Users\\[^\\\s]+/g, "~")
     .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[account]")
