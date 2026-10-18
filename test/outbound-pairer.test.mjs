@@ -1024,6 +1024,19 @@ test("failed turn-result carries the session's last error, redacted, first line 
 });
 
 // Review P1 (17 Oct): one shared vector set with Jack (api/tests/fixtures/redaction_vectors.json).
+test("redactFailureLine rejects unsupported C0/C1 controls before recognizing keys", async () => {
+  const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
+  for (let code = 0; code <= 0x9f; code++) {
+    if (code > 0x1f && code < 0x7f || [9, 10, 13, 0x85].includes(code)) continue;
+    const control = String.fromCharCode(code);
+    for (const text of [`Error: Cookie${control}: sid=FAKE_SECRET_SESSION_0001`,
+      `Error: {"coo${control}kie":"FAKE_SECRET_SESSION_0001"}`]) {
+      assert.equal(redactFailureLine(text), null, `control U+${code.toString(16)}`);
+    }
+  }
+  assert.equal(redactFailureLine("Error:\tCookie\t: sid=FAKE_SECRET_SESSION_0001"), "Error: Cookie : [redacted]");
+});
+
 test("redactFailureLine removes every shared secret shape and keeps limit text", async () => {
   const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
   const vectors = JSON.parse(fs.readFileSync(new URL("./fixtures/redaction_vectors.json", import.meta.url), "utf8"));
