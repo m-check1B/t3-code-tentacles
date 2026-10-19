@@ -1162,3 +1162,35 @@ test("escaped diagnostics fail closed even at final RPC publication", async () =
     assert.equal(JSON.stringify(out).includes("SECRET"), false);
   }
 });
+
+// KRA-7389 root cause: the same shared hostile key matrix as Agent Jack's API and
+// web (whitespace_key_vectors.json, byte-identical copy), at the real RPC wire and
+// at the final publication guard. Ordinary prose and literal redaction stay useful.
+test("shared whitespace/quote key matrix never crosses helper or RPC publication", async () => {
+  const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
+  const vectors = JSON.parse(fs.readFileSync(new URL("./fixtures/whitespace_key_vectors.json", import.meta.url), "utf8"));
+  assert.ok(vectors.length >= 2000);
+  const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
+  const failed = { ...params, state: "failed", turnId: "turn", assistantMessageId: null,
+    instanceId: "claudeAgent", model: "fixture", effort: "high", outputText: null };
+  const disclosures = [];
+  for (const raw of vectors) {
+    if (redactFailureLine(raw) !== null) disclosures.push(["helper", raw]);
+    for (const final of [false, true]) {
+      const adapter = new LoopbackRuntimeAdapter({ client: { request: async () => failed,
+        thread: async () => ({ thread: { id: "thread", session: { lastError: raw } } }) } });
+      if (final) adapter.sessionFailureDetail = async () => raw;
+      const out = await new RemoteRpcShim(adapter).handle({ version: 1, type: "rpc.request", id: "matrix", method: "turn-result", params });
+      assert.equal(out.type, "rpc.result");
+      if (JSON.stringify(out).includes("SECRET") || Object.hasOwn(out.result, "failureDetail")) disclosures.push([final ? "final" : "rpc", raw]);
+    }
+  }
+  assert.deepEqual(disclosures, []);
+  for (const [raw, expected] of [
+    ["Error: provider failed: unavailable", "Error: provider failed: unavailable"],
+    ["Error: process failed token=FAKE_B3_SECRET_314", "Error: process failed token=[redacted]"],
+    ["Error: cookie = FAKE_B3_SECRET_314", "Error: cookie = [redacted]"],
+    ['Error: api_key : "FAKE_B3_SECRET_314"', "Error: api_key : [redacted]"],
+    ["Error: invalid api key", "Error: invalid api key"],
+  ]) assert.equal(redactFailureLine(raw), expected);
+});

@@ -368,10 +368,31 @@ const SECRET_KEY = String.raw`[A-Za-z0-9_.-]*(?:authorization|cookie|password|pa
 // Quoted/escaped/malformed values, JSON containers and all later cookies must
 // stay local; attempting to find a value terminator can export a secret suffix.
 const KEYED_SECRET = new RegExp(String.raw`(?<![A-Za-z0-9])(["']?${SECRET_KEY}["']?)(\s*[:=]\s*|\s+(?=["']))[\s\S]*`, "gi");
-// A permitted TAB can split a key, and older exporters may have made it a space.
-// Reject ambiguous key interiors before normalizing ordinary whitespace.
-const SPACED_KEY = /(["'])([A-Za-z0-9_.-]+(?:[ \t]+[A-Za-z0-9_.-]+)+)\1(?=\s*[:=]|\s+["'])|(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+(?:\t+[A-Za-z0-9_.-]+)+)(?=\s*[:=]|\s+["'])/g;
-const LITERAL_SECRET_KEY = new RegExp(`^(?:${SECRET_KEY})$`, "i");
+// One grammar with Agent Jack (docs/privacy/diagnostic-key-grammar.md; shared
+// vectors test/fixtures/whitespace_key_vectors.json). G2: a quoted field name
+// with whitespace. G3: a credential word cut by any non-word character (any
+// whitespace, quote, punctuation), or a compound key cut before its connector,
+// used as a field name. Refused on raw text before normalization and again at
+// final publication; an unmatched pattern is never treated as safe.
+const SPACED_KEY = /(?<![A-Za-z0-9_.-])(["']?)[A-Za-z0-9_.-]+(?:\s+[A-Za-z0-9_.-]+)+(["']?)(?=\s*[:=]|\s+["'])/g;
+const SECRET_WORD = new RegExp(`^${SECRET_KEY.replace("[A-Za-z0-9_.-]*", "")}`, "i");
+const LITERAL_WORD = new RegExp(`^${SECRET_KEY.replace("[A-Za-z0-9_.-]*", "")}$`, "i");
+
+function unsupportedKey(text) {
+  for (const match of text.matchAll(SPACED_KEY)) if (match[1] || match[2]) return true;
+  const kept = [];
+  for (let i = 0; i < text.length; i++) if (/\w/.test(text[i])) kept.push(i);
+  const compact = kept.map((i) => text[i]).join("");
+  for (let k = 0; k < compact.length; k++) {
+    const word = SECRET_WORD.exec(compact.slice(k))?.[0];
+    if (!word) continue;
+    const start = kept[k], end = kept[k + word.length - 1] + 1;
+    let token = start;
+    while (token && /[\w.-]/.test(text[token - 1])) token--;
+    if ((/[_.-]/.test(text[token]) || !LITERAL_WORD.test(text.slice(start, end))) && /^\W*?[:="']/.test(text.slice(end))) return true;
+  }
+  return false;
+}
 const VENDOR_TOKENS = [
   /\bgh[pousr]_[A-Za-z0-9_]{6,}/g,
   /\bgithub_pat_[A-Za-z0-9_]{6,}/g,
@@ -393,10 +414,8 @@ export function redactFailureLine(value) {
   // use the literal credential grammar. Omit unsupported optional detail.
   if (cleaned.includes("\\")) return null;
   // Reject unsupported controls before matching: even a key itself can be split.
-  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u0084\u0086-\u009f]/.test(cleaned)) return null;
-  for (const match of cleaned.matchAll(SPACED_KEY)) {
-    if (LITERAL_SECRET_KEY.test((match[2] ?? match[3]).replace(/[ \t]+/g, ""))) return null;
-  }
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u0084\u0086-\u009f\ufeff]/.test(cleaned)) return null;
+  if (unsupportedKey(cleaned)) return null;
   const first = cleaned.replace(/\r\n|[\r\n\u0085\u2028\u2029]/g, "\n").split("\n").map((line) => line.trim()).find(Boolean);
   if (!first) return null;
   let line = first.replace(/\t/g, " ")
