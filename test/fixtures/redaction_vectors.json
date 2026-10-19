@@ -167,6 +167,26 @@
     {
       "input": "Error:\ttemporary failure",
       "expected": "Error: temporary failure"
+    },
+    {
+      "input": "Error: provider failed: abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.token=FAKE_B3_SECRET_992",
+      "expected": "Error: provider failed: abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.token=[redacted]"
+    },
+    {
+      "input": "Error: abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.api_key=FAKE_B3_SECRET_992",
+      "expected": "Error: abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.abc.api_key=[redacted]"
+    },
+    {
+      "input": "Error: {\"\u03b1 token\":\"FAKE_B3_SECRET_992\"}",
+      "expected": "Error: {\"\u03b1 token\":[redacted]"
+    },
+    {
+      "input": "Error: can't auth: {\"api_key\":\"FAKE_B3_SECRET_992\"}",
+      "expected": "Error: can't auth: {\"api_key\":[redacted]"
+    },
+    {
+      "input": "Error: provider failed\u0085token=FAKE_B3_SECRET_992",
+      "expected": "Error: provider failed"
     }
   ],
   "unsupportedEncodings": [

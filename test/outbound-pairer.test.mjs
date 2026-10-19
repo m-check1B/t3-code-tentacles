@@ -1162,3 +1162,77 @@ test("escaped diagnostics fail closed even at final RPC publication", async () =
     assert.equal(JSON.stringify(out).includes("SECRET"), false);
   }
 });
+
+// KRA-7389 root cause: the same shared hostile key matrix as Agent Jack's API and
+// web (whitespace_key_vectors.json, byte-identical copy), at the real RPC wire and
+// at the final publication guard. Ordinary prose and literal redaction stay useful.
+test("shared whitespace/quote key matrix never crosses helper or RPC publication", async () => {
+  const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
+  const vectors = JSON.parse(fs.readFileSync(new URL("./fixtures/whitespace_key_vectors.json", import.meta.url), "utf8"));
+  assert.ok(vectors.length >= 2000);
+  const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
+  const failed = { ...params, state: "failed", turnId: "turn", assistantMessageId: null,
+    instanceId: "claudeAgent", model: "fixture", effort: "high", outputText: null };
+  const disclosures = [];
+  for (const raw of vectors) {
+    if (redactFailureLine(raw) !== null) disclosures.push(["helper", raw]);
+    for (const final of [false, true]) {
+      const adapter = new LoopbackRuntimeAdapter({ client: { request: async () => failed,
+        thread: async () => ({ thread: { id: "thread", session: { lastError: raw } } }) } });
+      if (final) adapter.sessionFailureDetail = async () => raw;
+      const out = await new RemoteRpcShim(adapter).handle({ version: 1, type: "rpc.request", id: "matrix", method: "turn-result", params });
+      assert.equal(out.type, "rpc.result");
+      if (JSON.stringify(out).includes("SECRET") || Object.hasOwn(out.result, "failureDetail")) disclosures.push([final ? "final" : "rpc", raw]);
+    }
+  }
+  assert.deepEqual(disclosures, []);
+  for (const [raw, expected] of [
+    ["Error: provider failed: unavailable", "Error: provider failed: unavailable"],
+    ["Error: process failed token=FAKE_B3_SECRET_314", "Error: process failed token=[redacted]"],
+    ["Error: cookie = FAKE_B3_SECRET_314", "Error: cookie = [redacted]"],
+    ['Error: api_key : "FAKE_B3_SECRET_314"', "Error: api_key : [redacted]"],
+    ["Error: invalid api key", "Error: invalid api key"],
+  ]) assert.equal(redactFailureLine(raw), expected);
+});
+
+test("oversized or adversarial lastError is refused or scanned in bounded time", async () => {
+  const { redactFailureLine, MAX_RAW_DIAGNOSTIC } = await import("../src/outbound-pairer.mjs");
+  for (const raw of [
+    "Error: " + "a".repeat(40_000) + " token=FAKE_B3_SECRET_314",
+    "Error: " + "word ".repeat(MAX_RAW_DIAGNOSTIC / 5 - 2),
+    "Error: " + "token".repeat(MAX_RAW_DIAGNOSTIC / 5 - 2),
+    "Error: " + "a.".repeat(MAX_RAW_DIAGNOSTIC / 2 - 6) + "=x",
+  ]) {
+    const started = performance.now();
+    const out = redactFailureLine(raw);
+    assert.ok(performance.now() - started < 100, `slow scan for ${raw.length} chars`);
+    assert.ok(out === null || !out.includes("SECRET"));
+    if (raw.length > MAX_RAW_DIAGNOSTIC) assert.equal(out, null);
+  }
+  for (const ws of ["\t", "\v", "\f", " ", "\u00a0", "\u1680", "\u2003", "\u2028", "\u202f", "\u3000", "\ufeff", "\n", "\u0085"])
+    assert.equal(redactFailureLine(`Error: {"status${ws}name":"unavailable"}`), null, JSON.stringify(ws));
+  assert.equal(redactFailureLine('Error: {"status"\t:\t"unavailable"}'), 'Error: {"status" : "unavailable"}');
+});
+
+// B3 816c P3-1 / grammar B5: no key-length limit; a long literal key is redacted like Jack.
+test("long literal keys are redacted at any length, connector-led keys refused", async () => {
+  const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
+  for (const n of [63, 64, 65, 500])
+    assert.equal(redactFailureLine(`Error: provider failed: ${"a".repeat(n)}token=FAKE_B3_SECRET_991`), "Error: provider failed: [redacted][redacted]", String(n));
+  assert.equal(redactFailureLine(`Error: _${"a".repeat(500)}token=FAKE_B3_SECRET_991`), null);
+});
+
+test("shared prose controls (contractions, possessives, quoted values) keep failureDetail", async () => {
+  const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
+  const controls = JSON.parse(fs.readFileSync(new URL("./fixtures/diagnostic_key_controls.json", import.meta.url), "utf8"));
+  const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
+  for (const raw of controls) {
+    const expected = raw.split(/[\s\u0085]+/).join(" ");
+    assert.equal(redactFailureLine(raw), expected, JSON.stringify(raw));
+    const adapter = new LoopbackRuntimeAdapter({ client: { request: async () => ({ ...params, state: "failed", turnId: "turn",
+      assistantMessageId: null, instanceId: "claudeAgent", model: "fixture", effort: "high", outputText: null }),
+      thread: async () => ({ thread: { id: "thread", session: { lastError: raw } } }) } });
+    const out = await new RemoteRpcShim(adapter).handle({ version: 1, type: "rpc.request", id: "control", method: "turn-result", params });
+    assert.equal(out.result.failureDetail, expected, JSON.stringify(raw));
+  }
+});

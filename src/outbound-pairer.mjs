@@ -368,10 +368,53 @@ const SECRET_KEY = String.raw`[A-Za-z0-9_.-]*(?:authorization|cookie|password|pa
 // Quoted/escaped/malformed values, JSON containers and all later cookies must
 // stay local; attempting to find a value terminator can export a secret suffix.
 const KEYED_SECRET = new RegExp(String.raw`(?<![A-Za-z0-9])(["']?${SECRET_KEY}["']?)(\s*[:=]\s*|\s+(?=["']))[\s\S]*`, "gi");
-// A permitted TAB can split a key, and older exporters may have made it a space.
-// Reject ambiguous key interiors before normalizing ordinary whitespace.
-const SPACED_KEY = /(["'])([A-Za-z0-9_.-]+(?:[ \t]+[A-Za-z0-9_.-]+)+)\1(?=\s*[:=]|\s+["'])|(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+(?:\t+[A-Za-z0-9_.-]+)+)(?=\s*[:=]|\s+["'])/g;
-const LITERAL_SECRET_KEY = new RegExp(`^(?:${SECRET_KEY})$`, "i");
+// One grammar with Agent Jack (docs/privacy/diagnostic-key-grammar.md; shared
+// vectors test/fixtures/whitespace_key_vectors.json). G2: a quoted field name
+// with whitespace. G3: a credential word cut by any non-word character (any
+// whitespace, quote, punctuation), or a compound key cut before its connector,
+// used as a field name. Refused on raw text before normalization and again at
+// final publication; an unmatched pattern is never treated as safe.
+// Shared whitespace union with Agent Jack (Python \s plus BOM; JS \s lacks NEL).
+const WS = String.raw`[\s\u0085]`;
+const FIELD_END = String.raw`(?=${WS}*[:=]|${WS}+["'])`;
+// G2, linear: anchored at a field-opening quote (not an apostrophe inside a word), never
+// retried from every word start.
+const QUOTED_SPACED_KEY = [
+  new RegExp(String.raw`(?<![A-Za-z0-9_.-])["'][A-Za-z0-9_.-]+(?:${WS}+[A-Za-z0-9_.-]+)+["']?${FIELD_END}`),
+  new RegExp(String.raw`(?<=[A-Za-z0-9_.-]${WS}+[A-Za-z0-9_.-]+)["']${FIELD_END}`),
+];
+const SECRET_WORD = new RegExp(SECRET_KEY.replace("[A-Za-z0-9_.-]*", ""), "iy");
+const DELIMITER = /\W*?[:="']/y;
+const LITERAL_WORD = new RegExp(`^${SECRET_KEY.replace("[A-Za-z0-9_.-]*", "")}$`, "i");
+// Raw diagnostics longer than this are refused before any pattern work (fail
+// closed; truncating could split a credential before recognition). The
+// published line is at most 200 characters; T3 lastError is normally short.
+export const MAX_RAW_DIAGNOSTIC = 2048;
+
+function unsupportedKey(text) {
+  if (QUOTED_SPACED_KEY.some((pattern) => pattern.test(text))) return true;
+  const kept = [];
+  // tokenStart[i]: start of the [\w.-] field-name run ending before i, in one linear pass
+  // (no per-match backwards walk, no key-length limit; Jack walks the same run).
+  const tokenStart = new Array(text.length + 1);
+  tokenStart[0] = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (/\w/.test(text[i])) kept.push(i);
+    tokenStart[i + 1] = /[\w.-]/.test(text[i]) ? tokenStart[i] : i + 1;
+  }
+  const compact = kept.map((i) => text[i]).join("");
+  for (let k = 0; k < compact.length; k++) {
+    SECRET_WORD.lastIndex = k;
+    const word = SECRET_WORD.exec(compact)?.[0];
+    if (!word) continue;
+    const start = kept[k], end = kept[k + word.length - 1] + 1;
+    DELIMITER.lastIndex = end;
+    if (!DELIMITER.test(text)) continue; // First, so only field names are walked.
+    const token = tokenStart[start];
+    if (/[_.-]/.test(text[token]) || !LITERAL_WORD.test(text.slice(start, end))) return true;
+  }
+  return false;
+}
 const VENDOR_TOKENS = [
   /\bgh[pousr]_[A-Za-z0-9_]{6,}/g,
   /\bgithub_pat_[A-Za-z0-9_]{6,}/g,
@@ -385,7 +428,7 @@ const VENDOR_TOKENS = [
 
 /** First nonempty line of a provider error, without credentials, accounts, paths or links. */
 export function redactFailureLine(value) {
-  if (typeof value !== "string") return null;
+  if (typeof value !== "string" || value.length > MAX_RAW_DIAGNOSTIC) return null;
   const cleaned = value
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
     .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
@@ -393,10 +436,8 @@ export function redactFailureLine(value) {
   // use the literal credential grammar. Omit unsupported optional detail.
   if (cleaned.includes("\\")) return null;
   // Reject unsupported controls before matching: even a key itself can be split.
-  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u0084\u0086-\u009f]/.test(cleaned)) return null;
-  for (const match of cleaned.matchAll(SPACED_KEY)) {
-    if (LITERAL_SECRET_KEY.test((match[2] ?? match[3]).replace(/[ \t]+/g, ""))) return null;
-  }
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u0084\u0086-\u009f\ufeff]/.test(cleaned)) return null;
+  if (unsupportedKey(cleaned)) return null;
   const first = cleaned.replace(/\r\n|[\r\n\u0085\u2028\u2029]/g, "\n").split("\n").map((line) => line.trim()).find(Boolean);
   if (!first) return null;
   let line = first.replace(/\t/g, " ")
