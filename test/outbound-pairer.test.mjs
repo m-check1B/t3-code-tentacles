@@ -1214,6 +1214,14 @@ test("oversized or adversarial lastError is refused or scanned in bounded time",
   assert.equal(redactFailureLine('Error: {"status"\t:\t"unavailable"}'), 'Error: {"status" : "unavailable"}');
 });
 
+// B3 816c P3-1 / grammar B5: no key-length limit; a long literal key is redacted like Jack.
+test("long literal keys are redacted at any length, connector-led keys refused", async () => {
+  const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
+  for (const n of [63, 64, 65, 500])
+    assert.equal(redactFailureLine(`Error: provider failed: ${"a".repeat(n)}token=FAKE_B3_SECRET_991`), "Error: provider failed: [redacted][redacted]", String(n));
+  assert.equal(redactFailureLine(`Error: _${"a".repeat(500)}token=FAKE_B3_SECRET_991`), null);
+});
+
 test("shared prose controls (contractions, possessives, quoted values) keep failureDetail", async () => {
   const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
   const controls = JSON.parse(fs.readFileSync(new URL("./fixtures/diagnostic_key_controls.json", import.meta.url), "utf8"));

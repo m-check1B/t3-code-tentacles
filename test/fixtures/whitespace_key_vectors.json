@@ -2083,5 +2083,18 @@
   "Error: {\"status\r\nname\":\"unavailable\"}",
   "Error: status\r\nname\": \"unavailable\"",
   "Error: {\"status\u0085name\":\"unavailable\"}",
-  "Error: status\u0085name\": \"unavailable\""
+  "Error: status\u0085name\": \"unavailable\"",
+  "Error: {\"api / key\":\"FAKE_B3_SECRET_992\"}",
+  "Error: {\"tok\u03b1en\":\"FAKE_B3_SECRET_992\"}",
+  "Error: {\"api\u00e9key\":\"FAKE_B3_SECRET_992\"}",
+  "Error: can't auth: {\"api key\":\"FAKE_B3_SECRET_992\"}",
+  "Error: provider's 'session key': FAKE_B3_SECRET_992",
+  "Error: \"status name\" \"unavailable\"",
+  "Error: 'status name'=unavailable",
+  "Error: api\u00a0key=FAKE_B3_SECRET_992",
+  "Error: can't load model 'large model': unavailable",
+  "Error: couldn't open 'config file': missing",
+  "Error: provider returned 'service unavailable' 'please retry'",
+  "Error: _aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaatoken=FAKE_B3_SECRET_992",
+  "Error: -aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_api_key=FAKE_B3_SECRET_992"
 ]

@@ -17,5 +17,11 @@
   "Error: {\"status\"\t:\t\"unavailable\"}",
   "Error: the user's request couldn't be routed: retry later",
   "Error: provider returned \"rate limited\", wait and retry",
-  "Error: it's not possible to reach 'api.example.test' right now"
+  "Error: it's not possible to reach 'api.example.test' right now",
+  "Error: {\"status / name\":\"unavailable\"}",
+  "Error: {\"\u03b1 name\":\"unavailable\"}",
+  "Error: {\"status n\u03b1me\":\"unavailable\"}",
+  "Error: can't load model 'large-model': unavailable",
+  "Error: can't load model 'large model' (unavailable)",
+  "Error: provider\u00a0failed: unavailable"
 ]

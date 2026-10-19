@@ -390,12 +390,18 @@ const LITERAL_WORD = new RegExp(`^${SECRET_KEY.replace("[A-Za-z0-9_.-]*", "")}$`
 // closed; truncating could split a credential before recognition). The
 // published line is at most 200 characters; T3 lastError is normally short.
 export const MAX_RAW_DIAGNOSTIC = 2048;
-const MAX_KEY_WALK = 64;
 
 function unsupportedKey(text) {
   if (QUOTED_SPACED_KEY.some((pattern) => pattern.test(text))) return true;
   const kept = [];
-  for (let i = 0; i < text.length; i++) if (/\w/.test(text[i])) kept.push(i);
+  // tokenStart[i]: start of the [\w.-] field-name run ending before i, in one linear pass
+  // (no per-match backwards walk, no key-length limit; Jack walks the same run).
+  const tokenStart = new Array(text.length + 1);
+  tokenStart[0] = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (/\w/.test(text[i])) kept.push(i);
+    tokenStart[i + 1] = /[\w.-]/.test(text[i]) ? tokenStart[i] : i + 1;
+  }
   const compact = kept.map((i) => text[i]).join("");
   for (let k = 0; k < compact.length; k++) {
     SECRET_WORD.lastIndex = k;
@@ -404,10 +410,8 @@ function unsupportedKey(text) {
     const start = kept[k], end = kept[k + word.length - 1] + 1;
     DELIMITER.lastIndex = end;
     if (!DELIMITER.test(text)) continue; // First, so only field names are walked.
-    let token = start;
-    while (token && start - token < MAX_KEY_WALK && /[\w.-]/.test(text[token - 1])) token--;
-    // A field name longer than the walk bound is unsupported, not assumed literal.
-    if (start - token >= MAX_KEY_WALK || /[_.-]/.test(text[token]) || !LITERAL_WORD.test(text.slice(start, end))) return true;
+    const token = tokenStart[start];
+    if (/[_.-]/.test(text[token]) || !LITERAL_WORD.test(text.slice(start, end))) return true;
   }
   return false;
 }
