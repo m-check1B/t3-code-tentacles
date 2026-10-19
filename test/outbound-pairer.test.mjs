@@ -1194,3 +1194,22 @@ test("shared whitespace/quote key matrix never crosses helper or RPC publication
     ["Error: invalid api key", "Error: invalid api key"],
   ]) assert.equal(redactFailureLine(raw), expected);
 });
+
+test("oversized or adversarial lastError is refused or scanned in bounded time", async () => {
+  const { redactFailureLine, MAX_RAW_DIAGNOSTIC } = await import("../src/outbound-pairer.mjs");
+  for (const raw of [
+    "Error: " + "a".repeat(40_000) + " token=FAKE_B3_SECRET_314",
+    "Error: " + "word ".repeat(MAX_RAW_DIAGNOSTIC / 5 - 2),
+    "Error: " + "token".repeat(MAX_RAW_DIAGNOSTIC / 5 - 2),
+    "Error: " + "a.".repeat(MAX_RAW_DIAGNOSTIC / 2 - 6) + "=x",
+  ]) {
+    const started = performance.now();
+    const out = redactFailureLine(raw);
+    assert.ok(performance.now() - started < 100, `slow scan for ${raw.length} chars`);
+    assert.ok(out === null || !out.includes("SECRET"));
+    if (raw.length > MAX_RAW_DIAGNOSTIC) assert.equal(out, null);
+  }
+  for (const ws of ["\t", "\v", "\f", " ", "\u00a0", "\u1680", "\u2003", "\u2028", "\u202f", "\u3000", "\ufeff", "\n", "\u0085"])
+    assert.equal(redactFailureLine(`Error: {"status${ws}name":"unavailable"}`), null, JSON.stringify(ws));
+  assert.equal(redactFailureLine('Error: {"status"\t:\t"unavailable"}'), 'Error: {"status" : "unavailable"}');
+});

@@ -374,22 +374,39 @@ const KEYED_SECRET = new RegExp(String.raw`(?<![A-Za-z0-9])(["']?${SECRET_KEY}["
 // whitespace, quote, punctuation), or a compound key cut before its connector,
 // used as a field name. Refused on raw text before normalization and again at
 // final publication; an unmatched pattern is never treated as safe.
-const SPACED_KEY = /(?<![A-Za-z0-9_.-])(["']?)[A-Za-z0-9_.-]+(?:\s+[A-Za-z0-9_.-]+)+(["']?)(?=\s*[:=]|\s+["'])/g;
-const SECRET_WORD = new RegExp(`^${SECRET_KEY.replace("[A-Za-z0-9_.-]*", "")}`, "i");
+// Shared whitespace union with Agent Jack (Python \s plus BOM; JS \s lacks NEL).
+const WS = String.raw`[\s\u0085]`;
+const FIELD_END = String.raw`(?=${WS}*[:=]|${WS}+["'])`;
+// G2, linear: anchored at quote characters, never retried from every word start.
+const QUOTED_SPACED_KEY = [
+  new RegExp(String.raw`["'][A-Za-z0-9_.-]+(?:${WS}+[A-Za-z0-9_.-]+)+["']?${FIELD_END}`),
+  new RegExp(String.raw`(?<=[A-Za-z0-9_.-]${WS}+[A-Za-z0-9_.-]+)["']${FIELD_END}`),
+];
+const SECRET_WORD = new RegExp(SECRET_KEY.replace("[A-Za-z0-9_.-]*", ""), "iy");
+const DELIMITER = /\W*?[:="']/y;
 const LITERAL_WORD = new RegExp(`^${SECRET_KEY.replace("[A-Za-z0-9_.-]*", "")}$`, "i");
+// Raw diagnostics longer than this are refused before any pattern work (fail
+// closed; truncating could split a credential before recognition). The
+// published line is at most 200 characters; T3 lastError is normally short.
+export const MAX_RAW_DIAGNOSTIC = 2048;
+const MAX_KEY_WALK = 64;
 
 function unsupportedKey(text) {
-  for (const match of text.matchAll(SPACED_KEY)) if (match[1] || match[2]) return true;
+  if (QUOTED_SPACED_KEY.some((pattern) => pattern.test(text))) return true;
   const kept = [];
   for (let i = 0; i < text.length; i++) if (/\w/.test(text[i])) kept.push(i);
   const compact = kept.map((i) => text[i]).join("");
   for (let k = 0; k < compact.length; k++) {
-    const word = SECRET_WORD.exec(compact.slice(k))?.[0];
+    SECRET_WORD.lastIndex = k;
+    const word = SECRET_WORD.exec(compact)?.[0];
     if (!word) continue;
     const start = kept[k], end = kept[k + word.length - 1] + 1;
+    DELIMITER.lastIndex = end;
+    if (!DELIMITER.test(text)) continue; // First, so only field names are walked.
     let token = start;
-    while (token && /[\w.-]/.test(text[token - 1])) token--;
-    if ((/[_.-]/.test(text[token]) || !LITERAL_WORD.test(text.slice(start, end))) && /^\W*?[:="']/.test(text.slice(end))) return true;
+    while (token && start - token < MAX_KEY_WALK && /[\w.-]/.test(text[token - 1])) token--;
+    // A field name longer than the walk bound is unsupported, not assumed literal.
+    if (start - token >= MAX_KEY_WALK || /[_.-]/.test(text[token]) || !LITERAL_WORD.test(text.slice(start, end))) return true;
   }
   return false;
 }
@@ -406,7 +423,7 @@ const VENDOR_TOKENS = [
 
 /** First nonempty line of a provider error, without credentials, accounts, paths or links. */
 export function redactFailureLine(value) {
-  if (typeof value !== "string") return null;
+  if (typeof value !== "string" || value.length > MAX_RAW_DIAGNOSTIC) return null;
   const cleaned = value
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
     .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
