@@ -1,0 +1,21 @@
+[
+  "Error: can't connect: unavailable",
+  "Error: couldn't connect: unavailable",
+  "Error: connection's status: unavailable",
+  "Error: don't retry: unavailable",
+  "Error: provider didn't respond: unavailable",
+  "Error: provider isn't available: try again later",
+  "Error: can't find 'model'",
+  "Error: couldn't open 'file'",
+  "Error: the provider's API returned 'service unavailable'",
+  "Error: model \"claude sonnet\" is unavailable",
+  "Error: provider said 'try again later'",
+  "Error: Claude Code isn't signed in: run claude auth login",
+  "Error: workspace's default engine is not ready",
+  "Error: provider failed: unavailable",
+  "Error: invalid api key",
+  "Error: {\"status\"\t:\t\"unavailable\"}",
+  "Error: the user's request couldn't be routed: retry later",
+  "Error: provider returned \"rate limited\", wait and retry",
+  "Error: it's not possible to reach 'api.example.test' right now"
+]

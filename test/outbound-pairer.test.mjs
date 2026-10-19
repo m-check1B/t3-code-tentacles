@@ -1213,3 +1213,18 @@ test("oversized or adversarial lastError is refused or scanned in bounded time",
     assert.equal(redactFailureLine(`Error: {"status${ws}name":"unavailable"}`), null, JSON.stringify(ws));
   assert.equal(redactFailureLine('Error: {"status"\t:\t"unavailable"}'), 'Error: {"status" : "unavailable"}');
 });
+
+test("shared prose controls (contractions, possessives, quoted values) keep failureDetail", async () => {
+  const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
+  const controls = JSON.parse(fs.readFileSync(new URL("./fixtures/diagnostic_key_controls.json", import.meta.url), "utf8"));
+  const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
+  for (const raw of controls) {
+    const expected = raw.split(/[\s\u0085]+/).join(" ");
+    assert.equal(redactFailureLine(raw), expected, JSON.stringify(raw));
+    const adapter = new LoopbackRuntimeAdapter({ client: { request: async () => ({ ...params, state: "failed", turnId: "turn",
+      assistantMessageId: null, instanceId: "claudeAgent", model: "fixture", effort: "high", outputText: null }),
+      thread: async () => ({ thread: { id: "thread", session: { lastError: raw } } }) } });
+    const out = await new RemoteRpcShim(adapter).handle({ version: 1, type: "rpc.request", id: "control", method: "turn-result", params });
+    assert.equal(out.result.failureDetail, expected, JSON.stringify(raw));
+  }
+});

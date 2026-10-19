@@ -377,9 +377,10 @@ const KEYED_SECRET = new RegExp(String.raw`(?<![A-Za-z0-9])(["']?${SECRET_KEY}["
 // Shared whitespace union with Agent Jack (Python \s plus BOM; JS \s lacks NEL).
 const WS = String.raw`[\s\u0085]`;
 const FIELD_END = String.raw`(?=${WS}*[:=]|${WS}+["'])`;
-// G2, linear: anchored at quote characters, never retried from every word start.
+// G2, linear: anchored at a field-opening quote (not an apostrophe inside a word), never
+// retried from every word start.
 const QUOTED_SPACED_KEY = [
-  new RegExp(String.raw`["'][A-Za-z0-9_.-]+(?:${WS}+[A-Za-z0-9_.-]+)+["']?${FIELD_END}`),
+  new RegExp(String.raw`(?<![A-Za-z0-9_.-])["'][A-Za-z0-9_.-]+(?:${WS}+[A-Za-z0-9_.-]+)+["']?${FIELD_END}`),
   new RegExp(String.raw`(?<=[A-Za-z0-9_.-]${WS}+[A-Za-z0-9_.-]+)["']${FIELD_END}`),
 ];
 const SECRET_WORD = new RegExp(SECRET_KEY.replace("[A-Za-z0-9_.-]*", ""), "iy");
