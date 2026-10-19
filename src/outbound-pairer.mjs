@@ -340,7 +340,8 @@ export class LoopbackRuntimeAdapter {
     if (result.state === "failed") {
       // T3 keeps why a turn failed (e.g. a plan limit) only in session.lastError.
       // Jack names that reason; one redacted first line crosses, nothing else.
-      const failureDetail = await this.sessionFailureDetail(input.threadId);
+      // Revalidate at publication; a helper change must not export raw diagnostics.
+      const failureDetail = redactFailureLine(await this.sessionFailureDetail(input.threadId));
       if (failureDetail) projected.failureDetail = failureDetail;
     }
     return projected;
@@ -388,6 +389,9 @@ export function redactFailureLine(value) {
   const cleaned = value
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
     .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
+  // Literal diagnostics only: escaped keys/nested JSON strings cannot safely
+  // use the literal credential grammar. Omit unsupported optional detail.
+  if (cleaned.includes("\\")) return null;
   // Reject unsupported controls before matching: even a key itself can be split.
   if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u0084\u0086-\u009f]/.test(cleaned)) return null;
   for (const match of cleaned.matchAll(SPACED_KEY)) {
