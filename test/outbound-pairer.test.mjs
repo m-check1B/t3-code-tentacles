@@ -1079,3 +1079,63 @@ test("failed turn-result selects the first nonempty line across all line boundar
     assert.equal((await adapter.turnResult(params)).failureDetail, expected, JSON.stringify(lastError));
   }
 });
+
+// B3 #55: the unchanged RPC probe, with a literal TAB inside each credential key.
+test("key-interior TAB credentials never cross helper or RPC publication", async () => {
+  const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
+  const marker = "FAKE_B3_SECRET_314";
+  const params = { threadId: "b3-thread", messageId: "b3-message", turnCommandId: "b3-command" };
+  for (const key of ["coo\tkie", "authori\tzation", "pass\tword", "client_secre\tt"]) {
+    const raw = `Error: {"${key}":"${marker}"}`;
+    assert.equal(redactFailureLine(raw), null);
+    const adapter = new LoopbackRuntimeAdapter({ client: {
+      request: async () => ({ ...params, state: "failed", turnId: "b3-turn",
+        assistantMessageId: null, instanceId: "fixture", model: "fixture", effort: "high",
+        outputText: null, failureDetail: marker, internalDiagnostic: marker }),
+      thread: async () => ({ thread: { id: params.threadId, session: { lastError: raw } } })
+    } });
+    const out = await new RemoteRpcShim(adapter).handle({ version: 1, type: "rpc.request",
+      id: "b3-probe", method: "turn-result", params });
+    assert.equal(out.type, "rpc.result");
+    assert.equal(Object.hasOwn(out.result, "failureDetail"), false);
+    assert.equal(Object.hasOwn(out.result, "internalDiagnostic"), false);
+    assert.equal(JSON.stringify(out).includes(marker), false);
+  }
+});
+
+test("credential key whitespace is refused at every interior position", async () => {
+  const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
+  const marker = "FAKE_B3_SECRET_314";
+  for (const key of ["authorization", "cookie", "password", "passwd", "pwd", "client_secret",
+    "api_key", "access_token", "private_key", "credentials"]) {
+    for (let at = 1; at < key.length; at++) {
+      for (const gap of ["\t", " ", " \t "]) {
+        const raw = `Error: {"${key.slice(0, at)}${gap}${key.slice(at)}":"${marker}"}`;
+        assert.equal(redactFailureLine(raw), null, `${key} interior ${at}`);
+      }
+    }
+  }
+});
+
+test("ordinary TAB word and delimiter whitespace stays supported", async () => {
+  const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
+  const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
+  for (const [raw, expected] of [
+    ["Error:\ttemporary\tfailure", "Error: temporary failure"],
+    ["Error: provider\tfailed: unavailable", "Error: provider failed: unavailable"],
+    ["Error:\tCookie\t: FAKE_B3_SECRET_314", "Error: Cookie : [redacted]"],
+    ['Error: {"status"\t:\t"unavailable"}', 'Error: {"status" : "unavailable"}'],
+    ["Claude usage limit reached.", "Claude usage limit reached."],
+  ]) {
+    assert.equal(redactFailureLine(raw), expected);
+    const adapter = new LoopbackRuntimeAdapter({ client: {
+      request: async () => ({ ...params, state: "failed", turnId: "turn", assistantMessageId: null,
+        instanceId: "fixture", model: "fixture", effort: "high", outputText: null }),
+      thread: async () => ({ thread: { id: params.threadId, session: { lastError: raw } } })
+    } });
+    const out = await new RemoteRpcShim(adapter).handle({ version: 1, type: "rpc.request",
+      id: "tab-control", method: "turn-result", params });
+    assert.equal(out.type, "rpc.result");
+    assert.equal(out.result.failureDetail, expected);
+  }
+});
