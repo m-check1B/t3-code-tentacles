@@ -367,6 +367,10 @@ const SECRET_KEY = String.raw`[A-Za-z0-9_.-]*(?:authorization|cookie|password|pa
 // Quoted/escaped/malformed values, JSON containers and all later cookies must
 // stay local; attempting to find a value terminator can export a secret suffix.
 const KEYED_SECRET = new RegExp(String.raw`(?<![A-Za-z0-9])(["']?${SECRET_KEY}["']?)(\s*[:=]\s*|\s+(?=["']))[\s\S]*`, "gi");
+// A permitted TAB can split a key, and older exporters may have made it a space.
+// Reject ambiguous key interiors before normalizing ordinary whitespace.
+const SPACED_KEY = /(["'])([A-Za-z0-9_.-]+(?:[ \t]+[A-Za-z0-9_.-]+)+)\1(?=\s*[:=]|\s+["'])|(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+(?:\t+[A-Za-z0-9_.-]+)+)(?=\s*[:=]|\s+["'])/g;
+const LITERAL_SECRET_KEY = new RegExp(`^(?:${SECRET_KEY})$`, "i");
 const VENDOR_TOKENS = [
   /\bgh[pousr]_[A-Za-z0-9_]{6,}/g,
   /\bgithub_pat_[A-Za-z0-9_]{6,}/g,
@@ -384,9 +388,14 @@ export function redactFailureLine(value) {
   const cleaned = value
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
     .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
+  // Reject unsupported controls before matching: even a key itself can be split.
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u0084\u0086-\u009f]/.test(cleaned)) return null;
+  for (const match of cleaned.matchAll(SPACED_KEY)) {
+    if (LITERAL_SECRET_KEY.test((match[2] ?? match[3]).replace(/[ \t]+/g, ""))) return null;
+  }
   const first = cleaned.replace(/\r\n|[\r\n\u0085\u2028\u2029]/g, "\n").split("\n").map((line) => line.trim()).find(Boolean);
   if (!first) return null;
-  let line = first
+  let line = first.replace(/\t/g, " ")
     .replace(/[A-Za-z][A-Za-z0-9+.-]*:\/\/[\s\S]*$/g, "[link]")
     .replace(/(?:\/Users|\/home)\/[^/\s]+/g, "~")
     .replace(/[A-Za-z]:\\Users\\[^\\\s]+/g, "~")
@@ -394,7 +403,7 @@ export function redactFailureLine(value) {
     .replace(/\b(?:Bearer|Basic)\s+[^\s"',;}]+/gi, "[redacted]")
     .replace(KEYED_SECRET, "$1$2[redacted]");
   for (const pattern of VENDOR_TOKENS) line = line.replace(pattern, "[redacted]");
-  line = line.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+  line = line.replace(/\s+/g, " ").trim();
   if (line.length > 200) line = `${line.slice(0, 199).trimEnd()}…`;
   return line || null;
 }
