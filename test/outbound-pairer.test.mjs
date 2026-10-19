@@ -1139,3 +1139,26 @@ test("ordinary TAB word and delimiter whitespace stays supported", async () => {
     assert.equal(out.result.failureDetail, expected);
   }
 });
+
+
+test("escaped diagnostics fail closed even at final RPC publication", async () => {
+  const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
+  const vectors = JSON.parse(fs.readFileSync(new URL("./fixtures/redaction_vectors.json", import.meta.url), "utf8"));
+  const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
+  const splitKeys = ["coo\tkie", "authori\tzation", "pass\tword", "client_secre\tt"];
+  const splitDiagnostics = splitKeys.flatMap((key) => [key, key.replace(/\t/g, " ")]
+    .map((spelling) => `Error: {"${spelling}":"FAKE_B3_SECRET_314"}`));
+  for (const raw of [...vectors.unsupportedEncodings, ...splitDiagnostics]) {
+    assert.equal(redactFailureLine(raw), null);
+    const adapter = new LoopbackRuntimeAdapter({ client: {
+      request: async () => ({ ...params, state: "failed", turnId: "turn", assistantMessageId: null,
+        instanceId: "claudeAgent", model: "fixture", effort: "high", outputText: null })
+    } });
+    // A helper regression must not bypass the final turn-result publication guard.
+    adapter.sessionFailureDetail = async () => raw;
+    const out = await new RemoteRpcShim(adapter).handle({ version: 1, type: "rpc.request", id: "encoded", method: "turn-result", params });
+    assert.equal(out.type, "rpc.result");
+    assert.equal(Object.hasOwn(out.result, "failureDetail"), false);
+    assert.equal(JSON.stringify(out).includes("SECRET"), false);
+  }
+});
