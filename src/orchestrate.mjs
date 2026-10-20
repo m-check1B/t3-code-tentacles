@@ -21,6 +21,7 @@ import {
   retainedSelectionPin,
 } from "./model-selection.mjs";
 import { readOrchestrationSnapshot, T3HttpError, T3AuthError } from "./t3-client.mjs";
+import { T3RpcRejectedError, T3V2UnsupportedError, V2_PROTOCOL } from "./t3-v2.mjs";
 
 const INTERACTION_MODES = new Set(["default", "plan"]);
 const APPROVAL_DECISIONS = new Set(["accept", "acceptForSession", "decline", "cancel"]);
@@ -273,6 +274,37 @@ export const INTENT_ACTIONS = new Set([
   "thread.delete",
   "thread.external-message",
 ]);
+
+// Intent fields each action reads. On T3 orchestration protocol 2 any other
+// field is refused (KRA-6436: fail closed), never silently dropped.
+const SELECTION_FIELDS = ["instanceId", "model", "options", "budget", "modelSelection"];
+const THREAD_ONLY = ["threadId"];
+const INTENT_FIELDS = {
+  "project.create": ["projectId", "title", "workspaceRoot", ...SELECTION_FIELDS],
+  "project.rename": ["projectId", "title"],
+  "project.set-model": ["projectId", ...SELECTION_FIELDS],
+  "project.delete": ["projectId", "force"],
+  "thread.create": ["threadId", "projectId", "title", "runtimeMode", ...SELECTION_FIELDS],
+  "thread.continue": ["threadId", "text", "runtimeMode", "titleSeed", ...SELECTION_FIELDS],
+  "thread.restart": ["threadId", "text", "runtimeMode", "titleSeed", ...SELECTION_FIELDS],
+  "thread.interrupt": ["threadId", "turnId"],
+  "thread.stop": THREAD_ONLY,
+  "thread.session.stop": THREAD_ONLY,
+  "thread.approval.respond": ["threadId", "requestId", "decision"],
+  "thread.user-input.respond": ["threadId", "requestId", "answers"],
+  "thread.checkpoint.revert": ["threadId", "turnCount"],
+  "thread.set-runtime-mode": ["threadId", "runtimeMode"],
+  "thread.set-model": ["threadId", ...SELECTION_FIELDS],
+  "thread.rename": ["threadId", "title"],
+  "thread.snooze": ["threadId", "snoozedUntil"],
+  "thread.external-message": ["threadId", "text"],
+};
+
+export function requireKnownIntentFields(intent) {
+  const allowed = new Set(["action", "commandId", ...(INTENT_FIELDS[intent?.action] ?? THREAD_ONLY)]);
+  const unknown = Object.keys(intent ?? {}).filter((key) => !allowed.has(key));
+  if (unknown.length) throw new T3V2UnsupportedError(`Intent ${intent.action} has unknown field(s): ${unknown.join(", ")}`);
+}
 
 export function buildCommandFromIntent(intent, { commandId, createdAt } = {}) {
   if (!intent || typeof intent !== "object" || Array.isArray(intent)) throw new Error("Intent must be an object");
@@ -729,6 +761,8 @@ export class IntentDispatchError extends Error {
     super(status === "rejected" ? "T3 rejected the command" : "T3 command acceptance is unconfirmed; retry with the same commandId");
     this.name = "IntentDispatchError";
     if (authError instanceof T3AuthError) this.message = authError.message;
+    // The adapter's own refusal is safe to show; T3 reply bodies are not.
+    if (authError instanceof T3V2UnsupportedError) this.message = authError.message;
     this.receipt = { accepted: false, commandId, status, projected: false, ...(authError instanceof T3AuthError ? { code: authError.code, action: authError.action } : {}) };
   }
 }
@@ -737,7 +771,9 @@ async function dispatchWithReceipt(client, command) {
   let result;
   try { result = await client.dispatch(command); }
   catch (error) {
-    throw new IntentDispatchError(command.commandId, error instanceof T3HttpError && error.status >= 400 && error.status < 500 ? "rejected" : "unconfirmed", error);
+    const refused = (error instanceof T3HttpError && error.status >= 400 && error.status < 500)
+      || error instanceof T3RpcRejectedError || error instanceof T3V2UnsupportedError;
+    throw new IntentDispatchError(command.commandId, refused ? "rejected" : "unconfirmed", error);
   }
   if (result?.accepted === false) throw new IntentDispatchError(command.commandId, "rejected");
   return result;
@@ -750,6 +786,7 @@ export async function applyIntent(client, intent, { wait = true, commandId, crea
   const dispatchClient = client;
   client = Object.create(client);
   client.dispatch = (command) => dispatchWithReceipt(dispatchClient, command);
+  if (typeof dispatchClient.protocol === "function" && await dispatchClient.protocol() === V2_PROTOCOL) requireKnownIntentFields(intent);
   const command = buildCommandFromIntent(intent, { commandId, createdAt });
   let baseline = null;
   let restartCommand = null;

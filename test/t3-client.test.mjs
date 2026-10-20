@@ -45,7 +45,7 @@ test("HTTP dispatch authenticates and sends the exact client command", async () 
     calls.push({ url, options });
     return new Response(JSON.stringify({ sequence: 7 }), { status: 200 });
   };
-  const client = new T3Client({ baseUrl: "http://127.0.0.1:3773", token: "test-token", fetchImpl });
+  const client = new T3Client({ orchestrationProtocol: 1, baseUrl: "http://127.0.0.1:3773", token: "test-token", fetchImpl });
   const command = { type: "project.delete", commandId: "c", projectId: "p" };
   assert.deepEqual(await client.dispatch(command), { sequence: 7 });
   assert.equal(calls[0].options.headers.authorization, "Bearer test-token");
@@ -111,7 +111,7 @@ test("OpenRouter token uses the same owner-only file contract without leaking ma
 });
 
 test("HTTP response bodies are size-bounded", async () => {
-  const client = new T3Client({
+  const client = new T3Client({ orchestrationProtocol: 1,
     token: "test-token",
     responseMaxBytes: 100,
     fetchImpl: async () => new Response("x".repeat(101), { status: 200 }),
@@ -148,7 +148,7 @@ test("WebSocket RPC failures redact server-controlled token and prompt material"
     }
   }
 
-  const client = new T3Client({
+  const client = new T3Client({ orchestrationProtocol: 1,
     token: "test-token",
     WebSocketImpl: FailingWebSocket,
     fetchImpl: async () => new Response(JSON.stringify({ ticket: "ticket" }), { status: 200 }),
@@ -198,7 +198,7 @@ test("WebSocket RPC ignores malformed frames, answers pings, and returns its mat
       sockets.push(this);
     }
   }
-  const client = new T3Client({
+  const client = new T3Client({ orchestrationProtocol: 1,
     token: "test-token",
     WebSocketImpl: TrackingWebSocket,
     fetchImpl: async () => new Response(JSON.stringify({ ticket: "ticket" }), { status: 200 }),
@@ -237,7 +237,7 @@ test("KRA-6576: frames after an RPC settles never throw or reject unhandled", as
     }
   }
   try {
-    const client = new T3Client({
+    const client = new T3Client({ orchestrationProtocol: 1,
       token: "test-token",
       WebSocketImpl: ClosingWebSocket,
       fetchImpl: async () => new Response(JSON.stringify({ ticket: "ticket" }), { status: 200 }),

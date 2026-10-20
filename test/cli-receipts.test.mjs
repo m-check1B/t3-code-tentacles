@@ -23,7 +23,7 @@ for (const rejected of [false, true]) {
     try {
       await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
       const child = spawn(process.execPath, [fileURLToPath(new URL("../src/cli.mjs", import.meta.url)), "act", "--intent", JSON.stringify({ action: "thread.pin", threadId: "synthetic-thread", commandId: "retry-same-id" }), "--no-wait"], {
-        env: { ...process.env, T3_URL: `http://127.0.0.1:${server.address().port}`, T3_HERMES_TOKEN_FILE: tokenFile },
+        env: { ...process.env, T3_URL: `http://127.0.0.1:${server.address().port}`, T3_HERMES_TOKEN_FILE: tokenFile, T3_ORCHESTRATION_PROTOCOL: "1" },
       });
       let stdout = "", stderr = "";
       child.stdout.on("data", (chunk) => { stdout += chunk; });

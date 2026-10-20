@@ -25,7 +25,7 @@ const rejected = () => new Response(OLD, { status: 401 });
 
 test("rotation reloads the private file once and preserves a dispatched command", async t => {
   const f = fixture(t), calls = [];
-  const client = new T3Client({ tokenFile: f.tokenFile, fetchImpl: async (url, init) => {
+  const client = new T3Client({ orchestrationProtocol: 1, tokenFile: f.tokenFile, fetchImpl: async (url, init) => {
     calls.push(init);
     if (calls.length === 1) { fs.writeFileSync(f.tokenFile, NEW); return rejected(); }
     return new Response('{"accepted":true}');
@@ -40,7 +40,7 @@ test("rotation reloads the private file once and preserves a dispatched command"
 
 test("persistent rejection is bounded and never exposes credential/server body", async t => {
   const f = fixture(t); let calls = 0;
-  const client = new T3Client({ tokenFile: f.tokenFile, fetchImpl: async () => {
+  const client = new T3Client({ orchestrationProtocol: 1, tokenFile: f.tokenFile, fetchImpl: async () => {
     calls++; fs.writeFileSync(f.tokenFile, calls === 1 ? NEW : "third-synthetic-bearer-3333"); return rejected();
   } });
   await assert.rejects(client.snapshot(), error => error instanceof T3AuthError && error.status === 401 && error.action.includes("tentacles reauth") && !error.message.includes(OLD));
@@ -49,19 +49,19 @@ test("persistent rejection is bounded and never exposes credential/server body",
 
 test("explicit bearer never reloads a file; 500/transport failures never replay", async () => {
   let calls = 0;
-  const client = new T3Client({ token: OLD, tokenFile: "/never/read", fetchImpl: async () => { calls++; return rejected(); } });
+  const client = new T3Client({ orchestrationProtocol: 1, token: OLD, tokenFile: "/never/read", fetchImpl: async () => { calls++; return rejected(); } });
   await assert.rejects(client.shell(), T3AuthError);
   assert.equal(calls, 1);
   for (const failure of [() => new Response(OLD, { status: 500 }), () => { throw new Error("offline"); }]) {
     calls = 0;
-    const c = new T3Client({ token: OLD, fetchImpl: async () => { calls++; return failure(); } });
+    const c = new T3Client({ orchestrationProtocol: 1, token: OLD, fetchImpl: async () => { calls++; return failure(); } });
     await assert.rejects(c.dispatch({ commandId: "same-id" })); assert.equal(calls, 1);
   }
 });
 
 test("unsafe rotated token is rejected without sending it", async t => {
   const f = fixture(t); let calls = 0;
-  const client = new T3Client({ tokenFile: f.tokenFile, fetchImpl: async () => {
+  const client = new T3Client({ orchestrationProtocol: 1, tokenFile: f.tokenFile, fetchImpl: async () => {
     calls++; fs.chmodSync(f.tokenFile, 0o644); return rejected();
   } });
   await assert.rejects(client.snapshot(), T3AuthError); assert.equal(calls, 1);
@@ -84,7 +84,7 @@ test("doctor positively reports validated transport credentials", async () => {
 });
 
 test("no-wait rejection receipt carries a safe auth recovery action", async () => {
-  const c = new T3Client({ token: OLD, fetchImpl: async () => rejected() });
+  const c = new T3Client({ orchestrationProtocol: 1, token: OLD, fetchImpl: async () => rejected() });
   await assert.rejects(applyIntent(c, { action: "thread.rename", threadId: "throwaway", title: "synthetic" }, { wait: false }), error => error.receipt.accepted === false && error.receipt.code === "t3_reauth_required" && error.receipt.action.includes("tentacles reauth"));
 });
 

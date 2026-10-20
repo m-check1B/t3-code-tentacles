@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { DEFAULT_T3_URL, DEFAULT_TOKEN_FILE, readToken, requireLoopbackUrl } from "./config.mjs";
+import { archivedShellToV1, shellToV1, T3RpcRejectedError, threadDetailToV1, translateCommand, V2_PROTOCOL, V2_PROTOCOL_HEADER } from "./t3-v2.mjs";
+
+const isPlainRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 
 function safeErrorBody(body) {
   // T3 error payloads are not a trusted logging surface: they can echo bearer
@@ -61,6 +64,8 @@ export class T3Client {
     WebSocketImpl = globalThis.WebSocket,
     requestTimeoutMs = 15_000,
     responseMaxBytes = 32 * 1024 * 1024,
+    // 1 | 2 pins the T3 orchestration protocol; auto reads the environment descriptor.
+    orchestrationProtocol = process.env.T3_ORCHESTRATION_PROTOCOL || "auto",
   } = {}) {
     this.baseUrl = requireLoopbackUrl(baseUrl, "T3_URL");
     this.tokenFile = token === undefined ? tokenFile : null;
@@ -69,6 +74,33 @@ export class T3Client {
     this.WebSocketImpl = WebSocketImpl;
     this.requestTimeoutMs = requestTimeoutMs;
     this.responseMaxBytes = responseMaxBytes;
+    if (!["auto", "1", "2", 1, 2].includes(orchestrationProtocol)) {
+      throw new Error("T3_ORCHESTRATION_PROTOCOL must be auto, 1 or 2");
+    }
+    this.protocolVersion = orchestrationProtocol === "auto" ? null : Number(orchestrationProtocol);
+  }
+
+  // KRA-6436: T3 >= v0.1.0 speaks orchestration protocol 2. Older T3 has no
+  // version field (or no descriptor) and is protocol 1. Anything else fails closed.
+  async protocol() {
+    if (this.protocolVersion !== null) return this.protocolVersion;
+    const response = await this.fetchImpl(`${this.baseUrl}/.well-known/t3/environment`, {
+      redirect: "error",
+      signal: AbortSignal.timeout(this.requestTimeoutMs),
+    });
+    let version = 1;
+    if (response.ok) {
+      const text = await readBoundedResponseText(response, 1024 * 1024, "T3 environment descriptor");
+      let descriptor;
+      try { descriptor = JSON.parse(text); } catch { throw new Error("T3 environment descriptor is not JSON"); }
+      version = descriptor?.orchestrationProtocolVersion ?? 1;
+    } else {
+      try { await response.body?.cancel(); } catch { /* status alone decides */ }
+      if (response.status !== 404) throw new T3HttpError({ method: "GET", pathname: "/.well-known/t3/environment", status: response.status });
+    }
+    if (version !== 1 && version !== V2_PROTOCOL) throw new Error(`T3 orchestration protocol ${version} is not supported by this Tentacles release`);
+    this.protocolVersion = version;
+    return version;
   }
 
   async request(pathname, { method = "GET", body } = {}, retried = false) {
@@ -79,6 +111,7 @@ export class T3Client {
       signal: AbortSignal.timeout(this.requestTimeoutMs),
       headers: {
         authorization: `Bearer ${usedToken}`,
+        ...(this.protocolVersion === V2_PROTOCOL ? { [V2_PROTOCOL_HEADER]: "2" } : {}),
         ...(body === undefined ? {} : { "content-type": "application/json" }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -112,22 +145,28 @@ export class T3Client {
     return parsed;
   }
 
-  shell() {
+  async shell() {
+    if (await this.protocol() === V2_PROTOCOL) return shellToV1(await this.request("/api/orchestration/shell"));
     return this.request("/api/orchestration/shell");
   }
 
   // Shell snapshot of archived threads. Unlike the active shell, this lives
   // behind the WebSocket RPC surface (orchestration.getArchivedShellSnapshot).
-  archivedShell() {
-    return this.rpc("orchestration.getArchivedShellSnapshot", {}, { timeoutMs: 30_000 });
+  async archivedShell() {
+    const archived = await this.rpc("orchestration.getArchivedShellSnapshot", {}, { timeoutMs: 30_000 });
+    return this.protocolVersion === V2_PROTOCOL ? archivedShellToV1(archived) : archived;
   }
 
-  snapshot() {
+  // V2 has no full snapshot; its shell is the bounded equivalent.
+  async snapshot() {
+    if (await this.protocol() === V2_PROTOCOL) return this.shell();
     return this.request("/api/orchestration/snapshot");
   }
 
-  thread(threadId) {
-    return this.request(`/api/orchestration/threads/${encodeURIComponent(threadId)}`);
+  async thread(threadId) {
+    const pathname = `/api/orchestration/threads/${encodeURIComponent(threadId)}`;
+    if (await this.protocol() === V2_PROTOCOL) return threadDetailToV1(await this.request(pathname), threadId);
+    return this.request(pathname);
   }
 
   // Windowed thread read. `turnLimit` bounds returned turns and `beforeCursor`
@@ -140,8 +179,19 @@ export class T3Client {
     return this.request(`/api/orchestration/threads/${encodeURIComponent(threadId)}${suffix}`);
   }
 
-  dispatch(command) {
-    return this.request("/api/orchestration/dispatch", { method: "POST", body: command });
+  async dispatch(command) {
+    if (await this.protocol() !== V2_PROTOCOL) {
+      return this.request("/api/orchestration/dispatch", { method: "POST", body: command });
+    }
+    const steps = await translateCommand(command, {
+      readProjection: async (threadId) => (await this.request(`/api/orchestration/threads/${encodeURIComponent(threadId)}`)).projection,
+    });
+    let result = { sequence: 0, protocol: V2_PROTOCOL, noop: steps.length === 0 };
+    for (const step of steps) {
+      const value = await this.rpc(step.method, step.payload);
+      result = { ...(isPlainRecord(value) && typeof value.sequence === "number" ? { sequence: value.sequence } : { sequence: result.sequence }), protocol: V2_PROTOCOL };
+    }
+    return result;
   }
 
   async rpc(tag, payload = {}, { timeoutMs = 15_000 } = {}) {
@@ -151,6 +201,7 @@ export class T3Client {
     wsUrl.pathname = "/ws";
     wsUrl.search = "";
     wsUrl.searchParams.set("wsTicket", ticket.ticket);
+    if (await this.protocol() === V2_PROTOCOL) wsUrl.searchParams.set("orchestrationProtocol", "2");
 
     const id = randomUUID();
     return await new Promise((resolve, reject) => {
@@ -208,7 +259,7 @@ export class T3Client {
         if (message.exit?._tag === "Success") {
           finish(resolve, message.exit.value);
         } else {
-          finish(reject, new Error(`T3 RPC ${tag} failed: ${safeErrorBody(message.exit)}`));
+          finish(reject, new T3RpcRejectedError(tag, safeErrorBody(message.exit)));
         }
       });
       socket.addEventListener("error", () => finish(reject, new Error(`T3 RPC ${tag} websocket failed`)));
