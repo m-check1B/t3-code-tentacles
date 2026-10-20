@@ -9,6 +9,13 @@ This document describes the read (`observe`, `report`) and write (`act` /
 script — can drive over the bridge's existing loopback-authenticated HTTP/RPC
 client. The public command is `tentacles`; `t3-agent-bridge` is an exact alias.
 
+Protocol selection reads the environment descriptor; an absent version selects
+V1, while unknown versions refuse. V2 turns require the
+`orchestration.dispatchMessageWithMode` extension: the requested runtime mode
+and message are accepted together. An older V2 server rejects the method; there
+is no fallback to an unguarded message. Retrying the same command/message IDs
+returns the original receipt and does not reapply an earlier mode change.
+
 ## Read: observe
 
 ```bash

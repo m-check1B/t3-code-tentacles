@@ -11,11 +11,12 @@ test("continue pins full-access then dispatches a V2 message with the same ids",
   const steps = await translateCommand(command);
   assert.deepEqual(steps.map((step) => [step.method, step.payload.type, step.payload.commandId]), [
     ["orchestration.dispatchCommand", "thread.runtime-mode.set", "cmd-1:runtime-mode"],
-    ["orchestration.dispatchCommand", "message.dispatch", "cmd-1"],
+    ["orchestration.dispatchMessageWithMode", "message.dispatch", "cmd-1"],
   ]);
   const message = steps[1].payload;
   assert.equal(message.messageId, "msg-1");
   assert.equal(message.text, "hello");
+  assert.equal(message.runtimeMode, "full-access");
   assert.equal(message.deliveryIntent, "auto");
   assert.deepEqual(message.dispatchMode, { type: "start_immediately" });
   assert.equal(message.createdAt, undefined);
@@ -75,7 +76,7 @@ test("V2 dispatch sends each translated step over RPC and sends the protocol hea
   const rpcs = [];
   client.rpc = async (method, payload, { beforeSend } = {}) => { if (beforeSend) await beforeSend(); rpcs.push([method, payload.type]); return { sequence: rpcs.length }; };
   const result = await client.dispatch(threadTurnStart({ commandId: "c", threadId: "t", text: "x", runtimeMode: "full-access" }));
-  assert.deepEqual(rpcs, [["orchestration.dispatchCommand", "thread.runtime-mode.set"], ["orchestration.dispatchCommand", "message.dispatch"]]);
+  assert.deepEqual(rpcs, [["orchestration.dispatchCommand", "thread.runtime-mode.set"], ["orchestration.dispatchMessageWithMode", "message.dispatch"]]);
   assert.deepEqual(result, { sequence: 2, protocol: 2 });
   await client.snapshot();
   assert.deepEqual(seen, [["/api/orchestration/threads/t", "2"], ["/api/orchestration/shell", "2"]]);

@@ -793,7 +793,7 @@ async function dispatchWithReceipt(client, command) {
 // Apply one intent: build the command, dispatch it, project it back, and
 // return evidence an orchestrator can record. `wait` toggles projection
 // verification (off for fire-and-forget lifecycle commands).
-export async function applyIntent(client, intent, { wait = true, commandId, createdAt, timeoutMs, intervalMs } = {}) {
+async function applyIntentWithReceipt(client, intent, { wait = true, commandId, createdAt, timeoutMs, intervalMs } = {}) {
   const dispatchClient = client;
   client = Object.create(client);
   client.dispatch = (command) => dispatchWithReceipt(dispatchClient, command);
@@ -893,6 +893,18 @@ export async function applyIntent(client, intent, { wait = true, commandId, crea
       lastError: projection.thread.session.lastError ?? null,
     } : {}),
   };
+}
+
+export async function applyIntent(client, intent, options = {}) {
+  const callerCommandId = options.commandId ?? intent?.commandId ?? randomUUID();
+  try {
+    return await applyIntentWithReceipt(client, intent, { ...options, commandId: callerCommandId });
+  } catch (error) {
+    if (error instanceof IntentDispatchError && error.receipt.commandId !== callerCommandId) {
+      error.receipt = { ...error.receipt, internalCommandId: error.receipt.commandId, commandId: callerCommandId };
+    }
+    throw error;
+  }
 }
 
 // Apply a bounded list of intents in order, stopping at the first failure.

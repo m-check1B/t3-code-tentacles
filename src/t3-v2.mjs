@@ -97,8 +97,8 @@ export async function translateCommand(command, { readProjection } = {}) {
       requireKnownFields(message, MESSAGE_FIELDS, "turn message");
       if (message.role !== "user") throw new T3V2UnsupportedError("T3 V2 adapter dispatches only user messages");
       const steps = [];
-      // Replays deduplicate this prerequisite. The client must also read the
-      // current mode immediately before message dispatch, never trust its receipt.
+      // Preserve prerequisite IDs for retries. The message's own atomic mode
+      // field is authoritative; this historical receipt is never mode proof.
       if (command.runtimeMode !== undefined) {
         steps.push(dispatchStep({ type: "thread.runtime-mode.set", commandId: `${commandId}:runtime-mode`, threadId, runtimeMode: command.runtimeMode }));
       }
@@ -107,6 +107,7 @@ export async function translateCommand(command, { readProjection } = {}) {
       }
       steps.push(dispatchStep({
         type: "message.dispatch",
+        runtimeMode: command.runtimeMode,
         commandId,
         ...CREATION,
         threadId,
@@ -118,11 +119,14 @@ export async function translateCommand(command, { readProjection } = {}) {
         deliveryIntent: "auto",
         dispatchMode: { type: "start_immediately" },
       }));
+      steps.at(-1).method = "orchestration.dispatchMessageWithMode";
       return steps;
     }
     case "thread.session.stop": {
       if (typeof readProjection !== "function") throw new T3V2UnsupportedError("T3 V2 stop needs a projection read");
-      validatedRuns(await readProjection(threadId));
+      const projection = await readProjection(threadId);
+      validatedRuns(projection);
+      validateBackgroundWork(projection);
       // Native V2 Stop covers terminal-run background work, queue holds,
       // delegated wakes and PR monitors; run.interrupt alone cannot do that.
       return [dispatchStep({ type: "thread.stop", commandId, threadId })];
@@ -184,6 +188,35 @@ function validatedRuns(projection) {
   return runs.sort((left, right) => (left.ordinal ?? 0) - (right.ordinal ?? 0));
 }
 
+function validateBackgroundWork(projection) {
+  const knownWorkStatuses = new Set(["idle", "pending", "running", "waiting", "completed", "failed", "cancelled", "interrupted"]);
+  const workTypes = new Set(["command_execution", "dynamic_tool", "subagent"]);
+  for (const key of ["turnItems", "subagents", "providerThreads", "runtimeRequests"]) {
+    if (projection[key] !== undefined && !Array.isArray(projection[key]))
+      throw new T3V2UnsupportedError("T3 V2 background-work projection is not supported");
+  }
+  // Validate before any short circuit or persistent/rollback exemption can
+  // turn an unknown state into evidence that the thread has stopped.
+  for (const item of projection.turnItems ?? []) {
+    if (!isRecord(item) || (workTypes.has(item.type) && !knownWorkStatuses.has(item.status)))
+      throw new T3V2UnsupportedError("T3 V2 adapter does not know background-work status");
+  }
+  for (const agent of projection.subagents ?? []) {
+    if (!isRecord(agent) || !knownWorkStatuses.has(agent.status))
+      throw new T3V2UnsupportedError("T3 V2 adapter does not know subagent status");
+  }
+  for (const provider of projection.providerThreads ?? []) {
+    if (!isRecord(provider) || (provider.pendingBackgroundTasks !== undefined && !Array.isArray(provider.pendingBackgroundTasks)))
+      throw new T3V2UnsupportedError("T3 V2 background-task projection is not supported");
+  }
+  for (const request of projection.runtimeRequests ?? []) {
+    if (!isRecord(request) || !["pending", "resolved", "expired", "cancelled"].includes(request.status))
+      throw new T3V2UnsupportedError("T3 V2 adapter does not know runtime-request status");
+  }
+  if (projection.thread?.pendingBackgroundTasks !== undefined && !Array.isArray(projection.thread.pendingBackgroundTasks))
+    throw new T3V2UnsupportedError("T3 V2 background-task projection is not supported");
+}
+
 function hasPendingWork(projection, runs) {
   const workActive = (status) => ["pending", "running", "waiting"].includes(status);
   const rolledBack = new Set(runs.filter((run) => run.status === "rolled_back").map((run) => run.id));
@@ -192,7 +225,9 @@ function hasPendingWork(projection, runs) {
       ["command_execution", "dynamic_tool", "subagent"].includes(item.type) && workActive(item.status)
       && !(item.type === "dynamic_tool" && item.input?.persistent === true) && !rolledBack.has(item.runId))
     || (projection.providerThreads ?? []).some((provider) => (provider.pendingBackgroundTasks ?? []).length > 0)
+    || (projection.thread?.pendingBackgroundTasks ?? []).length > 0
     || (projection.subagents ?? []).some((agent) => workActive(agent.status))
+    || (projection.runtimeRequests ?? []).some((request) => request.status === "pending")
     || (projection.thread?.pullRequests ?? []).some((pr) => pr.watch !== undefined && pr.source !== "stack-dismissed");
 }
 
@@ -269,6 +304,7 @@ export function threadDetailToV1(detail, threadId) {
   const thread = projection?.thread;
   if (!isRecord(thread) || thread.id !== threadId) throw new T3V2UnsupportedError(`T3 V2 thread ${threadId} projection identity mismatch`);
   const runs = validatedRuns(projection);
+  validateBackgroundWork(projection);
   const latest = runs.at(-1);
   const active = runs.filter((run) => ACTIVE_RUN.has(run.status) && !(run.status === "queued" && run.queueHeld === true)).at(-1);
   const failure = latest?.status === "failed"

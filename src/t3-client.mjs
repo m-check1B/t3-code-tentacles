@@ -247,8 +247,8 @@ export class T3Client {
       };
       socket.addEventListener("open", async () => {
         try {
-          // Read after the ticket/connection handshake, immediately before the
-          // message frame. A deduplicated old mode receipt is never current proof.
+          // Early refusal after handshake. Atomic message mode enforcement at
+          // the server remains required even when this snapshot was full-access.
           if (beforeSend) await beforeSend();
           send({ _tag: "Request", id, tag, payload, headers: [] });
         } catch (error) {
