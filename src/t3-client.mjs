@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { DEFAULT_T3_URL, DEFAULT_TOKEN_FILE, readToken, requireLoopbackUrl } from "./config.mjs";
-import { archivedShellToV1, shellToV1, T3RpcRejectedError, threadDetailToV1, translateCommand, V2_PROTOCOL, V2_PROTOCOL_HEADER } from "./t3-v2.mjs";
+import { archivedShellToV1, shellToV1, T3RpcRejectedError, threadDetailToV1, translateCommand, T3V2UnsupportedError, V2_PROTOCOL, V2_PROTOCOL_HEADER } from "./t3-v2.mjs";
 
 const isPlainRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 
@@ -93,12 +93,16 @@ export class T3Client {
       const text = await readBoundedResponseText(response, 1024 * 1024, "T3 environment descriptor");
       let descriptor;
       try { descriptor = JSON.parse(text); } catch { throw new Error("T3 environment descriptor is not JSON"); }
-      version = descriptor?.orchestrationProtocolVersion ?? 1;
+      if (!isPlainRecord(descriptor)) throw new Error("T3 environment descriptor must be an object");
+      version = Object.hasOwn(descriptor, "orchestrationProtocolVersion") ? descriptor.orchestrationProtocolVersion : 1;
     } else {
       try { await response.body?.cancel(); } catch { /* status alone decides */ }
       if (response.status !== 404) throw new T3HttpError({ method: "GET", pathname: "/.well-known/t3/environment", status: response.status });
     }
-    if (version !== 1 && version !== V2_PROTOCOL) throw new Error(`T3 orchestration protocol ${version} is not supported by this Tentacles release`);
+    if (version !== 1 && version !== V2_PROTOCOL) {
+      const label = typeof version === "number" ? version : `type ${typeof version}`;
+      throw new Error(`T3 orchestration protocol ${label} is not supported by this Tentacles release`);
+    }
     this.protocolVersion = version;
     return version;
   }
@@ -188,13 +192,22 @@ export class T3Client {
     });
     let result = { sequence: 0, protocol: V2_PROTOCOL, noop: steps.length === 0 };
     for (const step of steps) {
-      const value = await this.rpc(step.method, step.payload);
+      const beforeSend = step.payload.type === "message.dispatch" && command.runtimeMode !== undefined
+        ? async () => {
+          const detail = await this.request(`/api/orchestration/threads/${encodeURIComponent(command.threadId)}`);
+          if (detail?.projection?.thread?.id !== command.threadId
+            || detail.projection.thread.runtimeMode !== command.runtimeMode) {
+            throw new T3V2UnsupportedError("T3 V2 message refused: runtime mode prerequisite changed or is unproven");
+          }
+        }
+        : undefined;
+      const value = await this.rpc(step.method, step.payload, { beforeSend });
       result = { ...(isPlainRecord(value) && typeof value.sequence === "number" ? { sequence: value.sequence } : { sequence: result.sequence }), protocol: V2_PROTOCOL };
     }
     return result;
   }
 
-  async rpc(tag, payload = {}, { timeoutMs = 15_000 } = {}) {
+  async rpc(tag, payload = {}, { timeoutMs = 15_000, beforeSend } = {}) {
     const ticket = await this.request("/api/auth/websocket-ticket", { method: "POST" });
     const wsUrl = new URL(this.baseUrl);
     wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
@@ -232,8 +245,15 @@ export class T3Client {
           finish(reject, new Error(`T3 RPC ${tag} websocket send failed`));
         }
       };
-      socket.addEventListener("open", () => {
-        send({ _tag: "Request", id, tag, payload, headers: [] });
+      socket.addEventListener("open", async () => {
+        try {
+          // Read after the ticket/connection handshake, immediately before the
+          // message frame. A deduplicated old mode receipt is never current proof.
+          if (beforeSend) await beforeSend();
+          send({ _tag: "Request", id, tag, payload, headers: [] });
+        } catch (error) {
+          finish(reject, error);
+        }
       });
       socket.addEventListener("message", async (event) => {
         if (settled) return;

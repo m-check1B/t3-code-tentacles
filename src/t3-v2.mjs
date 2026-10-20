@@ -1,3 +1,5 @@
+import { validateNestedRecords } from "./t3-v2-validation.mjs";
+
 // T3 Orchestrator V2 (T3 >= v0.1.0, orchestrationProtocolVersion 2) adapter (KRA-6436).
 // Tentacles keeps building its V1 command shapes; this module translates them
 // into V2 commands and maps V2 projections back into the V1 thread shape the
@@ -73,9 +75,10 @@ const pick = (source, keys) => Object.fromEntries(keys.filter((key) => source[ke
  */
 export async function translateCommand(command, { readProjection } = {}) {
   if (!isRecord(command) || typeof command.type !== "string") throw new T3V2UnsupportedError("T3 V2 adapter requires a typed command");
-  const allowed = ALLOWED[command.type];
+  const allowed = Object.hasOwn(ALLOWED, command.type) ? ALLOWED[command.type] : undefined;
   if (!allowed) throw new T3V2UnsupportedError(`T3 V2 adapter does not support ${command.type}`);
   requireKnownFields(command, allowed);
+  validateNestedRecords(command, (message) => { throw new T3V2UnsupportedError(message); });
   const { commandId, threadId } = command;
   switch (command.type) {
     case "project.create":
@@ -87,13 +90,15 @@ export async function translateCommand(command, { readProjection } = {}) {
     case "thread.create":
       return [dispatchStep({ ...pick(command, ["type", "commandId", "threadId", "projectId", "title", "modelSelection", "runtimeMode"]), ...CREATION, interactionMode: command.interactionMode ?? "default", branch: command.branch ?? null, worktreePath: command.worktreePath ?? null })];
     case "thread.turn.start": {
+      if (!["approval-required", "auto-accept-edits", "auto", "full-access"].includes(command.runtimeMode))
+        throw new T3V2UnsupportedError("T3 V2 turn requires a supported runtime mode prerequisite");
       const message = command.message;
       if (!isRecord(message)) throw new T3V2UnsupportedError("T3 V2 adapter requires a turn message");
       requireKnownFields(message, MESSAGE_FIELDS, "turn message");
       if (message.role !== "user") throw new T3V2UnsupportedError("T3 V2 adapter dispatches only user messages");
       const steps = [];
-      // V2 message.dispatch carries no runtime mode; pin it on the thread first so
-      // the full-access invariant still holds for every continue.
+      // Replays deduplicate this prerequisite. The client must also read the
+      // current mode immediately before message dispatch, never trust its receipt.
       if (command.runtimeMode !== undefined) {
         steps.push(dispatchStep({ type: "thread.runtime-mode.set", commandId: `${commandId}:runtime-mode`, threadId, runtimeMode: command.runtimeMode }));
       }
@@ -115,19 +120,21 @@ export async function translateCommand(command, { readProjection } = {}) {
       }));
       return steps;
     }
-    case "thread.turn.interrupt":
     case "thread.session.stop": {
-      // V2 has no client thread.stop; the T3 web client stops by interrupting
-      // the active run and holding the queue. No active run: nothing to stop.
-      const stop = command.type === "thread.session.stop";
-      let runId = stop ? undefined : command.turnId;
+      if (typeof readProjection !== "function") throw new T3V2UnsupportedError("T3 V2 stop needs a projection read");
+      validatedRuns(await readProjection(threadId));
+      // Native V2 Stop covers terminal-run background work, queue holds,
+      // delegated wakes and PR monitors; run.interrupt alone cannot do that.
+      return [dispatchStep({ type: "thread.stop", commandId, threadId })];
+    }
+    case "thread.turn.interrupt": {
+      let runId = command.turnId;
       if (runId === undefined) {
         if (typeof readProjection !== "function") throw new T3V2UnsupportedError("T3 V2 interrupt needs a projection read");
-        const projection = await readProjection(threadId);
-        runId = (projection?.runs ?? []).filter((run) => ACTIVE_RUN.has(run.status)).at(-1)?.id;
+        runId = validatedRuns(await readProjection(threadId)).filter((run) => ACTIVE_RUN.has(run.status) && run.status !== "queued").at(-1)?.id;
         if (runId === undefined) return [];
       }
-      return [dispatchStep({ type: "run.interrupt", commandId, threadId, runId, ...(stop ? { holdQueue: true } : {}) })];
+      return [dispatchStep({ type: "run.interrupt", commandId, threadId, runId })];
     }
     case "thread.approval.respond":
       return [dispatchStep({ type: "runtime-request.respond", commandId, threadId, requestId: command.requestId, decision: command.decision })];
@@ -150,8 +157,8 @@ export async function translateCommand(command, { readProjection } = {}) {
 
 // ── Reads ──────────────────────────────────────────────────────────────────
 
-// A V2 thread without an active run has no live provider turn to stop, which
-// is what V1 callers mean by a "stopped" session.
+// Preserve the last run outcome. Lifecycle termination is separately proved
+// from active runs, queue holds and pending background work.
 const SESSION_STATUS = {
   idle: "stopped",
   preparing: "starting",
@@ -166,14 +173,39 @@ const SESSION_STATUS = {
   failed: "error",
 };
 
+function validatedRuns(projection) {
+  if (!isRecord(projection) || (projection.runs !== undefined && !Array.isArray(projection.runs)))
+    throw new T3V2UnsupportedError("T3 V2 runs projection is not supported");
+  const runs = [...(projection.runs ?? [])];
+  for (const run of runs) {
+    if (!isRecord(run) || !Object.hasOwn(SESSION_STATUS, run.status) || run.status === "idle")
+      throw new T3V2UnsupportedError("T3 V2 adapter does not know run status");
+  }
+  return runs.sort((left, right) => (left.ordinal ?? 0) - (right.ordinal ?? 0));
+}
+
+function hasPendingWork(projection, runs) {
+  const workActive = (status) => ["pending", "running", "waiting"].includes(status);
+  const rolledBack = new Set(runs.filter((run) => run.status === "rolled_back").map((run) => run.id));
+  return runs.some((run) => ACTIVE_RUN.has(run.status) && !(run.status === "queued" && run.queueHeld === true))
+    || (projection.turnItems ?? []).some((item) =>
+      ["command_execution", "dynamic_tool", "subagent"].includes(item.type) && workActive(item.status)
+      && !(item.type === "dynamic_tool" && item.input?.persistent === true) && !rolledBack.has(item.runId))
+    || (projection.providerThreads ?? []).some((provider) => (provider.pendingBackgroundTasks ?? []).length > 0)
+    || (projection.subagents ?? []).some((agent) => workActive(agent.status))
+    || (projection.thread?.pullRequests ?? []).some((pr) => pr.watch !== undefined && pr.source !== "stack-dismissed");
+}
+
 function sessionStatus(status) {
-  const mapped = SESSION_STATUS[status];
+  const mapped = typeof status === "string" && Object.hasOwn(SESSION_STATUS, status) ? SESSION_STATUS[status] : undefined;
   if (!mapped) throw new T3V2UnsupportedError(`T3 V2 adapter does not know thread status ${status}`);
   return mapped;
 }
 
 function v1Thread(thread, { status, activeRunId, lastError, pendingKinds, updatedAt }) {
   return {
+    orchestrationProtocol: V2_PROTOCOL,
+    lifecycleWorkPending: ACTIVE_RUN.has(status) || (thread.pendingBackgroundTasks ?? []).length > 0,
     id: thread.id,
     projectId: thread.projectId,
     title: thread.title,
@@ -223,6 +255,7 @@ export function shellToV1(shell) {
 
 /** V2 archived shell -> V1 archived shell; V2 omits archivedAt on some rows, so mark them. */
 export function archivedShellToV1(shell) {
+  if (!isRecord(shell) || shell.schemaVersion !== 2) throw new T3V2UnsupportedError(`T3 V2 archived shell schemaVersion ${shell?.schemaVersion} is not supported`);
   const threads = (Array.isArray(shell?.threads) ? shell.threads : []).map((thread) => {
     const mapped = shellThreadToV1(thread);
     return { ...mapped, archivedAt: mapped.archivedAt ?? mapped.updatedAt ?? "archived" };
@@ -235,9 +268,9 @@ export function threadDetailToV1(detail, threadId) {
   const projection = detail?.projection;
   const thread = projection?.thread;
   if (!isRecord(thread) || thread.id !== threadId) throw new T3V2UnsupportedError(`T3 V2 thread ${threadId} projection identity mismatch`);
-  const runs = [...(projection.runs ?? [])].sort((left, right) => left.ordinal - right.ordinal);
+  const runs = validatedRuns(projection);
   const latest = runs.at(-1);
-  const active = runs.filter((run) => ACTIVE_RUN.has(run.status)).at(-1);
+  const active = runs.filter((run) => ACTIVE_RUN.has(run.status) && !(run.status === "queued" && run.queueHeld === true)).at(-1);
   const failure = latest?.status === "failed"
     ? (projection.turnItems ?? []).filter((item) => item.runId === latest.id && item.type === "error").at(-1)
     : undefined;
@@ -264,6 +297,8 @@ export function threadDetailToV1(detail, threadId) {
     snapshotSequence: detail.snapshotSequence ?? null,
     thread: {
       ...summary,
+      orchestrationProtocol: V2_PROTOCOL,
+      lifecycleWorkPending: hasPendingWork(projection, runs),
       messages,
       activities: [],
       latestTurn: latest ? { turnId: latest.id, state: latest.status, requestedAt: latest.requestedAt, completedAt: latest.completedAt ?? null } : null,

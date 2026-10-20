@@ -70,20 +70,20 @@ test("V2 dispatch sends each translated step over RPC and sends the protocol hea
   const seen = [];
   const client = new T3Client({ baseUrl: "http://127.0.0.1:3773", token: "synthetic", orchestrationProtocol: 2, fetchImpl: async (url, init) => {
     seen.push([new URL(url).pathname, init.headers["x-t3-orchestration-protocol"]]);
-    return json({ schemaVersion: 2, snapshotSequence: 0, projects: [], threads: [] });
+    return json(new URL(url).pathname.includes("/threads/") ? {projection:{thread:{id:"t",runtimeMode:"full-access"}}} : { schemaVersion: 2, snapshotSequence: 0, projects: [], threads: [] });
   } });
   const rpcs = [];
-  client.rpc = async (method, payload) => { rpcs.push([method, payload.type]); return { sequence: rpcs.length }; };
+  client.rpc = async (method, payload, { beforeSend } = {}) => { if (beforeSend) await beforeSend(); rpcs.push([method, payload.type]); return { sequence: rpcs.length }; };
   const result = await client.dispatch(threadTurnStart({ commandId: "c", threadId: "t", text: "x", runtimeMode: "full-access" }));
   assert.deepEqual(rpcs, [["orchestration.dispatchCommand", "thread.runtime-mode.set"], ["orchestration.dispatchCommand", "message.dispatch"]]);
   assert.deepEqual(result, { sequence: 2, protocol: 2 });
   await client.snapshot();
-  assert.deepEqual(seen, [["/api/orchestration/shell", "2"]]);
+  assert.deepEqual(seen, [["/api/orchestration/threads/t", "2"], ["/api/orchestration/shell", "2"]]);
 });
 
 test("session stop interrupts the active run and holds the queue; idle threads read as stopped", async () => {
   const [step] = await translateCommand({ type: "thread.session.stop", commandId: "c", threadId: "t", createdAt: "x" }, { readProjection: async () => ({ runs: [{ id: "run-1", status: "waiting" }] }) });
-  assert.deepEqual(step.payload, { type: "run.interrupt", commandId: "c", threadId: "t", runId: "run-1", holdQueue: true });
+  assert.deepEqual(step.payload, { type: "thread.stop", commandId: "c", threadId: "t" });
   const shell = shellToV1({ schemaVersion: 2, threads: [{ id: "t", status: "completed" }, { id: "u", status: "idle" }] });
   assert.deepEqual(shell.threads.map((thread) => thread.session.status), ["stopped", "stopped"]);
 });

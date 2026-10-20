@@ -11,6 +11,7 @@
 // bridge's existing loopback-authenticated HTTP client and projected back with
 // the same exact-ID wait used by `originate`.
 
+import { validateNestedRecords } from "./t3-v2-validation.mjs";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import {
@@ -304,6 +305,7 @@ export function requireKnownIntentFields(intent) {
   const allowed = new Set(["action", "commandId", ...(INTENT_FIELDS[intent?.action] ?? THREAD_ONLY)]);
   const unknown = Object.keys(intent ?? {}).filter((key) => !allowed.has(key));
   if (unknown.length) throw new T3V2UnsupportedError(`Intent ${intent.action} has unknown field(s): ${unknown.join(", ")}`);
+  validateNestedRecords(intent, (message) => { throw new T3V2UnsupportedError(message); });
 }
 
 export function buildCommandFromIntent(intent, { commandId, createdAt } = {}) {
@@ -635,14 +637,15 @@ async function waitForLifecycle(client, threadId, predicate, { timeoutMs = 15_00
   throw new Error(`T3 did not verify session termination for thread ${threadId}`);
 }
 
-const sessionEnded = (thread) => thread.session == null
-  || (thread.session.status === "stopped" && thread.session.activeTurnId == null);
+const sessionEnded = (thread) => thread.orchestrationProtocol === V2_PROTOCOL
+  ? thread.lifecycleWorkPending === false && thread.session?.activeTurnId == null
+  : thread.session == null || (thread.session.status === "stopped" && thread.session.activeTurnId == null);
 
 // Older T3 releases acknowledge stops for archived threads without acting.
 // Temporarily expose only this thread to the supported session-stop command,
 // then restore its archive state. Never terminate a process by PID or pattern.
 async function stopLifecycleSession(client, command, options) {
-  const before = await readLifecycleThread(client, command.threadId);
+  const before = await readBeforeDispatch(command, () => readLifecycleThread(client, command.threadId));
   const archived = before.archivedAt != null;
   if (sessionEnded(before)) return before;
   let unarchived = false;
@@ -767,6 +770,14 @@ export class IntentDispatchError extends Error {
   }
 }
 
+async function readBeforeDispatch(command, read) {
+  try { return await read(); }
+  catch (error) {
+    if (error instanceof T3V2UnsupportedError) throw new IntentDispatchError(command.commandId, "rejected", error);
+    throw error;
+  }
+}
+
 async function dispatchWithReceipt(client, command) {
   let result;
   try { result = await client.dispatch(command); }
@@ -786,22 +797,38 @@ export async function applyIntent(client, intent, { wait = true, commandId, crea
   const dispatchClient = client;
   client = Object.create(client);
   client.dispatch = (command) => dispatchWithReceipt(dispatchClient, command);
-  if (typeof dispatchClient.protocol === "function" && await dispatchClient.protocol() === V2_PROTOCOL) requireKnownIntentFields(intent);
-  const command = buildCommandFromIntent(intent, { commandId, createdAt });
+  let command;
+  const receiptId = commandId ?? intent?.commandId ?? randomUUID();
+  let protocol;
+  try { protocol = typeof dispatchClient.protocol === "function" ? await dispatchClient.protocol() : null; }
+  catch (error) { throw new IntentDispatchError(receiptId, "rejected", error); }
+  if (protocol === V2_PROTOCOL) {
+    try {
+      requireKnownIntentFields(intent);
+      command = buildCommandFromIntent(intent, { commandId: receiptId, createdAt });
+    } catch (error) {
+      throw new IntentDispatchError(receiptId, "rejected", error);
+    }
+  } else command = buildCommandFromIntent(intent, { commandId, createdAt });
   let baseline = null;
   let restartCommand = null;
   let restartDispatchResult = null;
   if (command.type === "thread.turn.start") {
-    baseline = await getThreadIfProjected(client, command.threadId);
+    baseline = await readBeforeDispatch(command, () => getThreadIfProjected(client, command.threadId));
     const sessionStatus = baseline?.thread?.session?.status ?? null;
     const shouldRestart = intent.action === "thread.restart"
       || (intent.action === "thread.continue" && sessionStatus === "error");
     // An omitted selection continues on the retained lab/model; validate and
     // pin its effort before anything (including a restart stop) dispatches.
     if (command.modelSelection === undefined) {
-      if (!baseline) throw new Error(`T3 thread ${command.threadId} is not projected; its retained model selection is unproven`);
-      const pinned = retainedSelectionPin(baseline.thread?.modelSelection);
-      if (pinned !== undefined) command.modelSelection = pinned;
+      try {
+        if (!baseline) throw new Error(`T3 thread ${command.threadId} is not projected; its retained model selection is unproven`);
+        const pinned = retainedSelectionPin(baseline.thread?.modelSelection);
+        if (pinned !== undefined) command.modelSelection = pinned;
+      } catch (error) {
+        if (protocol === V2_PROTOCOL) throw new IntentDispatchError(command.commandId, "rejected", error);
+        throw error;
+      }
     }
     if (shouldRestart && sessionStatus !== null && sessionStatus !== "stopped") {
       restartCommand = threadSessionStop({
