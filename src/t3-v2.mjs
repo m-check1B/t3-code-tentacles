@@ -90,7 +90,7 @@ export async function translateCommand(command, { readProjection } = {}) {
     case "thread.create":
       return [dispatchStep({ ...pick(command, ["type", "commandId", "threadId", "projectId", "title", "modelSelection", "runtimeMode"]), ...CREATION, interactionMode: command.interactionMode ?? "default", branch: command.branch ?? null, worktreePath: command.worktreePath ?? null })];
     case "thread.turn.start": {
-      if (!["approval-required", "auto-accept-edits", "auto", "full-access"].includes(command.runtimeMode))
+      if (!isEnum(command.runtimeMode, RUNTIME_MODES))
         throw new T3V2UnsupportedError("T3 V2 turn requires a supported runtime mode prerequisite");
       const message = command.message;
       if (!isRecord(message)) throw new T3V2UnsupportedError("T3 V2 adapter requires a turn message");
@@ -176,13 +176,15 @@ const SESSION_STATUS = {
   rolled_back: "stopped",
   failed: "error",
 };
+const RUN_STATUSES = new Set(["preparing", "queued", "starting", "running", "waiting", "completed", "interrupted", "failed", "cancelled", "rolled_back"]);
+const SHELL_STATUSES = new Set(["idle", ...RUN_STATUSES]);
 
 function validatedRuns(projection) {
   if (!isRecord(projection) || (projection.runs !== undefined && !Array.isArray(projection.runs)))
     throw new T3V2UnsupportedError("T3 V2 runs projection is not supported");
   const runs = [...(projection.runs ?? [])];
   for (const run of runs) {
-    if (!isRecord(run) || !Object.hasOwn(SESSION_STATUS, run.status) || run.status === "idle")
+    if (!isRecord(run) || !isEnum(run.status, RUN_STATUSES))
       throw new T3V2UnsupportedError("T3 V2 adapter does not know run status");
   }
   return runs.sort((left, right) => (left.ordinal ?? 0) - (right.ordinal ?? 0));
@@ -193,15 +195,23 @@ function validatedRuns(projection) {
 const TURN_ITEM_TYPES = new Set(["notification", "user_message", "assistant_message", "reasoning", "proposed_plan", "todo_list", "user_input_request", "file_change", "command_execution", "file_search", "web_search", "approval_request", "checkpoint", "run_interrupt_request", "run_interrupt_result", "system_notice", "error", "compaction", "handoff", "fork", "thread_created", "subagent", "dynamic_tool", "secret_request"]);
 const REQUEST_KINDS = new Set(["command", "file-read", "file-change", "mcp-elicitation", "permission", "dynamic_tool_call", "user_input", "auth_refresh"]);
 const PR_SOURCES = new Set(["manual", "created", "agent", "stack", "stack-dismissed"]);
+const REQUEST_STATUSES = new Set(["pending", "resolved", "expired", "cancelled"]);
+const RUNTIME_MODES = new Set(["approval-required", "auto-accept-edits", "auto", "full-access"]);
+const INTERACTION_MODES = new Set(["default", "plan"]);
+const MESSAGE_ROLES = new Set(["user", "assistant", "system"]);
+
+function isEnum(value, known) {
+  return typeof value === "string" && known.has(value);
+}
 
 function requireEnum(value, known, label) {
-  if (!known.has(value)) throw new T3V2UnsupportedError(`T3 V2 adapter does not know ${label}`);
+  if (!isEnum(value, known)) throw new T3V2UnsupportedError(`T3 V2 adapter does not know ${label}`);
 }
 
 function validateThreadEnums(thread) {
   // Missing optional summary metadata is preserved as null, never stop proof.
-  if (thread.runtimeMode != null) requireEnum(thread.runtimeMode, new Set(["approval-required", "auto-accept-edits", "auto", "full-access"]), "runtime mode");
-  if (thread.interactionMode != null) requireEnum(thread.interactionMode, new Set(["default", "plan"]), "interaction mode");
+  if (thread.runtimeMode != null) requireEnum(thread.runtimeMode, RUNTIME_MODES, "runtime mode");
+  if (thread.interactionMode != null) requireEnum(thread.interactionMode, INTERACTION_MODES, "interaction mode");
   if (thread.pullRequests !== undefined && !Array.isArray(thread.pullRequests))
     throw new T3V2UnsupportedError("T3 V2 pull-request projection is not supported");
   for (const pr of thread.pullRequests ?? []) requireEnum(pr?.source, PR_SOURCES, "pull-request source");
@@ -219,23 +229,23 @@ function validateBackgroundWork(projection) {
   // turn an unknown state into evidence that the thread has stopped.
   for (const item of projection.turnItems ?? []) {
     requireEnum(item?.type, TURN_ITEM_TYPES, "turn-item type");
-    if (!isRecord(item) || (workTypes.has(item.type) && !knownWorkStatuses.has(item.status)))
+    if (!isRecord(item) || (workTypes.has(item.type) && !isEnum(item.status, knownWorkStatuses)))
       throw new T3V2UnsupportedError("T3 V2 adapter does not know background-work status");
   }
   for (const agent of projection.subagents ?? []) {
-    if (!isRecord(agent) || !knownWorkStatuses.has(agent.status))
+    if (!isRecord(agent) || !isEnum(agent.status, knownWorkStatuses))
       throw new T3V2UnsupportedError("T3 V2 adapter does not know subagent status");
   }
   const providerStatuses = new Set(["not_loaded", "idle", "active", "archived", "closed", "error"]);
   for (const provider of projection.providerThreads ?? []) {
-    if (!isRecord(provider) || !providerStatuses.has(provider.status))
+    if (!isRecord(provider) || !isEnum(provider.status, providerStatuses))
       throw new T3V2UnsupportedError("T3 V2 adapter does not know provider-thread status");
     if (!isRecord(provider) || (provider.pendingBackgroundTasks !== undefined && !Array.isArray(provider.pendingBackgroundTasks)))
       throw new T3V2UnsupportedError("T3 V2 background-task projection is not supported");
   }
   for (const request of projection.runtimeRequests ?? []) {
     requireEnum(request?.kind, REQUEST_KINDS, "runtime-request kind");
-    if (!isRecord(request) || !["pending", "resolved", "expired", "cancelled"].includes(request.status))
+    if (!isRecord(request) || !isEnum(request.status, REQUEST_STATUSES))
       throw new T3V2UnsupportedError("T3 V2 adapter does not know runtime-request status");
   }
   if (projection.thread?.pendingBackgroundTasks !== undefined && !Array.isArray(projection.thread.pendingBackgroundTasks))
@@ -257,9 +267,8 @@ function hasPendingWork(projection, runs) {
 }
 
 function sessionStatus(status) {
-  const mapped = typeof status === "string" && Object.hasOwn(SESSION_STATUS, status) ? SESSION_STATUS[status] : undefined;
-  if (!mapped) throw new T3V2UnsupportedError(`T3 V2 adapter does not know thread status ${status}`);
-  return mapped;
+  requireEnum(status, SHELL_STATUSES, "thread status");
+  return SESSION_STATUS[status];
 }
 
 function v1Thread(thread, { status, activeRunId, lastError, pendingKinds, updatedAt }) {
@@ -345,7 +354,7 @@ export function threadDetailToV1(detail, threadId) {
     pendingKinds,
     updatedAt: projection.updatedAt,
   });
-  for (const message of projection.messages ?? []) requireEnum(message?.role, new Set(["user", "assistant", "system"]), "message role");
+  for (const message of projection.messages ?? []) requireEnum(message?.role, MESSAGE_ROLES, "message role");
   const messages = (projection.messages ?? [])
     .filter((message) => message.role === "user" || message.role === "assistant")
     .map((message) => ({
