@@ -649,6 +649,7 @@ async function stopLifecycleSession(client, command, options) {
   const archived = before.archivedAt != null;
   if (sessionEnded(before)) return before;
   let unarchived = false;
+  let primaryError = null;
   try {
     if (archived) {
       await client.dispatch(threadUnarchive({ threadId: command.threadId, commandId: `unarchive-for-stop:${command.commandId}` }));
@@ -657,10 +658,27 @@ async function stopLifecycleSession(client, command, options) {
     }
     await client.dispatch(threadSessionStop({ threadId: command.threadId, commandId: `verified-stop:${command.commandId}` }));
     await waitForLifecycle(client, command.threadId, sessionEnded, options);
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
-    if (unarchived && (await readLifecycleThread(client, command.threadId)).archivedAt == null) {
-      await client.dispatch(threadArchive({ threadId: command.threadId, commandId: `restore-archive:${command.commandId}` }));
-      await waitForLifecycle(client, command.threadId, (thread) => thread.archivedAt != null, options);
+    if (unarchived) {
+      try {
+        if ((await readLifecycleThread(client, command.threadId)).archivedAt == null) {
+          await client.dispatch(threadArchive({ threadId: command.threadId, commandId: `restore-archive:${command.commandId}` }));
+          await waitForLifecycle(client, command.threadId, (thread) => thread.archivedAt != null, options);
+        }
+      } catch (error) {
+        // Cleanup has its own evidence and must never replace the Stop receipt.
+        // Only static identifiers are exposed, never projection/error bodies.
+        const failure = { phase: "restore-archive", commandId: `restore-archive:${command.commandId}`, status: error.receipt?.status ?? "unconfirmed" };
+        if (primaryError) primaryError.restorationFailures = [...(primaryError.restorationFailures ?? []), failure];
+        else {
+          const uncertain = new IntentDispatchError(command.commandId, "unconfirmed");
+          uncertain.restorationFailures = [failure];
+          throw uncertain;
+        }
+      }
     }
   }
   return await readLifecycleThread(client, command.threadId);
@@ -793,10 +811,16 @@ async function dispatchWithReceipt(client, command) {
 // Apply one intent: build the command, dispatch it, project it back, and
 // return evidence an orchestrator can record. `wait` toggles projection
 // verification (off for fire-and-forget lifecycle commands).
-async function applyIntentWithReceipt(client, intent, { wait = true, commandId, createdAt, timeoutMs, intervalMs } = {}) {
+async function applyIntentWithReceipt(client, intent, { wait = true, commandId, createdAt, timeoutMs, intervalMs, receiptState } = {}) {
   const dispatchClient = client;
   client = Object.create(client);
-  client.dispatch = (command) => dispatchWithReceipt(dispatchClient, command);
+  client.dispatch = async (command) => {
+    receiptState.lastCommandId = command.commandId;
+    receiptState.attempted = true;
+    const result = await dispatchWithReceipt(dispatchClient, command);
+    receiptState.accepted.add(command.commandId);
+    return result;
+  };
   let command;
   const receiptId = commandId ?? intent?.commandId ?? randomUUID();
   let protocol;
@@ -897,13 +921,32 @@ async function applyIntentWithReceipt(client, intent, { wait = true, commandId, 
 
 export async function applyIntent(client, intent, options = {}) {
   const callerCommandId = options.commandId ?? intent?.commandId ?? randomUUID();
+  const receiptState = { attempted: false, accepted: new Set(), lastCommandId: null };
   try {
-    return await applyIntentWithReceipt(client, intent, { ...options, commandId: callerCommandId });
+    return await applyIntentWithReceipt(client, intent, { ...options, commandId: callerCommandId, receiptState });
   } catch (error) {
-    if (error instanceof IntentDispatchError && error.receipt.commandId !== callerCommandId) {
-      error.receipt = { ...error.receipt, internalCommandId: error.receipt.commandId, commandId: callerCommandId };
+    // Preserve existing diagnostics/classes as well as adding correlation to
+    // validation, projection and verification errors outside dispatch itself.
+    const receiptError = error instanceof Error ? error : new Error("T3 operation failed");
+    if (!receiptError.receipt) {
+      receiptError.receipt = {
+        accepted: false, commandId: receiptState.lastCommandId ?? callerCommandId,
+        status: receiptState.attempted ? "unconfirmed" : "rejected", projected: false,
+      };
     }
-    throw error;
+    if (receiptError.receipt.status === "rejected" && receiptState.accepted.has(callerCommandId)) {
+      // A recovery/prerequisite refusal cannot undo the caller's acceptance.
+      receiptError.receipt = { ...receiptError.receipt, status: "unconfirmed", internalStatus: "rejected" };
+    }
+    if (receiptError.receipt.commandId !== callerCommandId) {
+      receiptError.receipt = { ...receiptError.receipt, internalCommandId: receiptError.receipt.commandId, commandId: callerCommandId };
+    }
+    if (receiptError.receipt.status === "unconfirmed" && receiptState.accepted.size > 0) {
+      receiptError.receipt = { ...receiptError.receipt,
+        accepted: receiptState.accepted.has(callerCommandId) ? true : null,
+        executionStatus: "unverified" };
+    }
+    throw receiptError;
   }
 }
 
@@ -915,7 +958,7 @@ export async function applyIntents(client, intents, { wait = true, maxIntents = 
   for (const intent of intents) {
     try { results.push(await applyIntent(client, intent, { wait })); }
     catch (error) {
-      if (error instanceof IntentDispatchError) error.results = results;
+      if (error?.receipt) error.results = results;
       throw error;
     }
   }

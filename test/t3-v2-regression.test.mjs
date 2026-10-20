@@ -151,7 +151,7 @@ test('held queued work and failed idle threads can complete the archive lifecycl
 });
 
 test('stop refuses to verify while background work remains',async()=>{
- const detail={projection:{thread,runs:[{id:'failed',ordinal:1,status:'failed'}],providerThreads:[{id:'provider',pendingBackgroundTasks:[{taskId:'monitor',kind:'monitor'}]}]}};
+ const detail={projection:{thread,runs:[{id:'failed',ordinal:1,status:'failed'}],providerThreads:[{id:'provider',status:'active',pendingBackgroundTasks:[{taskId:'monitor',kind:'monitor'}]}]}};
  const c=new T3Client({orchestrationProtocol:2,token:'synthetic',fetchImpl:async()=>json(detail)});
  c.rpc=async()=>({sequence:1});
  await assert.rejects(applyIntent(c,{action:'thread.stop',threadId:thread.id,commandId:'stop-monitor'},{timeoutMs:5,intervalMs:0}),/did not verify session termination/);

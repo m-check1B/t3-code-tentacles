@@ -73,7 +73,7 @@ test('unpatched V2 server refuses atomic message method without generic fallback
 });
 
 test('unknown runtime-request states and malformed work collections carry caller refusals',async()=>{
- for(const extra of [{runtimeRequests:[{status:'future-live-state',kind:'approval'}]}, {turnItems:{}}, {subagents:{}}, {providerThreads:{}}, {runtimeRequests:{}}, {thread:{...thread,pendingBackgroundTasks:{}}}]) {
+ for(const extra of [{runtimeRequests:[{status:'future-live-state',kind:'command'}]}, {turnItems:{}}, {subagents:{}}, {providerThreads:{}}, {runtimeRequests:{}}, {thread:{...thread,pendingBackgroundTasks:{}}}]) {
   const projection={thread,runs:[],...extra};
   const c=new T3Client({token:'synthetic',orchestrationProtocol:2,fetchImpl:async()=>json({projection})});
   let dispatched=0;c.rpc=async()=>{dispatched++;return {sequence:1};};

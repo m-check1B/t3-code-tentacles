@@ -188,7 +188,27 @@ function validatedRuns(projection) {
   return runs.sort((left, right) => (left.ordinal ?? 0) - (right.ordinal ?? 0));
 }
 
+// Contract enum boundary (T3 stable v0.1.0 orchestrationV2/providerPolicy/
+// threadPullRequest). Unknown discriminants must not hide work either.
+const TURN_ITEM_TYPES = new Set(["notification", "user_message", "assistant_message", "reasoning", "proposed_plan", "todo_list", "user_input_request", "file_change", "command_execution", "file_search", "web_search", "approval_request", "checkpoint", "run_interrupt_request", "run_interrupt_result", "system_notice", "error", "compaction", "handoff", "fork", "thread_created", "subagent", "dynamic_tool", "secret_request"]);
+const REQUEST_KINDS = new Set(["command", "file-read", "file-change", "mcp-elicitation", "permission", "dynamic_tool_call", "user_input", "auth_refresh"]);
+const PR_SOURCES = new Set(["manual", "created", "agent", "stack", "stack-dismissed"]);
+
+function requireEnum(value, known, label) {
+  if (!known.has(value)) throw new T3V2UnsupportedError(`T3 V2 adapter does not know ${label}`);
+}
+
+function validateThreadEnums(thread) {
+  // Missing optional summary metadata is preserved as null, never stop proof.
+  if (thread.runtimeMode != null) requireEnum(thread.runtimeMode, new Set(["approval-required", "auto-accept-edits", "auto", "full-access"]), "runtime mode");
+  if (thread.interactionMode != null) requireEnum(thread.interactionMode, new Set(["default", "plan"]), "interaction mode");
+  if (thread.pullRequests !== undefined && !Array.isArray(thread.pullRequests))
+    throw new T3V2UnsupportedError("T3 V2 pull-request projection is not supported");
+  for (const pr of thread.pullRequests ?? []) requireEnum(pr?.source, PR_SOURCES, "pull-request source");
+}
+
 function validateBackgroundWork(projection) {
+  if (projection.thread) validateThreadEnums(projection.thread);
   const knownWorkStatuses = new Set(["idle", "pending", "running", "waiting", "completed", "failed", "cancelled", "interrupted"]);
   const workTypes = new Set(["command_execution", "dynamic_tool", "subagent"]);
   for (const key of ["turnItems", "subagents", "providerThreads", "runtimeRequests"]) {
@@ -198,6 +218,7 @@ function validateBackgroundWork(projection) {
   // Validate before any short circuit or persistent/rollback exemption can
   // turn an unknown state into evidence that the thread has stopped.
   for (const item of projection.turnItems ?? []) {
+    requireEnum(item?.type, TURN_ITEM_TYPES, "turn-item type");
     if (!isRecord(item) || (workTypes.has(item.type) && !knownWorkStatuses.has(item.status)))
       throw new T3V2UnsupportedError("T3 V2 adapter does not know background-work status");
   }
@@ -205,11 +226,15 @@ function validateBackgroundWork(projection) {
     if (!isRecord(agent) || !knownWorkStatuses.has(agent.status))
       throw new T3V2UnsupportedError("T3 V2 adapter does not know subagent status");
   }
+  const providerStatuses = new Set(["not_loaded", "idle", "active", "archived", "closed", "error"]);
   for (const provider of projection.providerThreads ?? []) {
+    if (!isRecord(provider) || !providerStatuses.has(provider.status))
+      throw new T3V2UnsupportedError("T3 V2 adapter does not know provider-thread status");
     if (!isRecord(provider) || (provider.pendingBackgroundTasks !== undefined && !Array.isArray(provider.pendingBackgroundTasks)))
       throw new T3V2UnsupportedError("T3 V2 background-task projection is not supported");
   }
   for (const request of projection.runtimeRequests ?? []) {
+    requireEnum(request?.kind, REQUEST_KINDS, "runtime-request kind");
     if (!isRecord(request) || !["pending", "resolved", "expired", "cancelled"].includes(request.status))
       throw new T3V2UnsupportedError("T3 V2 adapter does not know runtime-request status");
   }
@@ -269,6 +294,8 @@ function v1Thread(thread, { status, activeRunId, lastError, pendingKinds, update
 /** V2 shell thread -> V1 thread summary. */
 export function shellThreadToV1(thread) {
   if (!isRecord(thread) || typeof thread.id !== "string") throw new T3V2UnsupportedError("T3 V2 shell thread has no id");
+  validateThreadEnums(thread);
+  if (thread.pendingRuntimeRequest != null) requireEnum(thread.pendingRuntimeRequest.kind, REQUEST_KINDS, "runtime-request kind");
   return v1Thread(thread, {
     status: thread.status,
     activeRunId: thread.activeRunId,
@@ -318,6 +345,7 @@ export function threadDetailToV1(detail, threadId) {
     pendingKinds,
     updatedAt: projection.updatedAt,
   });
+  for (const message of projection.messages ?? []) requireEnum(message?.role, new Set(["user", "assistant", "system"]), "message role");
   const messages = (projection.messages ?? [])
     .filter((message) => message.role === "user" || message.role === "assistant")
     .map((message) => ({
