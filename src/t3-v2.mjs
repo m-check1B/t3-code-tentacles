@@ -288,6 +288,9 @@ function v1Thread(thread, { status, activeRunId, lastError, pendingKinds, update
     updatedAt: updatedAt ?? thread.updatedAt ?? null,
     session: {
       status: sessionStatus(status),
+      // Retain the validated native status for observation counters: V1 maps
+      // both V2 idle and interrupted to stopped for lifecycle compatibility.
+      sourceStatus: status,
       activeTurnId: activeRunId ?? null,
       providerName: thread.providerInstanceId ?? thread.modelSelection?.instanceId ?? null,
       providerInstanceId: thread.providerInstanceId ?? thread.modelSelection?.instanceId ?? null,

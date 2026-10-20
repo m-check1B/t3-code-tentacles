@@ -4,6 +4,13 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Observe counts active turn IDs and starting/running work rather than idle
+  ready or interrupted sessions (KRA-8227, 0.5.0-jack.2 candidate). Separate
+  ready/interrupted session counters preserve both V1 and V2 classifications.
+  CLI version tests read package metadata so release bumps remain testable.
+
 ### Added
 
 - `tentacles capabilities scan [--json]` (KRA-7369): which vendor CLIs, MCP

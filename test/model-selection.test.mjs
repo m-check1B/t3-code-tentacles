@@ -617,15 +617,16 @@ test("CLI parseArgs collects repeatable --option and usage documents originate f
 });
 
 test("both public CLI names print the package version", () => {
-  assert.equal(PACKAGE_VERSION, "0.4.2");
+  const version = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+  assert.equal(PACKAGE_VERSION, version);
   for (const flag of ["--version", "-V"]) {
     const source = spawnSync(process.execPath, [path.resolve("src/cli.mjs"), flag], { encoding: "utf8" });
     assert.equal(source.status, 0, flag);
-    assert.equal(source.stdout, "0.4.2\n", flag);
+    assert.equal(source.stdout, `${version}\n`, flag);
   }
   const alias = spawnSync(path.resolve("bin/t3-agent-bridge"), ["--version"], { encoding: "utf8" });
   assert.equal(alias.status, 0);
-  assert.equal(alias.stdout, "0.4.2\n");
+  assert.equal(alias.stdout, `${version}\n`);
 
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles-cli-symlink-"));
   const linkedRoot = path.join(directory, "repo");
@@ -633,7 +634,7 @@ test("both public CLI names print the package version", () => {
   try {
     const linked = spawnSync(process.execPath, [path.join(linkedRoot, "src/cli.mjs"), "--version"], { encoding: "utf8" });
     assert.equal(linked.status, 0);
-    assert.equal(linked.stdout, "0.4.2\n");
+    assert.equal(linked.stdout, `${version}\n`);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
