@@ -31,9 +31,20 @@ Returns one JSON document:
   `orchestration.getArchivedShellSnapshot`).
 - `pendingWork` — compact index of threads that need an approval or user-input
   decision.
-- `activeTurns` — threads whose session is `starting`/`running`/`ready`/
-  `interrupted`, with active turn id, provider, instance, and runtime mode.
-- `counts` — totals for a quick triage.
+- `activeTurns` — threads with a non-null session `activeTurnId`, or a session
+  status of `starting`/`running`, with turn id, provider, instance, and runtime
+  mode. Ready or interrupted status alone does not imply an active turn.
+  V2's validated `preparing`/`queued`/`starting` and `running`/`waiting` statuses
+  map to `starting` and `running`, respectively, and conservatively count even
+  if the turn id is absent.
+- `counts` — existing totals plus `readySessions` (V1 `ready`, V2 `idle`) and
+  `interruptedSessions` (V1/V2 `interrupted`), restricted to active, non-deleted
+  threads. These status counters can overlap `activeTurns` when an explicit
+  active turn id is present. The V2 adapter retains validated `sourceStatus`
+  internally because both idle and interrupted map to V1 stopped; observe's
+  public session summary is unchanged. Unknown V2 statuses still refuse the
+  observation. V1 summaries remain permissive; an explicit active turn id
+  always counts, including with an unknown status.
 
 Thread detail (messages, activities, checkpoints, pending approval `requestId`)
 is available on demand via `t3-agent-bridge` client code (`client.thread` /

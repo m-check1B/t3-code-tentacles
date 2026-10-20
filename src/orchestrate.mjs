@@ -554,9 +554,9 @@ export async function observe(client) {
   const [snapshot, archived] = await Promise.all([readOrchestrationSnapshot(client), client.archivedShell()]);
   const readModel = isRecord(snapshot) ? snapshot : {};
   const projects = recordArray(readModel.projects).filter((project) => project.deletedAt == null);
-  const threads = recordArray(readModel.threads)
-    .filter((thread) => thread.deletedAt == null && thread.archivedAt == null)
-    .map(projectThreadSummary);
+  const liveThreads = recordArray(readModel.threads)
+    .filter((thread) => thread.deletedAt == null && thread.archivedAt == null);
+  const threads = liveThreads.map(projectThreadSummary);
   const archivedThreads = recordArray(isRecord(archived) ? archived.threads : []).map(projectThreadSummary);
   const pendingWork = [];
   for (const thread of threads) {
@@ -574,7 +574,7 @@ export async function observe(client) {
     }
   }
   const activeTurns = threads
-    .filter((thread) => thread.session && ["starting", "running", "ready", "interrupted"].includes(thread.session.status))
+    .filter((thread) => thread.session && (thread.session.activeTurnId != null || ["starting", "running"].includes(thread.session.status)))
     .map((thread) => ({
       threadId: thread.id,
       title: thread.title,
@@ -600,6 +600,10 @@ export async function observe(client) {
       pendingApprovals: pendingWork.filter((entry) => entry.approvals).length,
       pendingUserInput: pendingWork.filter((entry) => entry.userInput).length,
       activeTurns: activeTurns.length,
+      readySessions: liveThreads.filter((thread) => thread.orchestrationProtocol === V2_PROTOCOL
+        ? thread.session?.sourceStatus === "idle" : thread.session?.status === "ready").length,
+      interruptedSessions: liveThreads.filter((thread) => thread.orchestrationProtocol === V2_PROTOCOL
+        ? thread.session?.sourceStatus === "interrupted" : thread.session?.status === "interrupted").length,
     },
   };
 }
