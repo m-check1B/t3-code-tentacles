@@ -182,6 +182,7 @@ test("loopback adapter keeps the relay surface honest about full-access", async 
   const calls = [];
   const adapter = new LoopbackRuntimeAdapter({
     client: { isLoopback: true },
+    selfUpdateSummaryImpl: () => null,
     observeImpl: async (client) => ({
       activeTurns: [{ threadId: "t1", providerInstanceId: client.isLoopback ? "codex" : "other", prompt: "private" }],
       threads: [

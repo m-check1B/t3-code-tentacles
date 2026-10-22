@@ -8,6 +8,12 @@ All notable changes to this project are documented here.
 
 - A failed `turn-result` carries `failureDetail`, the redacted first line of
   T3's `session.lastError`, so Jack can name a plan limit or sign-in failure.
+- Signed self-update for standalone Tentacles (KRA-8371, KRA-8367 A3), shipped
+  fail-closed until GUARDIAN-audited keys are pinned: signed manifest with
+  replay and expiry limits, safe user-space install under `~/.tentacles`,
+  hold, crash guard, health-checked rollback, Undo, path-free events in
+  `doctor-status`, and the no-AI signer `scripts/release/sign-manifest.mjs`.
+  The 0.4.1 legacy RPC list is unchanged. See `docs/self-update.md`.
 
 ## [0.4.1-jack.1] - 2026-10-12
 

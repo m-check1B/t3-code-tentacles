@@ -6,6 +6,7 @@ import { continueThread, doctor, originate } from "./bridge.mjs";
 import { observe, REPORT_MODEL_LABEL, threadReportStatus } from "./orchestrate.mjs";
 import { requireContinueSelection } from "./model-selection.mjs";
 import { readBoundedWebSocketData } from "./t3-client.mjs";
+import { readSelfUpdateSummary } from "./updater/events.mjs";
 import {
   acquirePairStateLock,
   DEFAULT_PAIR_STATE_FILE,
@@ -239,6 +240,7 @@ export class LoopbackRuntimeAdapter {
     doctorImpl = doctor,
     threadEventsImpl = threadEvents,
     threadEventsDirectory,
+    selfUpdateSummaryImpl = readSelfUpdateSummary,
   }) {
     if (!client) throw new Error("Loopback runtime requires a T3 client");
     this.client = client;
@@ -250,6 +252,7 @@ export class LoopbackRuntimeAdapter {
     this.doctorImpl = doctorImpl;
     this.threadEventsImpl = threadEventsImpl;
     this.threadEventsDirectory = threadEventsDirectory;
+    this.selfUpdateSummaryImpl = selfUpdateSummaryImpl;
   }
 
   async seats() {
@@ -308,7 +311,11 @@ export class LoopbackRuntimeAdapter {
         }
       }
     } catch { /* Older or unavailable T3 has no exact-result capability. */ }
-    return { ...report, capabilities };
+    // KRA-8371 (U7): versions, codes and the computer id only; absent when the
+    // standalone updater was never installed, so desktop-bundled replies are unchanged.
+    let selfUpdate = null;
+    try { selfUpdate = this.selfUpdateSummaryImpl(); } catch { selfUpdate = null; }
+    return { ...report, capabilities, ...(selfUpdate ? { selfUpdate } : {}) };
   }
 
   async turnResult(params) {

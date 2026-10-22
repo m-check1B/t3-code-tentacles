@@ -75,7 +75,7 @@ export const KNOWN_COMMANDS = new Set([
   "install-deepseek-provider", "remove-deepseek-provider", "install-kimi-provider", "remove-kimi-provider",
   "install-codex-app-provider", "remove-codex-app-provider",
   "restore-native-grok", "use-native-grok-cached-auth", "observe", "report", "act", "orchestrate", "originate", "watch",
-  "install-service", "service-status", "restart-service", "uninstall-service",
+  "install-service", "service-status", "restart-service", "uninstall-service", "self-update",
 ]);
 
 function assertNoReservedRemovedInstance(command, instanceId) {
@@ -224,6 +224,7 @@ Usage:
   tentacles service-status --profile PROFILE --instance INSTANCE
   tentacles restart-service --profile PROFILE --instance INSTANCE
   tentacles uninstall-service --profile PROFILE --instance INSTANCE
+  tentacles self-update status | now | undo | install-updater | launch [--computer-id ID] -- <tentacles args...>
 
 The tentacles command is the public CLI. t3-agent-bridge is an exact alias.
 The legacy t3-hermes command remains an exact compatibility alias.
@@ -303,7 +304,28 @@ function writeWatchStatus(statusFile, event) {
   }
 }
 
+// KRA-8371: the self-update runs from the copy installed in ~/.tentacles/updater
+// (outside the swapped version tree) whenever that copy exists. No subcommand
+// accepts a version, URL, hash or key: the device applies the signed manifest.
+async function selfUpdate(argv) {
+  const [subcommand] = argv;
+  if (subcommand === "install-updater") {
+    if (argv.length !== 1) throw new Error("self-update install-updater takes no arguments");
+    const { installUpdater } = await import("./updater/cli.mjs");
+    console.log(JSON.stringify(installUpdater()));
+    return;
+  }
+  const installed = path.join(os.homedir(), ".tentacles", "updater", "cli.mjs");
+  const entry = fs.existsSync(installed) ? installed : path.join(repoRoot, "src", "updater", "cli.mjs");
+  const { main: updaterMain } = await import(pathToFileURL(entry).href);
+  await updaterMain(argv);
+}
+
 async function main() {
+  if (process.argv[2] === "self-update") {
+    await selfUpdate(process.argv.slice(3));
+    return;
+  }
   const { command, options } = parseArgs(process.argv.slice(2));
   if (options.help === true || command === "help" || command === "--help" || command === "-h") {
     console.log(usage());
