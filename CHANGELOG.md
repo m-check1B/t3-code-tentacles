@@ -8,13 +8,16 @@ All notable changes to this project are documented here.
 
 - Port release publishing to the private GitHub canonical repository, verify
   checksums and existing tags, and take release notes from CHANGELOG (KRA-8749).
-  The updater rejects other release sources. The signer pins GitHub comment
-  authority and different writer/reviewer thread attestations, with exact-head,
-  post-push and fast-forward provenance checks (KRA-8371). This is weaker than
-  separate accounts; the first real signing remains Founder-gated.
+  The updater rejects other release sources; live signing holds until the
+  GitHub B3 provenance port lands.
 
 
 ### Added
+
+- GitHub B3 release provenance pins the reviewer account, exact merged head,
+  unedited post-push-bound receipt and distinct writer/reviewer thread ids
+  (KRA-8371). Thread attestations are weaker than independent accounts; first
+  real signing remains Founder-gated.
 
 - A failed `turn-result` carries `failureDetail`, the redacted first line of
   T3's `session.lastError`, so Jack can name a plan limit or sign-in failure.

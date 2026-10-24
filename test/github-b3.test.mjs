@@ -101,7 +101,7 @@ test("default GitHub backend pins the host, paginates comments and uses gh for p
     else process.exit(1);
   `);
   const calls = [];
-  const backend = signer.defaultBackends({ workDir: dir, spawnImpl(command, args, options) {
+  const backend = signer.githubBackends({ workDir: dir, spawnImpl(command, args, options) {
     calls.push({ command, args });
     assert.equal(command, "gh");
     assert.equal(args[args.indexOf("--hostname") + 1], "github.com");

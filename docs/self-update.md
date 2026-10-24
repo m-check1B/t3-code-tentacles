@@ -167,6 +167,12 @@ node scripts/release/sign-manifest.mjs --draft draft.json --previous signed-curr
 - The commit's `package.json` version matches the entry, and so do its
   `REMOTE_RPC_METHODS` and its two pinned keys.
 
+The active signer uses `githubBackends`, with existing GitHub CLI authentication
+and a pinned host. The exported legacy `defaultBackends` always refuses. The
+obsolete Forgejo read-token item is unreachable from the active signer; only
+the current signing key is fetched after provenance and policy checks. The
+updater still refuses redirects, so unavailable assets hold without a fallback.
+
 **Policy.**
 
 - `serial` is the previous serial + 1, and is above the last serial in the
@@ -245,9 +251,8 @@ The compiled source is the private `m-check1B/t3-code-tentacles-private`
 GitHub repository. No Forgejo URL or alternative host is accepted by the
 updater. Private assets require access; a customer without access fails closed.
 Customer distribution is still unproven and needs a separately reviewed source
-decision. Provenance and release reads use the runner/operator's existing
-GitHub CLI authentication with the GitHub host pinned. The obsolete Forgejo read
-vault item is no longer fetched by the signer. The key-reader's audited bytes
-remain unchanged; only the current signing-key item is reachable from the
-signer after every provenance/policy check passes. The updater still refuses
-redirects, so private/moved assets hold rather than falling back to a LAN host.
+decision. The legacy provenance backend refuses with
+`github_provenance_unavailable`; GitHub signing requires the separate B3
+provenance port. No vault lookup or network request is made by the disabled
+legacy backend. First real signing remains Founder-gated under KRA-8371 U6
+and requires the exact-byte GUARDIAN audit.

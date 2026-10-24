@@ -203,8 +203,13 @@ function parseRemoteRpc(source) {
   return [...match[1].matchAll(/"([a-z-]+)"/g)].map((item) => item[1]);
 }
 
-/** Default provenance backends; tests replace them with fixtures. */
-export function defaultBackends({ spawnImpl = spawn, workDir }) {
+/** The legacy provenance backend always refuses; GitHub uses a separate port. */
+export function defaultBackends() {
+  refuse("github_provenance_unavailable");
+}
+
+/** GitHub is the only live provenance backend; tests use isolated fixtures. */
+export function githubBackends({ spawnImpl = spawn, workDir }) {
   const mirror = path.join(workDir, "mirror.git");
   const git = (args) => runChild(spawnImpl, "git", ["--git-dir", mirror, ...args]);
   let fetched = false;
@@ -325,13 +330,13 @@ export function founderRules(previous, draft, keysChanged) {
 export async function signManifest({
   draftFile, previousFile = null, logFile, outFile, founderOk = null, now = Date.now(),
 }, {
-  spawnImpl = spawn, fetchImpl = globalThis.fetch, keySource = KEY_SOURCE, backends = null,
+  spawnImpl = spawn, keySource = KEY_SOURCE, backends = null,
   workDir = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles-signer-")),
 } = {}) {
   const ownsWorkDir = backends === null;
   let backend;
   try {
-    backend = backends ?? defaultBackends({ spawnImpl, fetchImpl, workDir });
+    backend = backends ?? githubBackends({ spawnImpl, workDir });
     if (founderOk !== null && !FOUNDER_REF.test(founderOk)) refuse("founder_ok_reference_invalid");
     if (fs.existsSync(outFile)) refuse("output_exists");
     let draft;

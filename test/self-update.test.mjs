@@ -474,3 +474,8 @@ test("an isolated installed updater includes its compiled release source", async
   const { stdout } = await promisify(execFile)(process.execPath, ["--input-type=module", "-e", `const { SelfUpdater } = await import(${JSON.stringify(modulePath)}); console.log(new SelfUpdater().baseUrl);`]);
   assert.equal(stdout.trim(), BASE);
 });
+
+test("the maintenance signer is closed before any live credential or network operation", async () => {
+  const { defaultBackends } = await import("../scripts/release/sign-manifest.mjs");
+  assert.throws(() => defaultBackends({ spawnImpl: () => assert.fail("must not spawn"), fetchImpl: () => assert.fail("must not fetch") }), { code: "github_provenance_unavailable" });
+});
