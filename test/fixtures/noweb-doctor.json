@@ -411,5 +411,335 @@
     "enabled": false,
     "configEnabled": true,
     "disabled": false
+  },
+  "skillInventory": {
+    "version": 1,
+    "labs": [
+      {
+        "instanceId": "hermes",
+        "state": "unavailable",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "skills": []
+      },
+      {
+        "instanceId": "codex",
+        "state": "unavailable",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "skills": []
+      },
+      {
+        "instanceId": "codex-app",
+        "state": "unavailable",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "skills": []
+      },
+      {
+        "instanceId": "claudeAgent",
+        "state": "unavailable",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "skills": []
+      },
+      {
+        "instanceId": "grok",
+        "state": "unavailable",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "skills": []
+      },
+      {
+        "instanceId": "cursor",
+        "state": "unavailable",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "skills": []
+      },
+      {
+        "instanceId": "deepseek",
+        "state": "unavailable",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "skills": []
+      },
+      {
+        "instanceId": "kimi",
+        "state": "unavailable",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "skills": []
+      },
+      {
+        "instanceId": "pi",
+        "state": "unavailable",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "skills": []
+      },
+      {
+        "instanceId": "opencode",
+        "state": "unavailable",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "skills": []
+      },
+      {
+        "instanceId": "codex-noweb",
+        "state": "unavailable",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "skills": []
+      },
+      {
+        "instanceId": "opencode-noweb",
+        "state": "unavailable",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "skills": []
+      },
+      {
+        "instanceId": "grok-noweb",
+        "state": "unavailable",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "skills": []
+      },
+      {
+        "instanceId": "cursor-noweb",
+        "state": "unavailable",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "skills": []
+      },
+      {
+        "instanceId": "deepseek-noweb",
+        "state": "unavailable",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "skills": []
+      },
+      {
+        "instanceId": "antigravity",
+        "state": "unavailable",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "skills": []
+      }
+    ]
+  },
+  "pluginInventory": {
+    "version": 1,
+    "labs": [
+      {
+        "instanceId": "hermes",
+        "state": "unavailable",
+        "code": "no_native_plugin_source",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "observedAt": null,
+        "plugins": []
+      },
+      {
+        "instanceId": "codex",
+        "state": "unavailable",
+        "code": "not_refreshed",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "observedAt": null,
+        "plugins": []
+      },
+      {
+        "instanceId": "codex-app",
+        "state": "unavailable",
+        "code": "no_native_plugin_source",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "observedAt": null,
+        "plugins": []
+      },
+      {
+        "instanceId": "claudeAgent",
+        "state": "unavailable",
+        "code": "no_native_plugin_source",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "observedAt": null,
+        "plugins": []
+      },
+      {
+        "instanceId": "grok",
+        "state": "unavailable",
+        "code": "no_native_plugin_source",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "observedAt": null,
+        "plugins": []
+      },
+      {
+        "instanceId": "cursor",
+        "state": "unavailable",
+        "code": "no_native_plugin_source",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "observedAt": null,
+        "plugins": []
+      },
+      {
+        "instanceId": "deepseek",
+        "state": "unavailable",
+        "code": "no_native_plugin_source",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "observedAt": null,
+        "plugins": []
+      },
+      {
+        "instanceId": "kimi",
+        "state": "unavailable",
+        "code": "no_native_plugin_source",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "observedAt": null,
+        "plugins": []
+      },
+      {
+        "instanceId": "pi",
+        "state": "unavailable",
+        "code": "no_native_plugin_source",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "observedAt": null,
+        "plugins": []
+      },
+      {
+        "instanceId": "opencode",
+        "state": "unavailable",
+        "code": "no_native_plugin_source",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "observedAt": null,
+        "plugins": []
+      },
+      {
+        "instanceId": "codex-noweb",
+        "state": "unavailable",
+        "code": "no_native_plugin_source",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "observedAt": null,
+        "plugins": []
+      },
+      {
+        "instanceId": "opencode-noweb",
+        "state": "unavailable",
+        "code": "no_native_plugin_source",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "observedAt": null,
+        "plugins": []
+      },
+      {
+        "instanceId": "grok-noweb",
+        "state": "unavailable",
+        "code": "no_native_plugin_source",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "observedAt": null,
+        "plugins": []
+      },
+      {
+        "instanceId": "cursor-noweb",
+        "state": "unavailable",
+        "code": "no_native_plugin_source",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "observedAt": null,
+        "plugins": []
+      },
+      {
+        "instanceId": "deepseek-noweb",
+        "state": "unavailable",
+        "code": "no_native_plugin_source",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "observedAt": null,
+        "plugins": []
+      },
+      {
+        "instanceId": "antigravity",
+        "state": "unavailable",
+        "code": "no_native_plugin_source",
+        "count": null,
+        "dropped": 0,
+        "truncated": false,
+        "digest": null,
+        "observedAt": null,
+        "plugins": []
+      }
+    ]
   }
 }

@@ -34,9 +34,16 @@ test("R2: explicit Codex defaults never inherit stale legacy fields", async () =
       providerInstances: { codex: { driver: "codex", enabled: true, config } },
     };
     const context = codexPluginContext(settings, {});
-    assert.equal(context.error, undefined);
-    assert.equal(context.binary === (config.binaryPath || "codex"), true);
-    assert.equal(context.home === (config.homePath || null), true);
+    if (config.binaryPath) {
+      assert.equal(context.error, undefined);
+      assert.equal(context.binary, config.binaryPath);
+      assert.equal(context.home, config.homePath || null);
+    } else {
+      // Explicit defaults still cannot inherit a legacy executable. Without
+      // T3's PATH, their default bare command is now quarantined by R8.
+      assert.equal(context.error, "binary_unverified");
+      assert.equal(Object.hasOwn(context, "binary"), false);
+    }
     let childCalls = 0;
     const cache = new PluginInventoryCache({ env: {}, execFileImpl: (binary, _argv, options, done) => {
       childCalls++;
@@ -46,8 +53,8 @@ test("R2: explicit Codex defaults never inherit stale legacy fields", async () =
     } });
     cache.read(settings);
     await Promise.all(cache.inflight.values());
-    assert.equal(childCalls, 1);
-    assert.equal(cache.read(settings).state, "observed");
+    assert.equal(childCalls, config.binaryPath ? 1 : 0);
+    assert.equal(cache.read(settings).state, config.binaryPath ? "observed" : "unavailable");
   }
   const settings = { providers: { codex: { homePath: "/synthetic/legacy/home" } }, providerInstances: { codex: { driver: "codex", config: {} } } };
   assert.equal(codexPluginContext(settings, { CODEX_HOME: "/synthetic/ambient/home" }).error, "default_context_unverified");

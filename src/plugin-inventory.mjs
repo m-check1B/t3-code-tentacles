@@ -88,6 +88,12 @@ export function codexPluginContext(settings, env = process.env) {
   if (configuredHome && !path.isAbsolute(configuredHome)) return { error: "home_unverified" };
   const home = configuredHome ? path.resolve(configuredHome) : null;
   if (!home && typeof env.CODEX_HOME === "string" && env.CODEX_HOME) return { error: "default_context_unverified" };
+  // Settings provide neither T3's cwd nor its PATH. Only an absolute binary
+  // identifies the selected executable without borrowing the pairer's bases.
+  // Windows root-relative paths still depend on the current drive.
+  if (!path.isAbsolute(binary) || (process.platform === "win32" && /^[\\/](?![\\/])/.test(binary))) {
+    return { error: "binary_unverified" };
+  }
   return { binary, home, key: digest(JSON.stringify([binary, home, overrides.length > 0, override ?? null])) };
 }
 

@@ -68,7 +68,7 @@ test("R6: unresolved relative and tilde homes are refused before a child starts"
 
 test("R6: a known absolute home is resolved without trimming significant path bytes", async () => {
   for (const homePath of [path.join(path.parse(process.cwd()).root, "synthetic", "profile") + "/../exact", path.join(path.parse(process.cwd()).root, "synthetic", "profile ")]) {
-    const settings = settingsFor({ config: { homePath } });
+    const settings = settingsFor({ config: { binaryPath: "/synthetic/codex", homePath } });
     const context = codexPluginContext(settings, {});
     assert.equal(context.home, path.resolve(homePath));
     assert.equal(path.isAbsolute(context.home), true);

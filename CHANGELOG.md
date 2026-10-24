@@ -6,6 +6,9 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- Codex plugin inventory quarantines relative executable paths and bare command
+  names before spawning (KRA-6203, R8): settings do not prove T3's cwd or PATH.
+  Absolute executable paths remain supported and identify separate cache entries.
 - Codex plugin inventory accounts for the selected instance's launch-argument
   environment override and cache identity (KRA-6203). Unverified overrides and
   relative/tilde homes start no child; absolute homes use T3-equivalent path

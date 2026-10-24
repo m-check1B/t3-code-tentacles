@@ -50,8 +50,8 @@ test("plugin context is the configured binary and CODEX_HOME; launch args are no
     [codexPluginContext(settings, env).binary, codexPluginContext(settings, env).home],
     ["/opt/codex/bin/codex", null],
   );
-  const homed = codexPluginContext({ providers: { codex: { enabled: true, homePath: "/h" } } }, env);
-  assert.deepEqual([homed.binary, homed.home], ["codex", "/h"]);
+  const homed = codexPluginContext({ providers: { codex: { enabled: true, binaryPath: "/opt/codex/bin/codex", homePath: "/h" } } }, env);
+  assert.deepEqual([homed.binary, homed.home], ["/opt/codex/bin/codex", "/h"]);
   assert.notEqual(homed.key, codexPluginContext(settings, env).key);
   assert.equal(codexPluginContext({ providers: { codex: { launchArgs: "-c x=1" } } }, env).error, "launch_args_unverified");
   assert.equal(codexPluginContext({ providers: { codex: { enabled: false } } }, env).error, "disabled");
@@ -75,8 +75,8 @@ test("plugin context is the configured binary and CODEX_HOME; launch args are no
   }
   // Unrelated instance environment (e.g. harness markers) does not block attribution.
   assert.equal(codexPluginContext({
-    providerInstances: { codex: { driver: "codex", environment: [{ name: "OTHER", value: "1" }] } },
-  }, env).binary, "codex");
+    providerInstances: { codex: { driver: "codex", config: { binaryPath: "/opt/codex/bin/codex" }, environment: [{ name: "OTHER", value: "1" }] } },
+  }, env).binary, "/opt/codex/bin/codex");
   // No configured home while this process has its own CODEX_HOME: cannot match T3.
   assert.equal(codexPluginContext(settings, { CODEX_HOME: "/elsewhere" }).error, "default_context_unverified");
 });
@@ -120,7 +120,7 @@ test("cache passes CODEX_HOME and hides CLI failures", async () => {
       callback(new Error("PRIVATE stderr"), "");
     },
   });
-  const homed = { providers: { codex: { enabled: true, homePath: "/h" } } };
+  const homed = { providers: { codex: { enabled: true, binaryPath: "/opt/codex/bin/codex", homePath: "/h" } } };
   cache.read(homed);
   await Promise.all(cache.inflight.values());
   const row = cache.read(homed);
