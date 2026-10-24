@@ -441,18 +441,18 @@ async function main() {
       ? portHostChannel(process.parentPort)
       : fdHostChannel(options["signer-fd"]);
     const host = new HostLink({ channel });
-    const runtime = new LoopbackRuntimeAdapter({ client, pairStateFile: options["pair-state-file"] || DEFAULT_PAIR_STATE_FILE });
-    const connector = new DeviceConnector({
-      runtime,
-      host,
-      appVersion: options["app-version"] || PACKAGE_VERSION,
-      onEvent: (event) => console.error(JSON.stringify(event)),
-    });
     const controller = new AbortController();
     const stop = () => controller.abort();
     process.once("SIGTERM", stop);
     process.once("SIGINT", stop);
     try {
+      const runtime = new LoopbackRuntimeAdapter({ client, pairStateFile: options["pair-state-file"] || DEFAULT_PAIR_STATE_FILE });
+      const connector = new DeviceConnector({
+        runtime,
+        host,
+        appVersion: options["app-version"] || PACKAGE_VERSION,
+        onEvent: (event) => console.error(JSON.stringify(event)),
+      });
       // A terminal close (4401/4403) or connector EOF ends this process with 0;
       // the connector decides what happens next (A1).
       await connector.run({ relay: required(options, "relay"), signal: controller.signal });

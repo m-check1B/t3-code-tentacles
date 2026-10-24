@@ -231,3 +231,9 @@ message and answers `sign.result` with a DER signature. Tentacles never receives
 key material and never signs. `mac` RPCs travel to the connector as `host.rpc`.
 On close 4401 or 4403 Tentacles writes `device.closed` and exits 0. Connector
 EOF stops the process.
+
+The initial `host.hello` must arrive within 15 seconds. Shutdown signals also
+cancel this wait, and the owned connector channel closes whenever connect exits.
+Every complete signer line is checked against the 64 KiB UTF-8 byte bound before
+JSON parsing or delivery. Connector RPC failures publish only static public error
+messages to the relay; connector diagnostic text is never forwarded.

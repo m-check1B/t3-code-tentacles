@@ -123,17 +123,27 @@ export function fdHostChannel(fd) {
   };
   socket.setEncoding("utf8");
   socket.on("data", (chunk) => {
+    if (closed) return;
     buffer += chunk;
     let newline;
     while ((newline = buffer.indexOf("\n")) >= 0) {
       const line = buffer.slice(0, newline);
       buffer = buffer.slice(newline + 1);
+      if (Buffer.byteLength(line, "utf8") > HOST_LINE_MAX_BYTES) {
+        socket.destroy();
+        close();
+        return;
+      }
       if (!line.trim()) continue;
       let message;
       try { message = JSON.parse(line); } catch { continue; }
       for (const listener of messageListeners) listener(message);
+      if (closed) return;
     }
-    if (Buffer.byteLength(buffer, "utf8") > HOST_LINE_MAX_BYTES) socket.destroy();
+    if (Buffer.byteLength(buffer, "utf8") > HOST_LINE_MAX_BYTES) {
+      socket.destroy();
+      close();
+    }
   });
   socket.on("end", close);
   socket.on("close", close);
@@ -142,7 +152,7 @@ export function fdHostChannel(fd) {
     send(message) { if (!closed) socket.write(`${encodeHostMessage(message)}\n`); },
     onMessage(listener) { messageListeners.add(listener); },
     onClose(listener) { closeListeners.add(listener); },
-    close() { socket.end(); },
+    close() { socket.destroySoon(); close(); },
   };
 }
 
@@ -177,12 +187,8 @@ export function portHostChannel(port) {
   };
 }
 
-function rpcFailure(code, publicMessage) {
-  return Object.assign(new Error(RPC_ERROR_MESSAGES[code]), { code, publicMessage });
-}
-
-function boundedMessage(value, fallback) {
-  return typeof value === "string" && value.length > 0 && !CONTROL.test(value) ? value.slice(0, 200) : fallback;
+function rpcFailure(code) {
+  return Object.assign(new Error(RPC_ERROR_MESSAGES[code]), { code });
 }
 
 export class HostLink {
@@ -295,7 +301,7 @@ export class HostLink {
       if (message.type === "host.rpc.result") pending.resolve(message.result ?? null);
       else {
         const code = Object.hasOwn(RPC_ERROR_MESSAGES, message.code) ? message.code : "computer.unavailable";
-        pending.reject(rpcFailure(code, boundedMessage(message.message, RPC_ERROR_MESSAGES[code])));
+        pending.reject(rpcFailure(code));
       }
     }
     // Anything else from the connector is ignored, like unknown relay frames.
@@ -378,6 +384,25 @@ function encodeBounded(message, maxBytes) {
   return encoded;
 }
 
+async function waitForHostHello(host, signal, timeoutMs) {
+  if (signal.aborted) return null;
+  let timer;
+  let abort;
+  try {
+    return await Promise.race([
+      host.ready(),
+      new Promise((resolve, reject) => {
+        abort = () => resolve(null);
+        signal.addEventListener("abort", abort, { once: true });
+        timer = setTimeout(() => reject(new Error("Connector host.hello timed out")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", abort);
+  }
+}
+
 export class DeviceConnector {
   constructor({
     runtime,
@@ -420,14 +445,15 @@ export class DeviceConnector {
   }
 
   async run({ relay, signal } = {}) {
-    const endpoint = requireDeviceRelay(relay);
-    const hello = await this.host.ready();
     const controller = new AbortController();
     const stop = () => controller.abort();
     signal?.addEventListener("abort", stop, { once: true });
     if (signal?.aborted) stop();
     void this.host.closed.then(stop);
     try {
+      const endpoint = requireDeviceRelay(relay);
+      const hello = await waitForHostHello(this.host, controller.signal, this.handshakeTimeoutMs);
+      if (!hello) return { status: "stopped" };
       let attempt = 0;
       while (!controller.signal.aborted) {
         const outcome = await this.connectOnce({ endpoint, hello, signal: controller.signal });
@@ -456,8 +482,13 @@ export class DeviceConnector {
         unsubscribe();
       }
       return { status: "stopped" };
+    } catch (error) {
+      if (controller.signal.aborted) return { status: "stopped" };
+      throw error;
     } finally {
+      stop();
       signal?.removeEventListener("abort", stop);
+      this.host.close();
     }
   }
 
@@ -502,7 +533,7 @@ export class DeviceConnector {
           },
           (error) => {
             const code = Object.hasOwn(RPC_ERROR_MESSAGES, error?.code) ? error.code : "lab_error";
-            send({ type: "rpc.error", rpcId, code, message: error?.publicMessage ?? RPC_ERROR_MESSAGES[code] });
+            send({ type: "rpc.error", rpcId, code, message: RPC_ERROR_MESSAGES[code] });
           },
         ).catch(() => finish({ reason: "relay_send_failed" })).finally(() => inFlight.delete(rpcId));
       };
