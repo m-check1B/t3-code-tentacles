@@ -1,0 +1,415 @@
+{
+  "product": "Tentacles",
+  "t3": {
+    "reachable": true,
+    "auth": {
+      "status": "valid"
+    },
+    "version": null,
+    "projects": 0,
+    "threads": 0,
+    "leakedSessions": {
+      "status": "unavailable",
+      "count": null,
+      "threads": []
+    }
+  },
+  "pairing": {
+    "status": "unpaired"
+  },
+  "labs": [
+    {
+      "instanceId": "hermes",
+      "name": "Hermes CLI",
+      "advertised": true,
+      "kind": "adapter",
+      "enabled": false,
+      "installed": false,
+      "ready": false,
+      "status": "absent",
+      "code": "absent",
+      "modelCount": 0,
+      "models": [],
+      "modelsTruncated": false,
+      "defaultModel": "deepseek:deepseek-v4-flash",
+      "defaultAvailable": false,
+      "webTools": {
+        "v": 1,
+        "state": "unknown",
+        "tools": []
+      },
+      "health": {
+        "reachable": false
+      },
+      "action": "tentacles install-provider --instance hermes"
+    },
+    {
+      "instanceId": "codex",
+      "name": "Codex CLI",
+      "advertised": true,
+      "kind": "native",
+      "enabled": false,
+      "installed": false,
+      "ready": false,
+      "status": "absent",
+      "code": "absent",
+      "modelCount": 0,
+      "models": [],
+      "modelsTruncated": false,
+      "defaultModel": "gpt-5.6-luna",
+      "defaultAvailable": false,
+      "webTools": {
+        "v": 1,
+        "state": "unknown",
+        "tools": []
+      },
+      "runtime": {
+        "id": "codex-cli",
+        "label": "Codex CLI",
+        "integration": "t3-native",
+        "driver": null,
+        "transport": "app-server",
+        "binarySource": "standalone-cli",
+        "configuredBinarySource": null
+      }
+    },
+    {
+      "instanceId": "codex-app",
+      "name": "Codex App",
+      "advertised": true,
+      "kind": "native",
+      "enabled": false,
+      "installed": false,
+      "ready": false,
+      "status": "absent",
+      "code": "absent",
+      "modelCount": 0,
+      "models": [],
+      "modelsTruncated": false,
+      "defaultModel": "gpt-5.6-luna",
+      "defaultAvailable": false,
+      "webTools": {
+        "v": 1,
+        "state": "unknown",
+        "tools": []
+      },
+      "runtime": {
+        "id": "codex-app",
+        "label": "Codex App",
+        "integration": "t3-native",
+        "driver": null,
+        "transport": "app-server",
+        "binarySource": "app-bundled",
+        "configuredBinarySource": null
+      },
+      "action": "tentacles install-codex-app-provider --instance codex-app"
+    },
+    {
+      "instanceId": "claudeAgent",
+      "name": "Claude Code CLI",
+      "advertised": true,
+      "kind": "native",
+      "enabled": false,
+      "installed": false,
+      "ready": false,
+      "status": "absent",
+      "code": "absent",
+      "modelCount": 0,
+      "models": [],
+      "modelsTruncated": false,
+      "defaultModel": "claude-sonnet-5",
+      "defaultAvailable": false,
+      "webTools": {
+        "v": 1,
+        "state": "unknown",
+        "tools": []
+      }
+    },
+    {
+      "instanceId": "grok",
+      "name": "Grok CLI",
+      "advertised": true,
+      "kind": "native",
+      "enabled": false,
+      "installed": false,
+      "ready": false,
+      "status": "absent",
+      "code": "absent",
+      "modelCount": 0,
+      "models": [],
+      "modelsTruncated": false,
+      "defaultModel": "grok-4.6",
+      "defaultAvailable": false,
+      "webTools": {
+        "v": 1,
+        "state": "unknown",
+        "tools": []
+      }
+    },
+    {
+      "instanceId": "cursor",
+      "name": "Cursor CLI",
+      "advertised": true,
+      "kind": "explicit",
+      "enabled": false,
+      "installed": false,
+      "ready": false,
+      "status": "absent",
+      "code": "absent",
+      "modelCount": 0,
+      "models": [],
+      "modelsTruncated": false,
+      "defaultModel": null,
+      "defaultAvailable": null,
+      "webTools": {
+        "v": 1,
+        "state": "unknown",
+        "tools": []
+      },
+      "action": "Enable the T3 Cursor instance, then originate with --instance cursor --model <advertised>"
+    },
+    {
+      "instanceId": "deepseek",
+      "name": "DeepSeek CLI",
+      "advertised": true,
+      "kind": "adapter",
+      "enabled": false,
+      "installed": false,
+      "ready": false,
+      "status": "absent",
+      "code": "absent",
+      "modelCount": 0,
+      "models": [],
+      "modelsTruncated": false,
+      "defaultModel": "deepseek/deepseek-v4-flash",
+      "defaultAvailable": false,
+      "webTools": {
+        "v": 1,
+        "state": "unknown",
+        "tools": []
+      },
+      "action": "tentacles install-deepseek-provider --instance deepseek"
+    },
+    {
+      "instanceId": "kimi",
+      "name": "Kimi CLI",
+      "advertised": true,
+      "kind": "adapter",
+      "enabled": false,
+      "installed": false,
+      "ready": false,
+      "status": "absent",
+      "code": "absent",
+      "modelCount": 0,
+      "models": [],
+      "modelsTruncated": false,
+      "defaultModel": "moonshotai/kimi-k3",
+      "defaultAvailable": false,
+      "webTools": {
+        "v": 1,
+        "state": "unknown",
+        "tools": []
+      },
+      "action": "tentacles install-kimi-provider --instance kimi"
+    },
+    {
+      "instanceId": "pi",
+      "name": "Pi CLI",
+      "advertised": true,
+      "kind": "adapter",
+      "enabled": false,
+      "installed": false,
+      "ready": false,
+      "status": "absent",
+      "code": "absent",
+      "modelCount": 0,
+      "models": [],
+      "modelsTruncated": false,
+      "defaultModel": "gpt-5.6-terra",
+      "defaultAvailable": false,
+      "webTools": {
+        "v": 1,
+        "state": "unknown",
+        "tools": []
+      },
+      "action": "tentacles install-pi-provider --instance pi"
+    },
+    {
+      "instanceId": "opencode",
+      "name": "OpenCode CLI",
+      "advertised": true,
+      "kind": "native",
+      "enabled": false,
+      "installed": false,
+      "ready": false,
+      "status": "absent",
+      "code": "absent",
+      "modelCount": 0,
+      "models": [],
+      "modelsTruncated": false,
+      "defaultModel": "opencode/big-pickle",
+      "defaultAvailable": false,
+      "webTools": {
+        "v": 1,
+        "state": "unknown",
+        "tools": []
+      }
+    },
+    {
+      "instanceId": "codex-noweb",
+      "name": "Codex CLI (noweb)",
+      "advertised": true,
+      "kind": "native",
+      "enabled": true,
+      "installed": true,
+      "ready": true,
+      "status": "ready",
+      "code": null,
+      "modelCount": 1,
+      "models": [
+        "gpt-5.6-luna"
+      ],
+      "modelsTruncated": false,
+      "defaultModel": "gpt-5.6-luna",
+      "defaultAvailable": true,
+      "webTools": {
+        "v": 1,
+        "state": "off",
+        "tools": [
+          "web_search"
+        ]
+      },
+      "runtime": {
+        "id": "codex-cli",
+        "label": "Codex CLI",
+        "integration": "t3-native",
+        "driver": "codex",
+        "transport": "app-server",
+        "binarySource": "standalone-cli",
+        "configuredBinarySource": "standalone-cli"
+      }
+    },
+    {
+      "instanceId": "opencode-noweb",
+      "name": "OpenCode CLI (noweb)",
+      "advertised": true,
+      "kind": "native",
+      "enabled": false,
+      "installed": false,
+      "ready": false,
+      "status": "absent",
+      "code": "absent",
+      "modelCount": 0,
+      "models": [],
+      "modelsTruncated": false,
+      "defaultModel": "opencode/big-pickle",
+      "defaultAvailable": false,
+      "webTools": {
+        "v": 1,
+        "state": "unknown",
+        "tools": []
+      }
+    },
+    {
+      "instanceId": "grok-noweb",
+      "name": "Grok CLI (noweb)",
+      "advertised": true,
+      "kind": "native",
+      "enabled": false,
+      "installed": false,
+      "ready": false,
+      "status": "absent",
+      "code": "absent",
+      "modelCount": 0,
+      "models": [],
+      "modelsTruncated": false,
+      "defaultModel": "grok-4.6",
+      "defaultAvailable": false,
+      "webTools": {
+        "v": 1,
+        "state": "unknown",
+        "tools": []
+      }
+    },
+    {
+      "instanceId": "cursor-noweb",
+      "name": "Cursor CLI (noweb)",
+      "advertised": true,
+      "kind": "explicit",
+      "enabled": false,
+      "installed": false,
+      "ready": false,
+      "status": "absent",
+      "code": "absent",
+      "modelCount": 0,
+      "models": [],
+      "modelsTruncated": false,
+      "defaultModel": null,
+      "defaultAvailable": null,
+      "webTools": {
+        "v": 1,
+        "state": "unknown",
+        "tools": []
+      }
+    },
+    {
+      "instanceId": "deepseek-noweb",
+      "name": "DeepSeek CLI (noweb)",
+      "advertised": true,
+      "kind": "adapter",
+      "enabled": false,
+      "installed": false,
+      "ready": false,
+      "status": "absent",
+      "code": "absent",
+      "modelCount": 0,
+      "models": [],
+      "modelsTruncated": false,
+      "defaultModel": "deepseek/deepseek-v4-flash",
+      "defaultAvailable": false,
+      "webTools": {
+        "v": 1,
+        "state": "unknown",
+        "tools": []
+      }
+    },
+    {
+      "instanceId": "antigravity",
+      "name": "Antigravity (Gemini)",
+      "advertised": true,
+      "kind": "native",
+      "enabled": false,
+      "installed": false,
+      "ready": false,
+      "status": "absent",
+      "code": "absent",
+      "modelCount": 0,
+      "models": [],
+      "modelsTruncated": false,
+      "defaultModel": null,
+      "defaultAvailable": false,
+      "webTools": {
+        "v": 1,
+        "state": "unknown",
+        "tools": []
+      },
+      "signedIn": null,
+      "setupUrl": "t3code://app/settings/providers?instanceId=antigravity",
+      "action": "Enable Antigravity in T3 Code: t3code://app/settings/providers?instanceId=antigravity"
+    }
+  ],
+  "adapterCredential": {
+    "constructable": true
+  },
+  "hermes": {
+    "reachable": false,
+    "code": "hermes_unreachable"
+  },
+  "nativeGrok": {
+    "instanceId": "grok",
+    "present": false,
+    "enabled": false,
+    "configEnabled": true,
+    "disabled": false
+  }
+}

@@ -5,9 +5,9 @@ import { T3Client } from "../../src/t3-client.mjs";
 export const freshCapability = { talkTurnResult: "v1", talkFreshProviderContext: "v1", talkFreshProviderContextProviders: ["codex"] };
 
 // Exercise the real client/bridge/adapter boundary with an isolated T3 transport.
-export async function captureWire(protocol, { fresh = false, capabilities = { talkTurnResult: "v1", talkFreshProviderContext: 0 } } = {}) {
+export async function captureWire(protocol, { fresh = false, instanceId = "codex", capabilities = { talkTurnResult: "v1", talkFreshProviderContext: 0 } } = {}) {
   const wire = [], threads = new Map();
-  const result = { threadId: "thread", messageId: "next-message", turnCommandId: "next-command", turnId: "turn", assistantMessageId: "assistant", instanceId: "codex", model: "gpt-5.6-sol", effort: "high", state: "succeeded", outputText: "synthetic reply", ...(fresh ? { freshProviderContext: true, nativeContextGeneration: "next-command" } : {}) };
+  const result = { threadId: "thread", messageId: "next-message", turnCommandId: "next-command", turnId: "turn", assistantMessageId: "assistant", instanceId, model: "gpt-5.6-sol", effort: "high", state: "succeeded", outputText: "synthetic reply", ...(fresh ? { freshProviderContext: true, nativeContextGeneration: "next-command" } : {}) };
   const apply = (command) => {
     if (command.type === "thread.create") threads.set(command.threadId, { id: command.threadId, projectId: command.projectId, title: command.title, modelSelection: command.modelSelection, runtimeMode: command.runtimeMode, messages: [] });
     if (command.type === "thread.turn.start" || command.type === "message.dispatch") {
@@ -34,7 +34,7 @@ export async function captureWire(protocol, { fresh = false, capabilities = { ta
     apply(payload);
     return { sequence: wire.length };
   };
-  const selection = { instanceId: "codex", model: "gpt-5.6-sol", runtimeMode: "full-access" };
+  const selection = { instanceId, model: "gpt-5.6-sol", runtimeMode: "full-access" };
   await startThread(client, { ...selection, projectId: "project", threadId: "thread", threadCommandId: "thread-command", turnCommandId: "first-command", messageId: "first-message", title: "Synthetic", message: "first", ...(fresh ? { freshProviderContext: true, fixedTitle: true } : {}) });
   const adapter = new LoopbackRuntimeAdapter({ client, doctorImpl: async () => ({ ready: true }) });
   await adapter.continue({ ...selection, threadId: "thread", turnCommandId: "next-command", messageId: "next-message", message: "next", ...(fresh ? { freshProviderContext: true } : {}) });
