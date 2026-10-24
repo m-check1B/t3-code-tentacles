@@ -201,6 +201,20 @@ auth headers, or provider secrets. Use `tentacles doctor --json` for the
 machine-readable document. Doctor inventories both T3-native providers and
 Tentacles adapters; appearing in doctor does not transfer product ownership.
 
+Doctor refreshes an enabled, installed provider whose T3 snapshot is not ready,
+then rereads the registry. Ready snapshots are untouched. Refresh attempts share
+a 60-second cooldown per provider and loopback T3 origin across CLI invocations,
+using private timestamp-only files; an unsafe cooldown state suppresses refresh.
+The refresh and Local Talk capability probe share a 15-second doctor deadline.
+
+Local Talk support is separate from lab readiness. Doctor probes T3's
+`GET /api/orchestration/turn-result` and publishes `capabilities.talkTurnResult`
+only for the exact `"v1"` contract. The bounded `t3.talk` finding carries
+`status`, `code`, and one-line `action` text for inline recovery. A missing route,
+SPA response, or absent contract reports `t3_not_patched`; timeout, connection,
+and authentication failures remain unavailable. Local doctor and the paired
+`doctor-status` report use the same outcome. No response bodies are published.
+
 For a picker or another model-list consumer, use
 `tentacles doctor --json --models full`. The default document still limits each
 lab to 16 visible model IDs. Full mode returns every validated ID in `models`,

@@ -6,6 +6,9 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- Refresh stale enabled, installed provider snapshots during doctor, reread readiness, and rate-limit attempts across CLI invocations to one per instance/origin per 60 seconds (KRA-8833).
+- Probe the Local Talk turn-result contract within the doctor deadline; report actionable `t3_not_patched` or unavailable findings without response bodies, and reuse the outcome in paired doctor-status (KRA-8838).
+
 - Web-off twins require the exact observed provider driver to match both the
   expected twin driver and inspected settings (KRA-8722). Missing or conflicting
   identity reports unready with unknown web tools. Codex runtime diagnostics

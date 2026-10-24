@@ -3,8 +3,8 @@ import { ensureLocalTalkWorkspace } from "./local-talk-workspace.mjs";
 import { privateModeOk } from "./platform.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { randomUUID } from "node:crypto";
-import { continueThread, doctor, originate } from "./bridge.mjs";
-import { requireFreshFlags, requireFreshProviderContext, freshContextProviders } from "./fresh-provider-context.mjs";
+import { continueThread, doctor, originate, probeTalkCapabilities } from "./bridge.mjs";
+import { requireFreshFlags, requireFreshProviderContext } from "./fresh-provider-context.mjs";
 import { observe, REPORT_MODEL_LABEL, threadReportStatus } from "./orchestrate.mjs";
 import { requireContinueSelection } from "./model-selection.mjs";
 import { readBoundedWebSocketData } from "./t3-client.mjs";
@@ -13,7 +13,7 @@ import {
   DEFAULT_PAIR_STATE_FILE,
   writePairPresence,
 } from "./pair-state.mjs";
-import { createThreadLock, TURN_INTERRUPT_CONTRACT, TurnInterrupter } from "./turn-interrupt.mjs";
+import { createThreadLock, TurnInterrupter } from "./turn-interrupt.mjs";
 import { boundForPublish, MAX_PUBLISH_BYTES } from "./capabilities.mjs";
 
 export const PAIR_PROTOCOL_VERSION = 1;
@@ -326,15 +326,8 @@ export class LoopbackRuntimeAdapter {
       throw new Error("doctor-status does not accept remote parameters");
     }
     const report = await this.refreshModels();
-    let supported = false;
-    let freshProviders = [];
-    try {
-      const capabilities = await this.client.request("/api/orchestration/turn-result");
-      supported = capabilities?.talkTurnResult === "v1";
-      freshProviders = freshContextProviders(capabilities);
-    } catch { /* Older or unavailable T3 has no exact-result capability. */ }
-    // Exact interruption is only provable through the exact turn-result query.
-    const result = { ...report, capabilities: { talkTurnResult: supported ? "v1" : null, turnInterrupt: supported ? TURN_INTERRUPT_CONTRACT : null, ...(freshProviders.length ? { talkFreshProviderContext: "v1", talkFreshProviderContextProviders: [...freshProviders] } : {}) } };
+    const capabilities = report.capabilities ?? (await probeTalkCapabilities(this.client)).capabilities;
+    const result = { ...report, capabilities };
     if (this.capabilityCache) {
       // KRA-7369: the connector inventory rides the lab-catalog answer, because
       // Sphere admits only the advertised v1 methods. A scan never delays this
