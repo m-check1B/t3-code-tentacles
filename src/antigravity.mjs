@@ -28,11 +28,8 @@ export function t3SupportsAntigravity(serverVersion) {
   return true;
 }
 
-// T3 does not spawn the ~1 GB agent for its health check, so after a restart
-// an installed Antigravity reports status "warning" with auth "unknown" until
-// a session starts. That is installed-and-usable, not broken. A session that
-// finds no Google sign-in flips auth to "unauthenticated", which is the only
-// signed-out signal.
+// Only T3's observed provider and authentication states establish readiness.
+// An initialized agent or a cached model list does not prove Google sign-in.
 export function applyAntigravityState(row, configProvider, serverVersion) {
   const authStatus = configProvider?.auth?.status;
   const installed = configProvider?.installed === true;
@@ -67,20 +64,16 @@ export function applyAntigravityState(row, configProvider, serverVersion) {
     row.code = "provider_error";
     return row;
   }
-  const unchecked = configProvider.status === "warning" && row.signedIn === null;
-  if (unchecked && row.modelCount === 0) {
-    // Fresh install: T3 lists models only after a session, and a session needs
-    // the Google sign-in. Seen on Windows (T3 0.0.45, agent 1.1.1).
+  if (row.signedIn !== true) {
     row.ready = false;
     row.code = "sign_in_unchecked";
     row.status = "installed";
     return row;
   }
-  if (configProvider.status === "ready" || unchecked) {
-    row.ready = row.defaultAvailable === true;
-    row.code = row.ready ? null : "default_model_unavailable";
-    row.status = unchecked ? "installed" : "ready";
-  }
+  row.ready = configProvider.status === "ready" && row.defaultAvailable === true;
+  row.code = configProvider.status !== "ready" ? "provider_not_ready"
+    : row.ready ? null : "default_model_unavailable";
+  row.status = row.ready ? "ready" : "installed";
   return row;
 }
 
