@@ -8,6 +8,11 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- Backport V1 observe counting: only non-null active turn IDs or starting/running
+  sessions count as active; ready and interrupted sessions have separate counters
+  (KRA-8227).
+- Isolate model-selection and bridge-hardening test defaults from ambient model
+  variables while retaining assertions and auth rotation coverage (KRA-8794).
 - Refresh stale enabled, installed provider snapshots during doctor, reread readiness, and rate-limit attempts across CLI invocations to one per instance/origin per 60 seconds (KRA-8833).
 - Probe the Local Talk turn-result contract within the doctor deadline; report actionable `t3_not_patched` or unavailable findings without response bodies, and reuse the outcome in paired doctor-status (KRA-8838).
 - Pin the two audited U6 Ed25519 public keys for standalone self-update; missing or untrusted manifests still install nothing (KRA-8371).

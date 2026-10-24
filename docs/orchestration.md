@@ -24,9 +24,13 @@ Returns one JSON document:
   `orchestration.getArchivedShellSnapshot`).
 - `pendingWork` — compact index of threads that need an approval or user-input
   decision.
-- `activeTurns` — threads whose session is `starting`/`running`/`ready`/
-  `interrupted`, with active turn id, provider, instance, and runtime mode.
-- `counts` — totals for a quick triage.
+- `activeTurns` — threads with a non-null session `activeTurnId`, or a session
+  status of `starting`/`running`, with active turn id, provider, instance, and
+  runtime mode. Ready and interrupted sessions without an active ID do not
+  count as active turns.
+- `counts` — totals, including separate `readySessions` and
+  `interruptedSessions` for active, non-deleted threads. These status counters
+  can overlap `activeTurns` when an explicit active ID remains on a session.
 
 Thread detail (messages, activities, checkpoints, pending approval `requestId`)
 is available on demand via `t3-agent-bridge` client code (`client.thread` /
