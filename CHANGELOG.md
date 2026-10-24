@@ -6,6 +6,7 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- Isolate model-selection, bridge-hardening and doctor golden test defaults from ambient model variables without weakening assertions or changing auth rotation coverage (KRA-8794).
 - Web-off twins require the exact observed provider driver to match both the
   expected twin driver and inspected settings (KRA-8722). Missing or conflicting
   identity reports unready with unknown web tools. Codex runtime diagnostics
