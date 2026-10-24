@@ -28,6 +28,7 @@ import {
   labInstallHint,
   labKind,
   ORIGINATE_LABS,
+  NOWEB_LAB_DRIVERS,
   requireExplicitRuntimeMode,
   resolveModelSelection,
   requireContinueSelection,
@@ -37,6 +38,7 @@ import { DEFAULT_PAIR_STATE_FILE, publishLockFile, readPairPresence } from "./pa
 import { inspectHermesOpenaiCodexAuth } from "./hermes-acp-launch.mjs";
 import { readBoundedResponseText, readOrchestrationSnapshot, T3HttpError, T3_REAUTH_ACTION } from "./t3-client.mjs";
 import { LAB_NAMES, labName } from "./lab-names.mjs";
+import { inspectInstanceWebTools } from "./web-tools.mjs";
 
 const HERMES_MENTION = /(^|\s)@hermes\b/i;
 const BRIDGE_OWNER_VARIABLE = "T3_HERMES_BRIDGE_OWNER";
@@ -1095,6 +1097,7 @@ function providerEnabled(settings, instanceId, configProvider) {
     enabled = false;
   }
   if (configProvider?.status === "disabled") return false;
+  if (instance?.config?.enabled === false) return false;
   return enabled;
 }
 
@@ -1161,9 +1164,10 @@ function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
     modelsTruncated: allModels.length > models.length,
     defaultModel,
     defaultAvailable,
+    webTools: inspectInstanceWebTools(settings, instanceId),
   };
   if (modelsMode === "full") row.modelCatalog = fullModelCatalog(configProvider, allModels);
-  if (instanceId === "codex" || instanceId === DEFAULT_CODEX_APP_INSTANCE_ID) {
+  if (instanceId === "codex" || instanceId === "codex-noweb" || instanceId === DEFAULT_CODEX_APP_INSTANCE_ID) {
     const legacyConfig = settings?.providers?.codex;
     const instanceConfig = instance?.config && typeof instance.config === "object" && !Array.isArray(instance.config)
       ? instance.config
@@ -1250,14 +1254,25 @@ export async function doctor(client, {
     && /^[A-Za-z0-9._+-]{1,128}$/.test(config.environment.serverVersion)
     ? config.environment.serverVersion
     : null;
-  const configById = new Map(providers.map((entry) => [entry.instanceId, entry]));
+  const configById = new Map();
+  const duplicateIds = new Set();
+  for (const entry of providers) {
+    if (configById.has(entry.instanceId)) duplicateIds.add(entry.instanceId);
+    configById.set(entry.instanceId, entry);
+  }
   const labs = [];
   for (const labId of ORIGINATE_LABS) {
-    labs.push(labRow({ instanceId: labId, advertised: true, settings, configById, modelsMode }));
+    const row = labRow({ instanceId: labId, advertised: true, settings, configById, modelsMode });
+    if (duplicateIds.has(labId)) {
+      row.ready = false;
+      row.code = "provider_not_ready";
+      row.webTools = { v: 1, state: "unknown", tools: [] };
+    }
+    labs.push(row);
   }
 
   const adapterCredential = inspectAdapterAuth(openrouterTokenFile);
-  for (const labId of ["kimi", "deepseek"]) {
+  for (const labId of ["kimi", "deepseek", "deepseek-noweb"]) {
     const lab = labs.find((entry) => entry.instanceId === labId);
     if (!lab) continue;
     if (lab.installed && !adapterCredential.constructable) {
@@ -1266,11 +1281,22 @@ export async function doctor(client, {
     }
   }
 
-  const deepseekLab = labs.find((lab) => lab.instanceId === "deepseek");
-  if (deepseekLab?.enabled && deepseekLab.installed && deepseekLab.defaultAvailable && adapterCredential.constructable) {
-    deepseekLab.ready = true;
-    deepseekLab.status = "configured";
-    deepseekLab.code = null;
+  for (const labId of ["deepseek", "deepseek-noweb"]) {
+    const deepseekLab = labs.find((lab) => lab.instanceId === labId);
+    if (deepseekLab?.enabled && deepseekLab.installed && deepseekLab.defaultAvailable && adapterCredential.constructable && !duplicateIds.has(labId)) {
+      deepseekLab.ready = true;
+      deepseekLab.status = "configured";
+      deepseekLab.code = null;
+    }
+  }
+
+  for (const [labId, driver] of Object.entries(NOWEB_LAB_DRIVERS)) {
+    const lab = labs.find(entry => entry.instanceId === labId);
+    const instance = settings.providerInstances?.[labId];
+    if (lab.installed && instance?.driver !== driver) {
+      lab.ready = false;
+      lab.code = "runtime_misconfigured";
+    }
   }
 
   // KRA-6508: T3 checks the Claude Code login itself. Trust its ready state

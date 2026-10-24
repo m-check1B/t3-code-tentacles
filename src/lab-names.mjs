@@ -1,3 +1,5 @@
+import { baseLabId } from "./model-selection.mjs";
+
 // KRA-6506: public lab names. Mirror of Agent Jack's api/src/jack_api/lab_names.v1.json
 // (agent-jack-3). Keep the two tables identical.
 export const LAB_NAMES = Object.freeze({
@@ -14,5 +16,7 @@ export const LAB_NAMES = Object.freeze({
 });
 
 export function labName(instanceId) {
+  const base = baseLabId(instanceId);
+  if (base !== instanceId) return `${LAB_NAMES[base]} (noweb)`;
   return Object.hasOwn(LAB_NAMES, instanceId) ? LAB_NAMES[instanceId] : null;
 }
