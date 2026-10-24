@@ -6,6 +6,13 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- Publish checksummed tarballs to the private canonical GitHub repository using
+  existing gh authentication, an existing matching tag and CHANGELOG notes
+  (KRA-8749). Forgejo publishing is removed.
+
+
+### Fixed
+
 - Observe counts active turn IDs and starting/running work rather than idle
   ready or interrupted sessions (KRA-8227, 0.5.0-jack.2 candidate). Separate
   ready/interrupted session counters preserve both V1 and V2 classifications.
