@@ -1026,7 +1026,7 @@ export function skillInventoryRow(instanceId, configProvider) {
     }
     rows.push({ name, scope, enabled });
   }
-  rows.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : String(a.scope) < String(b.scope) ? -1 : String(a.scope) > String(b.scope) ? 1 : 0));
+  rows.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : String(a.scope) < String(b.scope) ? -1 : String(a.scope) > String(b.scope) ? 1 : String(a.enabled) < String(b.enabled) ? -1 : String(a.enabled) > String(b.enabled) ? 1 : 0));
   const kept = rows.slice(0, SKILL_INVENTORY_LIMIT);
   return {
     instanceId,

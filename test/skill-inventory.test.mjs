@@ -68,3 +68,12 @@ test("skill inventory digest is order independent and changes with state", () =>
   assert.equal(skillInventoryRow("codex", { skills: [] }).count, 0);
   assert.equal(skillInventoryRow("codex", {}).state, "unavailable");
 });
+
+test("skill digest is order independent for duplicate identities with distinct enabled state", () => {
+  const skills = [{ name: "duplicate", scope: "user", enabled: true }, { name: "duplicate", scope: "user", enabled: false }];
+  const forward = skillInventoryRow("codex", { skills });
+  const reverse = skillInventoryRow("codex", { skills: [...skills].reverse() });
+  assert.equal(forward.digest, reverse.digest);
+  assert.deepEqual(forward.skills, reverse.skills);
+  assert.equal(forward.count, 2, "duplicate identities remain visible for consumer quarantine");
+});
