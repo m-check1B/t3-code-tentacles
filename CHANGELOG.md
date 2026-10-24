@@ -6,6 +6,10 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- Web-off twins require the exact observed provider driver to match both the
+  expected twin driver and inspected settings (KRA-8722). Missing or conflicting
+  identity reports unready with unknown web tools. Codex runtime diagnostics
+  retain the observed driver instead of synthesizing it from settings.
 - Publish checksummed tarballs to the private canonical GitHub repository using
   existing gh authentication, an existing matching tag and CHANGELOG notes
   (KRA-8749). Forgejo publishing is removed.

@@ -1,3 +1,14 @@
+export const NOWEB_LAB_DRIVERS = Object.freeze({
+  "codex-noweb": "codex",
+  "opencode-noweb": "opencode",
+  "grok-noweb": "grok",
+  "cursor-noweb": "cursor",
+  "deepseek-noweb": "grok",
+});
+export const NOWEB_LABS = Object.freeze(Object.keys(NOWEB_LAB_DRIVERS));
+const NOWEB_BASES = Object.freeze(Object.fromEntries(NOWEB_LABS.map(id => [id, id.slice(0, -6)])));
+export const baseLabId = (instanceId) => Object.hasOwn(NOWEB_BASES, instanceId) ? NOWEB_BASES[instanceId] : instanceId;
+
 export const ORIGINATE_LABS = Object.freeze([
   "hermes",
   "codex",
@@ -9,6 +20,7 @@ export const ORIGINATE_LABS = Object.freeze([
   "kimi",
   "pi",
   "opencode",
+  ...NOWEB_LABS,
   "antigravity",
 ]);
 
@@ -29,13 +41,14 @@ export const LAB_DEFAULT_MODELS = Object.freeze({
 
 export function labKind(instanceId) {
   if (!ORIGINATE_LABS.includes(instanceId)) return "external";
+  instanceId = baseLabId(instanceId);
   if (ADAPTER_LABS.includes(instanceId)) return "adapter";
   if (EXPLICIT_LABS.includes(instanceId)) return "explicit";
   return "native";
 }
 
 export function defaultModelForLab(instanceId) {
-  const id = requireNonEmptyString(instanceId, "instanceId");
+  const id = baseLabId(requireNonEmptyString(instanceId, "instanceId"));
   if (Object.hasOwn(LAB_DEFAULT_MODELS, id)) return LAB_DEFAULT_MODELS[id];
   return null;
 }
@@ -159,6 +172,7 @@ export function normalizeModelOptions(options, label = "modelSelection.options")
 // Lab effort knobs seen on live T3 threads. Other labs stay instance+model
 // only — do not invent option ids T3 has not advertised for that lab.
 export function budgetOptionId(instanceId, model) {
+  instanceId = baseLabId(instanceId);
   if (instanceId === "claudeAgent") return "effort";
   if (instanceId === "codex" || instanceId === "codex-app" || instanceId === "grok") return "reasoningEffort";
   if (instanceId === "hermes" && typeof model === "string" && model.startsWith("openai-codex:")) {
@@ -175,7 +189,7 @@ export function resolveModelSelection({ instanceId, model, options, budget } = {
   const resolvedInstanceId = requireNonEmptyString(instanceId, "modelSelection.instanceId");
   let resolvedModel = requireNonEmptyString(model, "modelSelection.model");
   const explicit = normalizeModelOptions(options) ?? [];
-  const cursorAlias = resolvedInstanceId === "cursor"
+  const cursorAlias = baseLabId(resolvedInstanceId) === "cursor"
     ? CURSOR_PARAMETERIZED_MODEL_ALIASES[resolvedModel]
     : undefined;
   if (cursorAlias) {
