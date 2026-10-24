@@ -1186,7 +1186,8 @@ function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
       binarySource: expectedAppBundle ? "app-bundled" : "standalone-cli",
       configuredBinarySource: installed ? (appBundled ? "app-bundled" : "standalone-cli") : null,
     };
-    if (installed && ((driver !== null && driver !== "codex") || appBundled !== expectedAppBundle)) {
+    if (installed && ((driver !== null && driver !== "codex")
+      || (instance?.driver !== undefined && instance.driver !== "codex") || appBundled !== expectedAppBundle)) {
       row.ready = false;
       row.code = "runtime_misconfigured";
     }
@@ -1273,7 +1274,9 @@ export async function doctor(client, {
     labs.push(row);
   }
   const antigravityLab = labs.find((lab) => lab.instanceId === ANTIGRAVITY_INSTANCE_ID);
-  if (antigravityLab) applyAntigravityState(antigravityLab, configById.get(ANTIGRAVITY_INSTANCE_ID), serverVersion);
+  if (antigravityLab && !duplicateIds.has(ANTIGRAVITY_INSTANCE_ID)) {
+    applyAntigravityState(antigravityLab, configById.get(ANTIGRAVITY_INSTANCE_ID), serverVersion);
+  }
 
   const adapterCredential = inspectAdapterAuth(openrouterTokenFile);
   for (const labId of ["kimi", "deepseek", "deepseek-noweb"]) {

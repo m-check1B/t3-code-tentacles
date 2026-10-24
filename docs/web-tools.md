@@ -18,6 +18,12 @@ through selection, originate, continue, legacy/V2 commands, receipts and turn
 results. Defaults, effort and Cursor model aliases follow the base lab. The
 DeepSeek twin uses the same adapter credential readiness check as DeepSeek.
 
+A twin's observed `server.getConfig` driver must match both its expected driver
+and the inspected `providerInstances` settings entry. Missing or conflicting
+identity and duplicate provider rows make the twin unready with unknown web
+tools. Runtime driver diagnostics come from the provider snapshot, never from
+settings. A ready base Codex does not supply readiness to an unsigned-in twin.
+
 ## Evidence and limits
 
 - Codex: inspect only the exact instance's explicit absolute `config.homePath`

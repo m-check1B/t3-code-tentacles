@@ -67,6 +67,28 @@ test("Codex twin with an unsigned-in provider snapshot cannot borrow the ready b
   }
 });
 
+test("observed Codex diagnostics preserve refusal of conflicting base settings", async (t) => {
+  const f = fixture(t);
+  const client = { snapshot: async () => ({ projects: [], threads: [] }),
+    getSettings: async () => ({ providerInstances: { codex: { ...f.instance, driver: "opencode" } } }),
+    rpc: async () => ({ providers: [{ ...f.observed, instanceId: "codex" }] }) };
+  const row = (await doctor(client, f.options)).labs.find(row => row.instanceId === "codex");
+  assert.equal(row.ready, false);
+  assert.equal(row.runtime.driver, "codex");
+});
+
+test("duplicate provider refusal survives current-main Antigravity readiness enrichment", async (t) => {
+  const f = fixture(t);
+  const observed = { ...f.observed, instanceId: "antigravity", driver: "antigravity", auth: { status: "authenticated" } };
+  const client = { snapshot: async () => ({ projects: [], threads: [] }),
+    getSettings: async () => ({ providerInstances: { antigravity: { driver: "antigravity", enabled: true } } }),
+    rpc: async () => ({ providers: [observed, observed] }) };
+  const row = (await doctor(client, f.options)).labs.find(row => row.instanceId === "antigravity");
+  assert.equal(row.ready, false);
+  assert.deepEqual(row.webTools, unknown);
+  assert.ok(row.code);
+});
+
 for (const protocol of [1, 2]) {
   test(`R7: doctor-status binds settings and observed driver through protocol ${protocol}`, async (t) => {
     const f = fixture(t);
