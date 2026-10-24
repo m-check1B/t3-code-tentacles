@@ -24,6 +24,11 @@ All notable changes to this project are documented here.
   cached models exist. Source-only refresh; installed/runtime compatibility
   remains separately verified.
 
+- Capability-gated fresh native context and fixed-title Talk forwarding across
+  legacy T3 and Orchestrator V2, with exact applied-generation receipts and
+  origination replay validation (KRA-6411, KRA-7684). Missing or zero runtime
+  capability preserves the default wire. This requires a supporting T3 build;
+  no installed-runtime compatibility is implied.
 - `tentacles capabilities scan [--json]` (KRA-7369): which vendor CLIs, MCP
   servers, plugins and skills this computer has, signed in or not, with the one
   fix when missing. Probes are time-boxed, shell-free and never start a login;
