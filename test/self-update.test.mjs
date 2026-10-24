@@ -1,10 +1,11 @@
-// KRA-8371 (KRA-8367 A3): signed standalone self-update. All keys are
-// ephemeral and generated here; every path is a fresh temp dir.
+// KRA-8371 (KRA-8367 A3): signed standalone self-update. Test signing keys
+// are ephemeral; every path is a fresh temp dir.
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { verifyManifest, selectTarget, compareVersions, UpdateError } from "../src/updater/manifest.mjs";
 import { extractPackage } from "../src/updater/safe-tar.mjs";
 import { SelfUpdater } from "../src/updater/updater.mjs";
@@ -20,6 +21,26 @@ import {
 const BASE = "https://github.com/m-check1B/t3-code-tentacles-private/releases/download";
 const NOW = Date.parse("2026-10-22T08:00:00.000Z");
 const LATER = "2026-11-20T00:00:00.000Z";
+
+test("shipped pins match the audited U6 public keys in current/next order", () => {
+  assert.deepEqual(PINNED_PUBLIC_KEYS, [
+    "1IWLY3JieS1Jdof2xsZ5huJW8ATUwq9iAbo695+NhEM=",
+    "smwpxtGQXv9HpsEosMC9obOZLAFaA70cfrdtkSNiFHM=",
+  ]);
+  assert.equal(Object.isFrozen(PINNED_PUBLIC_KEYS), true);
+  assert.equal(new Set(PINNED_PUBLIC_KEYS).size, 2);
+  const ids = PINNED_PUBLIC_KEYS.map((key) => {
+    const raw = Buffer.from(key, "base64");
+    assert.equal(raw.length, 32);
+    assert.equal(raw.toString("base64"), key);
+    return createHash("sha256").update(raw).digest("hex").slice(0, 16);
+  });
+  assert.deepEqual(ids, ["106d3ab825e5e6b7", "9e6656980133bd7a"]);
+});
+
+test("the release pinned-key gate accepts the shipped pins", () => {
+  assert.equal(assertPinnedKeys(), true);
+});
 
 function tempHome(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles-su-"));
@@ -84,26 +105,59 @@ test("the next pinned key verifies too (rotation), and no pinned key fails close
   const envelope = signEnvelope(manifestOf({ expires: LATER, securityFloor: "0.4.1-jack.2", recommended: "0.4.1-jack.2", versions: [entryFor("0.4.1-jack.2", v)] }), next);
   assert.equal(verifyManifest(envelope, { publicKeys: [current.raw, next.raw], now: NOW, minSerial: 1 }).manifest.serial, 2);
   assert.equal(codeOf(() => verifyManifest(envelope, { publicKeys: [], now: NOW, minSerial: 1 })), "updater_unconfigured");
-  assert.deepEqual(PINNED_PUBLIC_KEYS, [], "no real key is committed before the GUARDIAN key ceremony");
 });
 
-test("shipped empty pins refuse signed-looking and unsigned manifests before any install or fetch", async (t) => {
-  assert.equal(PINNED_PUBLIC_KEYS.length, 0);
+test("explicit empty pins refuse signed-looking and unsigned manifests before any install or fetch", async (t) => {
+  const emptyKeys = Object.freeze([]);
   const key = ephemeralKey();
   const v = packageTgz("0.4.1-jack.2");
   const manifest = manifestOf({ expires: LATER, securityFloor: "0.4.1-jack.2", recommended: "0.4.1-jack.2", versions: [entryFor("0.4.1-jack.2", v)] });
   for (const bytes of [signEnvelope(manifest, key), Buffer.from(JSON.stringify(manifest))]) {
-    assert.equal(codeOf(() => verifyManifest(bytes, { publicKeys: PINNED_PUBLIC_KEYS, now: NOW, minSerial: 1 })), "updater_unconfigured");
+    assert.equal(codeOf(() => verifyManifest(bytes, { publicKeys: emptyKeys, now: NOW, minSerial: 1 })), "updater_unconfigured");
+    const home = tempHome(t);
+    let fetches = 0;
+    const updater = new SelfUpdater({ home, publicKeys: emptyKeys, computerId: "computer-a1", now: () => NOW,
+      fetchImpl: async () => { fetches += 1; return new Response(bytes); },
+      isIdle: async () => true, restart: async () => assert.fail("must not restart"),
+    });
+    assert.strictEqual(updater.publicKeys, emptyKeys);
+    assert.deepEqual(await updater.run({ trigger: "now" }), { status: "failed", reason: "updater_unconfigured" });
+    assert.equal(fetches, 0);
+    assert.equal(fs.existsSync(path.join(home, "versions")), false);
+  }
+});
+
+test("shipped pins refuse unsigned manifests and unpinned throwaway signatures without installing", async (t) => {
+  const key = ephemeralKey();
+  assert.equal(PINNED_PUBLIC_KEYS.includes(key.raw), false);
+  const manifest = manifestOf({ expires: LATER, securityFloor: "0.4.1-jack.2", recommended: "0.4.1-jack.2", versions: [entryFor("0.4.1-jack.2", packageTgz("0.4.1-jack.2"))] });
+  const signed = signEnvelope(manifest, key);
+  const unsigned = { ...JSON.parse(signed), signatures: [] };
+  const cases = [
+    [Buffer.from(JSON.stringify(manifest)), "manifest_invalid"],
+    [Buffer.from(JSON.stringify(unsigned)), "manifest_invalid"],
+    [signed, "manifest_signature_invalid"],
+    ...["106d3ab825e5e6b7", "9e6656980133bd7a"].map((id) => {
+      const forged = JSON.parse(signed);
+      forged.signatures[0].keyId = id;
+      return [Buffer.from(JSON.stringify(forged)), "manifest_signature_invalid"];
+    }),
+  ];
+  for (const [bytes, reason] of cases) {
     const home = tempHome(t);
     let fetches = 0;
     const updater = new SelfUpdater({ home, computerId: "computer-a1", now: () => NOW,
       fetchImpl: async () => { fetches += 1; return new Response(bytes); },
-      isIdle: async () => true, restart: async () => assert.fail("must not restart"),
+      isIdle: async () => assert.fail("must not reach install selection"),
+      restart: async () => assert.fail("must not restart"),
     });
     assert.strictEqual(updater.publicKeys, PINNED_PUBLIC_KEYS);
-    assert.deepEqual(await updater.run({ trigger: "now" }), { status: "failed", reason: "updater_unconfigured" });
-    assert.equal(fetches, 0);
+    assert.deepEqual(await updater.run({ trigger: "now" }), { status: "failed", reason });
+    assert.equal(fetches, 1, "only the manifest is requested");
+    assert.equal(updater.events().length, 1);
     assert.equal(fs.existsSync(path.join(home, "versions")), false);
+    assert.equal(fs.existsSync(path.join(home, "current")), false);
+    assert.equal(updater.readState().lastSerial, 0);
   }
 });
 
@@ -405,13 +459,13 @@ test("U5: Update now and Undo accept no version, URL or hash", async (t) => {
   await assert.rejects(updaterMain(["now", "--url", "http://elsewhere.invalid/x.tgz"], { home, out: () => {} }), /takes no arguments/);
 });
 
-test("fail closed: the shipped updater refuses without pinned keys, and the release check refuses the build", async (t) => {
+test("fail closed: explicit empty pins refuse updates and the release check refuses the build", async (t) => {
   const home = tempHome(t);
   let fetched = false;
-  const updater = new SelfUpdater({ home, computerId: "computer-a1", fetchImpl: async () => { fetched = true; return new Response("{}"); }, isIdle: async () => true });
+  const updater = new SelfUpdater({ home, publicKeys: [], computerId: "computer-a1", fetchImpl: async () => { fetched = true; return new Response("{}"); }, isIdle: async () => true });
   assert.deepEqual(await updater.run({ trigger: "now" }), { status: "failed", reason: "updater_unconfigured" });
   assert.equal(fetched, false);
-  assert.throws(() => assertPinnedKeys(), /two pinned Ed25519 public keys/);
+  assert.throws(() => assertPinnedKeys([]), /two pinned Ed25519 public keys/);
   const a = ephemeralKey();
   const b = ephemeralKey();
   assert.throws(() => assertPinnedKeys([a.raw, a.raw]), /must differ/);
@@ -430,7 +484,7 @@ test("the updater never references T3, ~/.claude, ~/.codex or ~/.t3", () => {
 // --- launcher ------------------------------------------------------------------
 
 import { EventEmitter } from "node:events";
-import { Launcher } from "../src/updater/launcher.mjs";
+import { AUTO_CHECK_INTERVAL_MS, FIRST_CHECK_DELAY_MS, Launcher } from "../src/updater/launcher.mjs";
 import { signalLauncher } from "../src/updater/updater.mjs";
 
 function fakeChild() {
@@ -439,6 +493,57 @@ function fakeChild() {
   child.signalCode = null;
   child.kill = (signal) => { child.signalCode = signal; setImmediate(() => child.emit("exit", null, signal)); };
   return child;
+}
+
+for (const failure of ["404", "network error"]) {
+  test(`shipped pins with no published manifest (${failure}) fail non-fatally without retry spam`, async (t) => {
+    const d = device(t);
+    await installV1(d);
+    let fetches = 0;
+    const updater = new SelfUpdater({ home: d.home, computerId: "computer-a1", now: () => NOW,
+      fetchImpl: async () => {
+        fetches += 1;
+        assert.ok(fetches <= 3, "no retry loop");
+        if (failure === "network error") throw new Error("synthetic network failure");
+        return new Response("missing", { status: 404 });
+      },
+      isIdle: async () => assert.fail("must not reach install selection"),
+    });
+    assert.strictEqual(updater.publicKeys, PINNED_PUBLIC_KEYS);
+    assert.deepEqual(await updater.run({ trigger: "now" }), { status: "failed", reason: "manifest_unavailable" });
+    assert.equal(fetches, 1);
+    let starts = 0;
+    const child = fakeChild();
+    const launcher = new Launcher({ updater, args: [], now: () => NOW,
+      spawnImpl: () => { starts += 1; return child; },
+    });
+    t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    const running = launcher.run();
+    try {
+      t.mock.timers.tick(FIRST_CHECK_DELAY_MS - 1);
+      assert.equal(fetches, 1);
+      t.mock.timers.tick(1);
+      await new Promise(setImmediate);
+      assert.equal(fetches, 2);
+      assert.equal(updater.events().length, 2, "one bounded event per check");
+      t.mock.timers.tick(AUTO_CHECK_INTERVAL_MS - FIRST_CHECK_DELAY_MS - 1);
+      await new Promise(setImmediate);
+      assert.equal(fetches, 2, "failure does not schedule an early retry");
+      t.mock.timers.tick(1);
+      await new Promise(setImmediate);
+      assert.equal(fetches, 3);
+      assert.equal(updater.events().length, 3);
+      assert.ok(updater.events().every((event) => event.reason === "manifest_unavailable"));
+      assert.equal(starts, 1, "the running application is never restarted");
+      assert.equal(child.signalCode, null);
+      assert.equal(updater.currentVersion(), "0.4.1-jack.1");
+      assert.deepEqual(fs.readdirSync(updater.paths.versions), ["0.4.1-jack.1"]);
+      assert.equal(updater.readState().lastSerial, 0);
+    } finally {
+      child.emit("exit", 0, null);
+      assert.equal(await running, 0);
+    }
+  });
 }
 
 test("launcher: a child that dies within a minute feeds the crash guard; the third pins and holds", async (t) => {

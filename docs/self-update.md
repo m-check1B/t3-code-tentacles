@@ -4,11 +4,21 @@ This page covers standalone Tentacles: the CLI installs on paired computers.
 Desktop-bundled Tentacles never uses this path; it follows the signed desktop
 update (KRA-8367 A2).
 
-**Status:** the code ships fail-closed. `src/updater/pinned.mjs` has no public
-keys, so every install is refused with `updater_unconfigured`. The release
-workflow also refuses to build (`scripts/release/assert-pinned-keys.mjs`). Real
-keys arrive only by a Founder-approved PR, after GUARDIAN has audited the signer
-script and the vault item setup on the exact bytes.
+**Status:** `src/updater/pinned.mjs` pins the current and next public keys from
+the U6 ceremony on 24 Oct 2026 (custody s25 `403b1a88`, GUARDIAN audit PASS).
+The release key gate accepts this configuration. Without a published manifest,
+the updater reports `manifest_unavailable` and installs nothing; unsigned or
+untrusted manifests are still refused. Empty-key configurations remain
+`updater_unconfigured`. Pinning public keys does not publish a manifest or
+authorize signing: the first signed release still needs the final Opus audit
+and the KRA-8810 signing gate.
+
+The U6 keyId-to-vault-item mapping is:
+
+| Role | keyId | Vault item |
+| --- | --- | --- |
+| current | `106d3ab825e5e6b7` | `tentacles-manifest-signing-key-current` |
+| next | `9e6656980133bd7a` | `tentacles-manifest-signing-key-next` |
 
 ## Trust model
 
