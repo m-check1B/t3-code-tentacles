@@ -220,6 +220,7 @@ T3-native reference rows:
 | Grok Code CLI | T3 ships it. A chair selects `--instance grok --model grok-4.6`. Grok Bot remains a chair, not this lab |
 | OpenCode CLI | T3 ships it |
 | Cursor CLI | T3 ships it |
+| Antigravity (Gemini) | T3 owns the native provider and reports its installed, authentication and readiness states. Unknown sign-in stays not ready. Enable, **Install Antigravity** and **Sign in with Google** all happen in T3 → Settings → Providers. Doctor codes: `disabled`, `not_installed`, `sign_in_unchecked`, `not_signed_in`, `t3_update_required`; `setupUrl` opens T3's own page. Never use unofficial OAuth plugins |
 | `t3 pair` / `app.t3.codes` | T3 ships this native remote path |
 
 Tentacles-additive rows:

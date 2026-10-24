@@ -13,6 +13,9 @@ All notable changes to this project are documented here.
   diagnostics; omitted entries retain truthful counts/digests and truncation,
   and an oversized relay fallback marks inventories unavailable with null.
 
+- Publish checksummed tarballs to the private canonical GitHub repository using
+  existing gh authentication, an existing matching tag and CHANGELOG notes
+  (KRA-8749). Forgejo publishing is removed.
 - Observe counts active turn IDs and starting/running work rather than idle
   ready or interrupted sessions (KRA-8227, 0.5.0-jack.2 candidate). Separate
   ready/interrupted session counters preserve both V1 and V2 classifications.
@@ -36,6 +39,17 @@ All notable changes to this project are documented here.
   descriptions never leave the computer. A lab without a reported skills list
   is `unavailable` with a null count, never zero. Additive: the pairing method
   list and Sphere contract are unchanged; older consumers ignore the field.
+
+- Antigravity (Gemini) lab (KRA-6725): doctor advertises T3's native
+  `antigravity` instance as "Antigravity (Gemini)". T3 owns the ACP agent
+  download and the Google sign-in; Tentacles never handles Google credentials.
+  The row adds `signedIn` and a fixed `setupUrl`
+  (`t3code://app/settings/providers?instanceId=antigravity`). Its codes name
+  the fix: `t3_update_required`, `disabled`, `not_installed`,
+  `sign_in_unchecked` (installed, no models before the first session) and
+  `not_signed_in`. Unknown sign-in or readiness stays not ready, even when
+  cached models exist. Source-only refresh; installed/runtime compatibility
+  remains separately verified.
 
 - Capability-gated fresh native context and fixed-title Talk forwarding across
   legacy T3 and Orchestrator V2, with exact applied-generation receipts and
