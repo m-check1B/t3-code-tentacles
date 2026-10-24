@@ -13,6 +13,14 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- `doctor` (and paired `doctor-status`) adds a versioned, read-only
+  `skillInventory` block (KRA-6203): per originate lab, the native skills T3
+  already reports (`name`, `scope`, `enabled`), with `count`, `dropped`,
+  `truncated` (512 cap) and an order-independent `digest`. Paths and
+  descriptions never leave the computer. A lab without a reported skills list
+  is `unavailable` with a null count, never zero. Additive: the pairing method
+  list and Sphere contract are unchanged; older consumers ignore the field.
+
 - `tentacles capabilities scan [--json]` (KRA-7369): which vendor CLIs, MCP
   servers, plugins and skills this computer has, signed in or not, with the one
   fix when missing. Probes are time-boxed, shell-free and never start a login;

@@ -992,6 +992,43 @@ async function routeMentionsLocked(client, { stateFile, instanceId, model, maxMe
 }
 
 const DOCTOR_MODEL_LIMIT = 16;
+export const SKILL_INVENTORY_VERSION = 1;
+const SKILL_INVENTORY_LIMIT = 512;
+const SKILL_NAME_MAX = 128;
+const SKILL_SCOPE = /^[a-z][a-z0-9_-]{0,31}$/;
+
+// Read-only projection of the native skills T3 already reports per lab.
+// Names, scope and enabled state only: local paths and descriptions stay on
+// this computer. A non-array list is unobserved, never an empty inventory.
+export function skillInventoryRow(instanceId, configProvider) {
+  const skills = configProvider?.skills;
+  if (!Array.isArray(skills)) return { instanceId, state: "unavailable", count: null, dropped: 0, truncated: false, digest: null, skills: [] };
+  const rows = [];
+  let dropped = 0;
+  for (const entry of skills) {
+    const name = typeof entry?.name === "string" ? entry.name.trim() : "";
+    if (!name || name.length > SKILL_NAME_MAX || /[\u0000-\u001f\u007f]/.test(name)) {
+      dropped += 1;
+      continue;
+    }
+    rows.push({
+      name,
+      scope: typeof entry.scope === "string" && SKILL_SCOPE.test(entry.scope) ? entry.scope : null,
+      enabled: typeof entry.enabled === "boolean" ? entry.enabled : null,
+    });
+  }
+  rows.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : String(a.scope) < String(b.scope) ? -1 : String(a.scope) > String(b.scope) ? 1 : 0));
+  const kept = rows.slice(0, SKILL_INVENTORY_LIMIT);
+  return {
+    instanceId,
+    state: "observed",
+    count: rows.length,
+    dropped,
+    truncated: kept.length < rows.length,
+    digest: digest(JSON.stringify(rows.map((row) => [row.name, row.scope, row.enabled]))),
+    skills: kept,
+  };
+}
 const DOCTOR_STATUS_VALUES = new Set(["absent", "configured", "disabled", "error", "installed", "ready", "unavailable"]);
 
 function normalizedModelSlugs(provider) {
@@ -1337,6 +1374,10 @@ export async function doctor(client, {
     adapterCredential,
     hermes,
     nativeGrok,
+    skillInventory: {
+      version: SKILL_INVENTORY_VERSION,
+      labs: ORIGINATE_LABS.map((labId) => skillInventoryRow(labId, configById.get(labId))),
+    },
   };
 }
 
