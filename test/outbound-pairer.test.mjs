@@ -890,11 +890,11 @@ test("turn-result validates exact correlation, terminal text, bounds and negotia
     return result;
   } }, doctorImpl: async () => ({ ready: true }) });
   await adapter.refreshModels();
-  assert.deepEqual((await adapter.doctorStatus()).capabilities, capabilities);
+  assert.deepEqual((await adapter.doctorStatus()).capabilities, { talkTurnResult: null });
   for (const providers of [[], ["codex", "codex"], ["../bad"], Array(33).fill("codex"), "codex"]) {
     capabilities = { ...capabilities, talkFreshProviderContextProviders: providers };
     await adapter.refreshModels();
-    assert.deepEqual((await adapter.doctorStatus()).capabilities, { talkTurnResult: "v1" });
+    assert.deepEqual((await adapter.doctorStatus()).capabilities, { talkTurnResult: null });
   }
   capabilities = { talkTurnResult: "v1" };
   await adapter.refreshModels();
