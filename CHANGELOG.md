@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.4.1-jack.2] - 2026-10-24
+
+- Scope the pinned-key release gate to signed-update publication; package-only releases skip it while manifests, feeds and signatures still require two pinned keys (KRA-8371).
+
 ### Added — KRA-6945
 
 Release dependency: the signer fields are inert until Agent Jack wires the
@@ -68,10 +72,6 @@ No live Mac reconnect or latency proof is claimed.
   hold, crash guard, health-checked rollback, Undo, path-free events in
   `doctor-status`, and the no-AI signer `scripts/release/sign-manifest.mjs`.
   The 0.4.1 legacy RPC list is unchanged. See `docs/self-update.md`.
-
-## [0.4.1-jack.2] - 2026-10-24
-
-- Scope the pinned-key release gate to signed-update publication; package-only releases skip it while manifests, feeds and signatures still require two pinned keys (KRA-8371).
 
 ## [0.4.1-jack.1] - 2026-10-12
 
