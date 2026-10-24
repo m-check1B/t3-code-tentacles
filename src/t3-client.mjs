@@ -71,12 +71,12 @@ export class T3Client {
     this.responseMaxBytes = responseMaxBytes;
   }
 
-  async request(pathname, { method = "GET", body } = {}, retried = false) {
+  async request(pathname, { method = "GET", body, signal } = {}, retried = false) {
     const usedToken = this.token;
     const response = await this.fetchImpl(`${this.baseUrl}${pathname}`, {
       method,
       redirect: "error",
-      signal: AbortSignal.timeout(this.requestTimeoutMs),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(this.requestTimeoutMs)]) : AbortSignal.timeout(this.requestTimeoutMs),
       headers: {
         authorization: `Bearer ${usedToken}`,
         ...(body === undefined ? {} : { "content-type": "application/json" }),
@@ -92,7 +92,7 @@ export class T3Client {
         try { current = readToken(this.tokenFile); } catch { /* fail closed below */ }
         if (current && current !== usedToken) {
           this.token = current;
-          return this.request(pathname, { method, body }, true);
+          return this.request(pathname, { method, body, signal }, true);
         }
       }
       throw new T3AuthError({ method, pathname });
@@ -112,18 +112,18 @@ export class T3Client {
     return parsed;
   }
 
-  shell() {
-    return this.request("/api/orchestration/shell");
+  shell(options) {
+    return this.request("/api/orchestration/shell", options);
   }
 
   // Shell snapshot of archived threads. Unlike the active shell, this lives
   // behind the WebSocket RPC surface (orchestration.getArchivedShellSnapshot).
-  archivedShell() {
-    return this.rpc("orchestration.getArchivedShellSnapshot", {}, { timeoutMs: 30_000 });
+  archivedShell(options) {
+    return this.rpc("orchestration.getArchivedShellSnapshot", {}, { timeoutMs: 30_000, ...options });
   }
 
-  snapshot() {
-    return this.request("/api/orchestration/snapshot");
+  snapshot(options) {
+    return this.request("/api/orchestration/snapshot", options);
   }
 
   thread(threadId) {
@@ -144,14 +144,15 @@ export class T3Client {
     return this.request("/api/orchestration/dispatch", { method: "POST", body: command });
   }
 
-  async rpc(tag, payload = {}, { timeoutMs = 15_000 } = {}) {
-    const ticket = await this.request("/api/auth/websocket-ticket", { method: "POST" });
+  async rpc(tag, payload = {}, { timeoutMs = 15_000, signal } = {}) {
+    const ticket = await this.request("/api/auth/websocket-ticket", { method: "POST", signal });
     const wsUrl = new URL(this.baseUrl);
     wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
     wsUrl.pathname = "/ws";
     wsUrl.search = "";
     wsUrl.searchParams.set("wsTicket", ticket.ticket);
 
+    signal?.throwIfAborted();
     const id = randomUUID();
     return await new Promise((resolve, reject) => {
       const socket = new this.WebSocketImpl(wsUrl.toString());
@@ -160,20 +161,29 @@ export class T3Client {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
         try {
           socket.close();
         } catch {}
         callback(value);
       };
+      const onAbort = () => finish(reject, signal.reason);
       const timer = setTimeout(
         () => finish(reject, new Error(`T3 RPC ${tag} timed out after ${timeoutMs}ms`)),
         timeoutMs,
       );
 
+      signal?.addEventListener("abort", onAbort, { once: true });
+      const send = (frame) => {
+        if (settled) return;
+        try { socket.send(JSON.stringify(frame)); }
+        catch { finish(reject, new Error(`T3 RPC ${tag} websocket send failed`)); }
+      };
       socket.addEventListener("open", () => {
-        socket.send(JSON.stringify({ _tag: "Request", id, tag, payload, headers: [] }));
+        send({ _tag: "Request", id, tag, payload, headers: [] });
       });
       socket.addEventListener("message", async (event) => {
+        if (settled) return;
         let raw;
         try {
           raw = await readBoundedWebSocketData(event.data, this.responseMaxBytes);
@@ -181,6 +191,7 @@ export class T3Client {
           finish(reject, error);
           return;
         }
+        if (settled) return;
         let message;
         try {
           message = JSON.parse(raw);
@@ -188,7 +199,7 @@ export class T3Client {
           return;
         }
         if (message?._tag === "Ping") {
-          socket.send(JSON.stringify({ _tag: "Pong" }));
+          send({ _tag: "Pong" });
           return;
         }
         if (message?._tag !== "Exit" || message.requestId !== id) return;
@@ -205,16 +216,16 @@ export class T3Client {
     });
   }
 
-  getSettings() {
-    return this.rpc("server.getSettings", {});
+  getSettings(options) {
+    return this.rpc("server.getSettings", {}, options);
   }
 
   updateSettings(patch) {
     return this.rpc("server.updateSettings", { patch });
   }
 
-  refreshProvider(instanceId) {
-    return this.rpc("server.refreshProviders", { instanceId }, { timeoutMs: 30_000 });
+  refreshProvider(instanceId, { timeoutMs = 30_000, signal } = {}) {
+    return this.rpc("server.refreshProviders", { instanceId }, { timeoutMs, signal });
   }
 }
 
@@ -222,9 +233,9 @@ export class T3Client {
 // orchestration snapshot and per-thread reads remain healthy. Standard
 // T3Client instances always expose snapshot(); the shell fallback preserves
 // compatibility with narrow embedders and existing synthetic clients.
-export function readOrchestrationSnapshot(client) {
-  if (typeof client?.snapshot === "function") return client.snapshot();
-  if (typeof client?.shell === "function") return client.shell();
+export function readOrchestrationSnapshot(client, options) {
+  if (typeof client?.snapshot === "function") return client.snapshot(options);
+  if (typeof client?.shell === "function") return client.shell(options);
   throw new Error("T3 client does not expose an orchestration snapshot read");
 }
 

@@ -1075,9 +1075,9 @@ function normalizedDoctorStatus(value, { installed, configured } = {}) {
   return configured ? "configured" : "unavailable";
 }
 
-async function probeHermesHealth(hermesUrl, fetchImpl) {
+async function probeHermesHealth(hermesUrl, fetchImpl, signal) {
   const hermesOrigin = requireLoopbackUrl(hermesUrl, "HERMES_URL");
-  const hermesResponse = await fetchImpl(`${hermesOrigin}/health`, { redirect: "error", signal: AbortSignal.timeout(10_000) });
+  const hermesResponse = await fetchImpl(`${hermesOrigin}/health`, { redirect: "error", signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]) });
   if (!hermesResponse.ok) throw new Error(`Hermes health check failed (${hermesResponse.status})`);
   const healthText = await readBoundedResponseText(hermesResponse, MAX_HERMES_HEALTH_BYTES, "Hermes health response");
   let health;
@@ -1191,7 +1191,119 @@ function inspectAdapterAuth(tokenFile) {
   }
 }
 
-export async function doctor(client, {
+function freshContextProviders(capabilities) {
+  const providers = capabilities?.talkFreshProviderContextProviders;
+  return capabilities?.talkTurnResult === "v1" && capabilities?.talkFreshProviderContext === "v1"
+    && Array.isArray(providers) && providers.length > 0 && providers.length <= 32
+    && providers.every((entry) => typeof entry === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(entry))
+    && new Set(providers).size === providers.length ? providers : [];
+}
+
+const DOCTOR_TIMEOUT_MS = 15_000;
+const DOCTOR_REFRESH_INTERVAL_MS = 60_000;
+const doctorRefreshes = new WeakMap();
+
+function claimDoctorRefresh(client, instanceId, time, directory) {
+  if (!Number.isFinite(time) || time < 0) return false;
+  // Real clients share timestamp-only claims across CLI invocations. Narrow
+  // in-memory fake clients have no origin and never touch the user's state.
+  if (typeof client.baseUrl !== "string") {
+    let refreshes = doctorRefreshes.get(client);
+    if (!refreshes) doctorRefreshes.set(client, refreshes = new Map());
+    if (refreshes.has(instanceId) && time - refreshes.get(instanceId) < DOCTOR_REFRESH_INTERVAL_MS) return false;
+    refreshes.set(instanceId, time);
+    return true;
+  }
+  const origin = requireLoopbackUrl(client.baseUrl, "T3_URL");
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const parent = fs.lstatSync(directory);
+  const owned = (stat) => (typeof process.getuid !== "function" || stat.uid === process.getuid())
+    && (process.platform === "win32" || (stat.mode & 0o077) === 0);
+  if (!parent.isDirectory() || parent.isSymbolicLink() || !owned(parent)) return false;
+  const file = path.join(directory, createHash("sha256").update(`${origin}\n${instanceId}`).digest("hex"));
+  const release = acquireStateLock(file);
+  if (!release) return false;
+  let descriptor;
+  try {
+    let created = false;
+    try {
+      descriptor = fs.openSync(file, "wx", 0o600);
+      created = true;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      const link = fs.lstatSync(file);
+      if (!link.isFile() || link.isSymbolicLink() || link.nlink !== 1 || link.size !== 0 || !owned(link)) return false;
+      descriptor = fs.openSync(file, fs.constants.O_RDWR | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0));
+    }
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size !== 0 || !owned(stat)) return false;
+    if (!created && time - stat.mtimeMs < DOCTOR_REFRESH_INTERVAL_MS) return false;
+    fs.futimesSync(descriptor, time / 1000, time / 1000);
+    return true;
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+    release();
+  }
+}
+
+async function withinDoctorDeadline(signal, operation) {
+  signal.throwIfAborted();
+  let onAbort;
+  const aborted = new Promise((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([Promise.resolve().then(() => {
+      signal.throwIfAborted();
+      return operation();
+    }), aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+
+export async function probeTalkCapabilities(client, { signal = AbortSignal.timeout(DOCTOR_TIMEOUT_MS) } = {}) {
+  let payload;
+  let code = "t3_not_patched";
+  try {
+    payload = await withinDoctorDeadline(signal, () => client.request("/api/orchestration/turn-result", { signal }));
+  } catch (error) {
+    if (signal.aborted) code = "t3_capability_timeout";
+    else if (error instanceof T3HttpError && error.status === 401) code = "t3_reauth_required";
+    else if (!(error instanceof T3HttpError && [404, 405].includes(error.status))) code = "t3_capability_unavailable";
+  }
+  const supported = isPlainObject(payload) && payload.talkTurnResult === "v1";
+  const freshProviders = supported ? freshContextProviders(payload) : [];
+  return {
+    capabilities: {
+      talkTurnResult: supported ? "v1" : null,
+      ...(freshProviders.length ? { talkFreshProviderContext: "v1", talkFreshProviderContextProviders: [...freshProviders] } : {}),
+    },
+    finding: supported ? { status: "present", code: null, action: null } : {
+      status: code === "t3_not_patched" ? "missing" : "unavailable",
+      code,
+      action: code === "t3_not_patched" ? "This Mac's T3 Code lacks Local Talk support; update T3 to the approved patched build."
+        : code === "t3_reauth_required" ? T3_REAUTH_ACTION
+          : "Check the local T3 connection, then rerun doctor to verify Local Talk support.",
+    },
+  };
+}
+
+export async function doctor(client, options = {}) {
+  const { timeoutMs = DOCTOR_TIMEOUT_MS } = options;
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) throw new Error("Doctor timeout must be an integer between 1 and 60000ms");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new DOMException("Doctor deadline exceeded", "TimeoutError")), timeoutMs);
+  try {
+    return await doctorReport(client, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+  }
+}
+
+async function doctorReport(client, {
   hermesUrl = process.env.HERMES_URL || DEFAULT_HERMES_URL,
   instanceId = DEFAULT_INSTANCE_ID,
   fetchImpl = globalThis.fetch,
@@ -1201,6 +1313,8 @@ export async function doctor(client, {
   models: modelsMode = "summary",
   now,
   timingsLog,
+  refreshDirectory = path.join(path.dirname(DEFAULT_BRIDGE_STATE_FILE), "doctor-refresh"),
+  signal,
 } = {}) {
   if (!["summary", "full"].includes(modelsMode)) throw new Error("Doctor models must be summary or full");
   const timings = {};
@@ -1217,20 +1331,42 @@ export async function doctor(client, {
   };
   let shell, settings, config;
   try {
-    shell = await mark("orchestrationSnapshot", () => readOrchestrationSnapshot(client));
-    settings = await mark("settings", () => client.getSettings());
-    config = await mark("serverConfig", () => client.rpc("server.getConfig", {}));
+    shell = await mark("orchestrationSnapshot", () => withinDoctorDeadline(signal, () => readOrchestrationSnapshot(client, { signal })));
+    settings = await mark("settings", () => withinDoctorDeadline(signal, () => client.getSettings({ signal })));
+    config = await mark("serverConfig", () => withinDoctorDeadline(signal, () => client.rpc("server.getConfig", {}, { signal })));
   } catch (error) {
     if (!(error instanceof T3HttpError) || error.status !== 401) throw error;
     emitTimings();
     return {
       product: "Tentacles",
-      t3: { reachable: true, auth: { status: "invalid", code: "t3_reauth_required", action: T3_REAUTH_ACTION } },
+      capabilities: { talkTurnResult: null },
+      t3: { reachable: true, auth: { status: "invalid", code: "t3_reauth_required", action: T3_REAUTH_ACTION }, talk: { status: "unavailable", code: "t3_reauth_required", action: T3_REAUTH_ACTION } },
       pairing: readPairPresence(pairStateFile),
       labs: [],
       timings,
     };
   }
+  const talkProbe = probeTalkCapabilities(client, { signal });
+  const initialProviders = Array.isArray(config?.providers) ? config.providers : [];
+  const refreshed = await Promise.all(ORIGINATE_LABS.map(async (labId) => {
+    const matches = initialProviders.filter((entry) => entry.instanceId === labId);
+    if (matches.length > 1) return false;
+    const row = labRow({ instanceId: labId, advertised: true, settings, configById: new Map(matches.map((entry) => [labId, entry])), modelsMode });
+    // T3's ready snapshot must never be refreshed, including a row refused by
+    // a separate model/auth/runtime gate. Claim before awaiting for concurrency.
+    if (!row.enabled || !row.installed || matches[0]?.status === "ready"
+      || typeof client.refreshProvider !== "function" || signal.aborted) return false;
+    try {
+      if (!claimDoctorRefresh(client, labId, clock(), refreshDirectory)) return false;
+      await withinDoctorDeadline(signal, () => client.refreshProvider(labId, { signal }));
+      return true;
+    } catch { return false; }
+  }));
+  if (refreshed.some(Boolean)) {
+    try { config = await withinDoctorDeadline(signal, () => client.rpc("server.getConfig", {}, { signal })); }
+    catch { /* Keep the original fail-closed snapshot when the reread fails. */ }
+  }
+  const talk = await talkProbe;
   const providers = Array.isArray(config?.providers) ? config.providers : [];
   const serverVersion = typeof config?.environment?.serverVersion === "string"
     && /^[A-Za-z0-9._+-]{1,128}$/.test(config.environment.serverVersion)
@@ -1276,7 +1412,7 @@ export async function doctor(client, {
 
   let hermes;
   try {
-    hermes = await mark("hermesHealth", () => probeHermesHealth(hermesUrl, fetchImpl));
+    hermes = await mark("hermesHealth", () => withinDoctorDeadline(signal, () => probeHermesHealth(hermesUrl, fetchImpl, signal)));
   } catch (error) {
     void error;
     hermes = { reachable: false, code: "hermes_unreachable" };
@@ -1324,11 +1460,14 @@ export async function doctor(client, {
   };
   const projects = Array.isArray(shell?.projects) ? shell.projects.filter((entry) => entry?.deletedAt == null) : [];
   const threads = Array.isArray(shell?.threads) ? shell.threads.filter((entry) => entry?.deletedAt == null && entry?.archivedAt == null) : [];
-  const leakedSessions = await mark("leakedSessions", () => inspectLeakedSessions(client));
+  let leakedSessions;
+  try { leakedSessions = await mark("leakedSessions", () => withinDoctorDeadline(signal, () => inspectLeakedSessions({ archivedShell: typeof client.archivedShell === "function" ? () => client.archivedShell({ signal }) : undefined }))); }
+  catch { leakedSessions = { status: "unavailable", count: null, threads: [] }; }
   emitTimings();
   return {
     product: "Tentacles",
-    t3: { reachable: true, auth: { status: "valid" }, version: serverVersion, projects: projects.length, threads: threads.length, leakedSessions },
+    capabilities: talk.capabilities,
+    t3: { reachable: true, auth: { status: "valid" }, version: serverVersion, talk: talk.finding, projects: projects.length, threads: threads.length, leakedSessions },
     pairing: readPairPresence(pairStateFile),
     labs,
     adapterCredential,
@@ -1377,6 +1516,10 @@ export function formatDoctor(result = {}) {
   if (t3.auth) {
     lines.push(`T3 authentication: ${t3.auth.status === "valid" ? "valid" : "re-authentication required (401)"}`);
     if (t3.auth.status === "invalid") lines.push(`Recovery: ${t3.auth.action}`);
+  }
+  if (t3.talk) {
+    lines.push(`Local Talk: ${t3.talk.status}${t3.talk.code ? `  code: ${t3.talk.code}` : ""}`);
+    if (t3.talk.action) lines.push(`Recovery: ${t3.talk.action}`);
   }
   const openaiCodex = hermes.openaiCodex && typeof hermes.openaiCodex === "object" ? hermes.openaiCodex : null;
   if (openaiCodex) {
