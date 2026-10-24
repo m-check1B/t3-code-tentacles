@@ -13,6 +13,8 @@ All notable changes to this project are documented here.
   (KRA-8227).
 - Isolate model-selection and bridge-hardening test defaults from ambient model
   variables while retaining assertions and auth rotation coverage (KRA-8794).
+- Refresh stale enabled, installed provider snapshots during doctor, reread readiness, and rate-limit attempts across CLI invocations to one per instance/origin per 60 seconds (KRA-8833).
+- Probe the Local Talk turn-result contract within the doctor deadline; report actionable `t3_not_patched` or unavailable findings without response bodies, and reuse the outcome in paired doctor-status (KRA-8838).
 
 ## [0.4.1-jack.2] - 2026-10-24
 

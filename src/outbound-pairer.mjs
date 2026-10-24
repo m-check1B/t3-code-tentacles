@@ -2,7 +2,7 @@ import fs from "node:fs";
 import { ensureLocalTalkWorkspace } from "./local-talk-workspace.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { randomUUID } from "node:crypto";
-import { continueThread, doctor, originate } from "./bridge.mjs";
+import { continueThread, doctor, originate, probeTalkCapabilities } from "./bridge.mjs";
 import { observe, REPORT_MODEL_LABEL, threadReportStatus } from "./orchestrate.mjs";
 import { requireContinueSelection } from "./model-selection.mjs";
 import { readBoundedWebSocketData } from "./t3-client.mjs";
@@ -375,24 +375,7 @@ export class LoopbackRuntimeAdapter {
       pairStateFile: this.pairStateFile,
       models: "full",
     }));
-    const capabilities = await mark("turnResultCapability", async () => {
-      let capabilities = { talkTurnResult: null };
-      try {
-        const upstream = await this.client.request("/api/orchestration/turn-result");
-        if (upstream?.talkTurnResult === "v1") {
-          capabilities = { talkTurnResult: "v1" };
-          const providers = upstream.talkFreshProviderContextProviders;
-          if (upstream.talkFreshProviderContext === "v1" && Array.isArray(providers)
-            && providers.length >= 1 && providers.length <= 32
-            && providers.every((id) => typeof id === "string" && SAFE_ID.test(id))
-            && new Set(providers).size === providers.length) {
-            capabilities.talkFreshProviderContext = "v1";
-            capabilities.talkFreshProviderContextProviders = [...providers];
-          }
-        }
-      } catch { /* Older or unavailable T3 has no exact-result capability. */ }
-      return capabilities;
-    });
+    const capabilities = report.capabilities ?? await mark("turnResultCapability", async () => (await probeTalkCapabilities(this.client)).capabilities);
     const timings = {
       ...(isRecord(report?.timings) ? report.timings : {}),
       ...steps,
