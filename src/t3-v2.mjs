@@ -40,7 +40,7 @@ const FIELDS = {
   "project.meta.update": ["type", "commandId", "projectId", "title", "workspaceRoot", "defaultModelSelection", "scripts"],
   "project.delete": ["type", "commandId", "projectId", "force"],
   "thread.create": ["type", "commandId", "threadId", "projectId", "title", "modelSelection", "runtimeMode", "interactionMode", "branch", "worktreePath", "createdAt"],
-  "thread.turn.start": ["type", "commandId", "threadId", "message", "modelSelection", "titleSeed", "runtimeMode", "interactionMode", "createdAt"],
+  "thread.turn.start": ["type", "commandId", "threadId", "message", "modelSelection", "titleSeed", "freshProviderContext", "runtimeMode", "interactionMode", "createdAt"],
   "thread.turn.interrupt": [...SIMPLE, "turnId"],
   "thread.approval.respond": [...SIMPLE, "requestId", "decision"],
   "thread.user-input.respond": [...SIMPLE, "requestId", "answers"],
@@ -90,6 +90,8 @@ export async function translateCommand(command, { readProjection } = {}) {
     case "thread.create":
       return [dispatchStep({ ...pick(command, ["type", "commandId", "threadId", "projectId", "title", "modelSelection", "runtimeMode"]), ...CREATION, interactionMode: command.interactionMode ?? "default", branch: command.branch ?? null, worktreePath: command.worktreePath ?? null })];
     case "thread.turn.start": {
+      if (Object.hasOwn(command, "freshProviderContext") && command.freshProviderContext !== true)
+        throw new T3V2UnsupportedError("freshProviderContext must be true when dispatched");
       if (!isEnum(command.runtimeMode, RUNTIME_MODES))
         throw new T3V2UnsupportedError("T3 V2 turn requires a supported runtime mode prerequisite");
       const message = command.message;
@@ -114,7 +116,7 @@ export async function translateCommand(command, { readProjection } = {}) {
         messageId: message.messageId,
         text: message.text ?? "",
         attachments: message.attachments ?? [],
-        ...pick(command, ["modelSelection", "titleSeed"]),
+        ...pick(command, ["modelSelection", "titleSeed", "freshProviderContext"]),
         // The server resolves steer/queue against its own serialized thread state.
         deliveryIntent: "auto",
         dispatchMode: { type: "start_immediately" },
