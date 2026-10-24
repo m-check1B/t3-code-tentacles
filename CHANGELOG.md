@@ -6,6 +6,14 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- Report rejects short thread IDs before lookup with guidance to obtain the
+  full UUID from originate or observe (KRA-7728). Unique, ambiguous, unknown
+  and unauthorized prefixes are display-only; full UUIDs retain T3's
+  per-thread authorization without enumeration or first-match selection.
+- README and orchestration diagrams distinguish the Tentacles source version,
+  negotiated V1/V2 protocol, required patched T3 extensions and staged runtime
+  evidence (KRA-7187 G14). The corrected V2 source pointer and incomplete
+  estate cutover are explicit; unsupported cases remain documented.
 - Web-off twins require the exact observed provider driver to match both the
   expected twin driver and inspected settings (KRA-8722). Missing or conflicting
   identity reports unready with unknown web tools. Codex runtime diagnostics

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" width="1200" height="640">
-  <title>One orchestration loop: a chair asks doctor, originates a worker through Tentacles, T3 Code runs the lab, the chair reads report</title>
+  <title>One orchestration loop: Tentacles version, negotiated V1/V2 adapter, patched T3 extensions and separate staged runtime proof</title>
   <defs>
     <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0 0 L10 5 L0 10 z" fill="#1a1a1a"/>
@@ -39,7 +39,7 @@
   <!-- 2 tentacles -->
   <text x="290" y="140" class="sans k">2 · TENTACLES CHAIR CLI</text>
   <rect x="290" y="152" width="330" height="262" rx="8" fill="#f3f2ee" stroke="#1a1a1a" stroke-width="1.5"/>
-  <text x="310" y="186" class="serif h">tentacles</text>
+  <text x="310" y="186" class="serif h">Tentacles 0.5.0-jack.2 source</text>
   <text x="310" y="218" class="mono m">doctor --json</text>
   <text x="462" y="218" class="sans n">which labs are ready here</text>
   <text x="310" y="246" class="mono m">originate</text>
@@ -51,16 +51,17 @@
   <text x="310" y="330" class="mono m">act thread.session.stop</text>
   <text x="310" y="364" class="sans n">idempotent command IDs, projection-verified;</text>
   <text x="310" y="382" class="sans n">full-access runtime on every originate and continue;</text>
-  <text x="310" y="400" class="sans n">never prints tokens or provider secrets</text>
+  <text x="310" y="400" class="sans n">adapter negotiates protocol V1 / V2</text>
 
   <!-- 3 t3 -->
   <text x="670" y="140" class="sans k">3 · T3 CODE</text>
   <rect x="670" y="152" width="200" height="262" rx="8" fill="#1a1a1a"/>
   <text x="770" y="196" text-anchor="middle" class="serif h" fill="#ffffff" style="fill:#fff">T3 Code</text>
-  <text x="770" y="230" text-anchor="middle" class="sans s" style="fill:#e5e5e5">one app, many agent CLIs</text>
-  <text x="770" y="262" text-anchor="middle" class="sans s" style="fill:#e5e5e5">threads you can watch,</text>
-  <text x="770" y="282" text-anchor="middle" class="sans s" style="fill:#e5e5e5">stop and resume</text>
-  <text x="770" y="322" text-anchor="middle" class="sans n" style="fill:#bdbdbd">github.com/pingdotgg/t3code</text>
+  <text x="770" y="230" text-anchor="middle" class="sans s" style="fill:#e5e5e5">V1 API / V2 projections</text>
+  <text x="770" y="262" text-anchor="middle" class="sans s" style="fill:#e5e5e5">V2 patch: atomic</text>
+  <text x="770" y="282" text-anchor="middle" class="sans s" style="fill:#e5e5e5">mode + message RPC</text>
+  <text x="770" y="322" text-anchor="middle" class="sans n" style="fill:#e5e5e5">Talk patch: turn-result</text>
+  <text x="770" y="342" text-anchor="middle" class="sans n" style="fill:#bdbdbd">exact command/message/run</text>
   <text x="770" y="388" text-anchor="middle" class="sans n" style="fill:#bdbdbd">the worker commits and</text>
   <text x="770" y="404" text-anchor="middle" class="sans n" style="fill:#bdbdbd">opens a pull request</text>
 
@@ -85,10 +86,10 @@
   <path d="M1040 414 V452 Q1040 462 1030 462 H150 Q140 462 140 452 V418" stroke="#1a1a1a" stroke-width="1.5" stroke-dasharray="6 4" fill="none" marker-end="url(#a)"/>
   <text x="600" y="484" text-anchor="middle" class="sans s">result, PR link and evidence come back to the chair through tentacles report</text>
 
-  <!-- keep alive -->
+  <!-- source support and runtime rollout are separate proof claims -->
   <line x1="40" y1="516" x2="1160" y2="516" stroke="#1a1a1a" stroke-width="1"/>
-  <text x="40" y="546" class="sans k">HOW WE RUN IT ALL NIGHT</text>
-  <text x="40" y="572" class="sans s">Our estate runs many of these loops at once. estate-guardian (MIT) reads doctor readiness and plan usage, switches labs OFF and back ON,</text>
-  <text x="40" y="592" class="sans s">walks declared fallback chains when a lab is out of usage, and files every failure with its fix. Tentacles stays the only path into T3.</text>
-  <text x="40" y="620" class="sans n">github.com/m-check1B/t3-code-tentacles · github.com/m-check1B/estate-guardian · github.com/pingdotgg/t3code</text>
+  <text x="40" y="546" class="sans k">STAGED RUNTIME PROOF IS SEPARATE FROM SOURCE SUPPORT</text>
+  <text x="40" y="572" class="sans s">Verify installed/running builds, protocol, extensions and real flows on each host. 24 Oct 2026 audit: all inspected hosts still use V1.</text>
+  <text x="40" y="592" class="sans s">Estate V2 cutover remains incomplete. A Tentacles version, V2 descriptor or ready lab row alone does not prove rollout.</text>
+  <text x="40" y="620" class="mono m">V2 T3 source: m-check1B/t3code-hermes-private-archive · branch jack/upstream-0.1.0 · stage-1 e027af1a</text>
 </svg>
