@@ -1,7 +1,6 @@
-// Forgejo account ids AND logins, reviewed with the signer. This initially
-// delegates B3 receipt authority only to the Founder account. A writer using
-// that account cannot approve its own PR or commit. Additional independent
-// reviewer accounts require a reviewed source change; no env/CLI override.
+// GitHub account id AND login. All seats share this account; different thread
+// ids are self-attested and weaker than independent authenticated accounts.
+// First real signing stays Founder-gated. No environment or CLI override.
 export const B3_REVIEWERS = Object.freeze([
-  Object.freeze({ id: 1, login: "matej" }),
+  Object.freeze({ id: 127414494, login: "m-check1B" }),
 ]);

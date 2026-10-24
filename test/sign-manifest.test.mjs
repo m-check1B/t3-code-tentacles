@@ -9,14 +9,13 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { createHash, verify } from "node:crypto";
 import {
-  FORGEJO_READ_ITEM, KEY_SOURCE, NEXT_SIGNING_ITEM, PROTECTED_BRANCH, signManifest, SIGNING_ITEM,
+  KEY_SOURCE, NEXT_SIGNING_ITEM, PROTECTED_BRANCH, signManifest, SIGNING_ITEM,
 } from "../scripts/release/sign-manifest.mjs";
 import { verifyManifest } from "../src/updater/manifest.mjs";
 import { entryFor, ephemeralKey, manifestOf, packageTgz, RPC, signEnvelope } from "./helpers/self-update-fixtures.mjs";
 
 const NOW = Date.parse("2026-10-22T08:00:00.000Z");
 const EXPIRES = "2026-11-20T00:00:00.000Z";
-const TOKEN = "syntheticreadtoken0123456789";
 
 function workspace(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles-signer-test-"));
@@ -37,8 +36,8 @@ function recordingSpawn(key, { keyFinalNewline = true } = {}) {
     child.stdio = [child.stdin, child.stdout, child.stderr, new PassThrough()];
     child.kill = () => true;
     child.stdin.on("finish", () => {
-      let bytes = args.at(-1) === SIGNING_ITEM
-        ? Buffer.from(key.privateKey.export({ format: "pem", type: "pkcs8" })) : Buffer.from(TOKEN);
+      assert.equal(args.at(-1), SIGNING_ITEM);
+      let bytes = Buffer.from(key.privateKey.export({ format: "pem", type: "pkcs8" }));
       if (!keyFinalNewline && args.at(-1) === SIGNING_ITEM) bytes = bytes.subarray(0, -1);
       buffers.push(bytes);
       child.stdio[3].emit("data", bytes);
@@ -58,7 +57,7 @@ function backends({ keys, entries, overrides = {} }) {
   const byCommit = new Map(entries.map((entry) => [entry.commit, entry]));
   let activeHead;
   const facts = {
-    protected: true, ancestor: true, merged: true, b3: true, approval: {}, writer: { id: 2, login: "synthetic-writer" }, rebuild: null, asset: null, version: null, rpc: RPC, pinned: keys,
+    protected: true, ancestor: true, merged: true, b3: true, approval: {}, writer: { id: 127414494, login: "m-check1B" }, rebuild: null, asset: null, version: null, rpc: RPC, pinned: keys,
     ...overrides,
   };
   return {
@@ -73,26 +72,24 @@ function backends({ keys, entries, overrides = {} }) {
       throw new Error("unexpected file");
     },
     async rebuildSha256(commit) { return facts.rebuild ?? byCommit.get(commit).sha256; },
-    async releaseAssetSha256(token, version) {
-      assert.equal(token, TOKEN);
+    async releaseAssetSha256(version) {
       return facts.asset ?? entries.find((entry) => entry.version === version).sha256;
     },
-    async api(token, suffix) {
-      assert.equal(token, TOKEN);
+    async api(suffix) {
       if (suffix === `/branches/${encodeURIComponent(PROTECTED_BRANCH)}`) return { protected: facts.protected };
-      const pull = /^\/commits\/([0-9a-f]{40})\/pull$/.exec(suffix);
-      if (pull) { activeHead = pull[1]; return { number: 71, merged: facts.merged, base: { ref: PROTECTED_BRANCH }, merge_commit_sha: pull[1], user: facts.writer, head: { sha: pull[1] } }; }
+      if (suffix === "/pulls/71") return { number: 71, merged: facts.merged, base: { ref: PROTECTED_BRANCH, repo: { full_name: "m-check1B/t3-code-tentacles-private" } }, merge_commit_sha: activeHead, user: facts.writer,
+        head: { sha: activeHead, repo: { full_name: "m-check1B/t3-code-tentacles-private" } }, body: "writer-thread=synthetic-writer", merged_at: "2026-10-22T07:30:00Z" };
+      throw new Error(`unexpected api ${suffix}`);
+    },
+    async list(suffix) {
+      const pull = /^\/commits\/([0-9a-f]{40})\/pulls\?per_page=100$/.exec(suffix);
+      if (pull) { activeHead = pull[1]; return [{ number: 71, base: { ref: PROTECTED_BRANCH, repo: { full_name: "m-check1B/t3-code-tentacles-private" } }, head: { sha: activeHead } }]; }
+      if (suffix.includes("/check-suites?")) return [{ head_sha: activeHead, repository: { full_name: "m-check1B/t3-code-tentacles-private" }, app: { id: 15368, slug: "github-actions" }, created_at: "2026-10-22T07:00:00Z" }];
       if (suffix.startsWith("/issues/71/comments")) return facts.b3 ? [{
-        body: `B3 APPROVE head=${activeHead}\nchecked`, user: { id: 1, login: "matej" },
+        body: `APPROVE tentacles-private#71 ${activeHead} P1=0 P2=0\nwriter-thread=synthetic-writer reviewer-thread=synthetic-reviewer`, user: { id: 127414494, login: "m-check1B" },
         created_at: "2026-10-22T07:10:00.000Z", updated_at: "2026-10-22T07:10:00.000Z", ...facts.approval,
       }] : [{ body: "looks fine" }];
-      if (suffix.startsWith("/pulls/71/reviews")) return [];
-      if (/^\/commits\?sha=[0-9a-f]{40}&limit=1$/.test(suffix)) return [{
-        sha: activeHead,
-        author: facts.writer, committer: { id: 3, login: "synthetic-committer" },
-        commit: { committer: { date: "2026-10-22T07:00:00.000Z" } },
-      }];
-      throw new Error(`unexpected api ${suffix}`);
+      throw new Error(`unexpected list ${suffix}`);
     },
   };
 }
@@ -149,12 +146,12 @@ test("key bytes never appear in argv, env, the log, the output or the Linear com
   const body = pem.split("\n").filter((line) => line && !line.startsWith("-----")).join("");
   const der = s.current.privateKey.export({ format: "der", type: "pkcs8" });
   const seed = der.subarray(-32);
-  const needles = [body, seed.toString("base64"), seed.toString("hex"), TOKEN];
+  const needles = [body, seed.toString("base64"), seed.toString("hex")];
   for (const call of s.recorder.calls) {
     const surface = JSON.stringify(call);
     for (const needle of needles) assert.equal(surface.includes(needle), false, `${path.basename(call.command)} saw secret material`);
   }
-  assert.deepEqual(fetchedItems(s.recorder), [FORGEJO_READ_ITEM, SIGNING_ITEM], "exact item names only; the next key is never fetched");
+  assert.deepEqual(fetchedItems(s.recorder), [SIGNING_ITEM], "exact item names only; the next key is never fetched");
   assert.equal(fetchedItems(s.recorder).includes(NEXT_SIGNING_ITEM), false);
   assert.ok(s.recorder.buffers.every((buffer) => buffer.every((byte) => byte === 0)), "every original secret chunk was cleared");
   const artifacts = fs.readdirSync(s.dir).map((name) => fs.readFileSync(path.join(s.dir, name), "utf8")).join("\n");
@@ -233,8 +230,8 @@ test("the signed payload is exactly the validated draft", async (t) => {
 
 for (const [label, overrides] of [
   ["unauthorized author", { approval: { user: { id: 99, login: "untrusted" } } }],
-  ["forged allowlisted login", { approval: { user: { id: 99, login: "matej" } } }],
-  ["writer self approval", { writer: { id: 1, login: "matej" } }],
+  ["forged allowlisted login", { approval: { user: { id: 99, login: "m-check1B" } } }],
+  ["writer same-thread approval", { approval: { body: `APPROVE tentacles-private#71 ${"2".repeat(40)} P1=0 P2=0\nwriter-thread=synthetic-writer reviewer-thread=synthetic-writer` } }],
   ["other head", { approval: { body: `B3 APPROVE head=${"f".repeat(40)}` } }],
   ["edited approval", { approval: { updated_at: "2026-10-22T07:20:00.000Z" } }],
   ["old approval", { approval: { created_at: "2026-10-21T07:10:00.000Z", updated_at: "2026-10-21T07:10:00.000Z" } }],

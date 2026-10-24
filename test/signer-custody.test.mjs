@@ -102,15 +102,3 @@ for (const outcome of ["success", "consumer failure", "extra stdout", "extra std
     if (copy) assert.ok(copy.every((byte) => byte === 0));
   });
 }
-
-test("B3 review binds approved state, exact head, timestamps and all writer identities", () => {
-  const head = "a".repeat(40);
-  const binding = { head, writers: [{ id: 2, login: "synthetic-writer" }], committedAt: "2026-10-24T10:00:00Z", now: Date.parse("2026-10-24T12:00:00Z"), review: true };
-  const receipt = { body: `B3 APPROVE head=${head}`, user: { id: 1, login: "matej" }, state: "APPROVED", commit_id: head, submitted_at: "2026-10-24T11:00:00Z", updated_at: "2026-10-24T11:00:00Z" };
-  assert.equal(signer.approvedB3(receipt, binding), true);
-  for (const change of [{ state: "COMMENT" }, { commit_id: "b".repeat(40) }, { stale: true }, { dismissed: true }, { updated_at: undefined }, { user: { id: 2, login: "synthetic-writer" } }]) {
-    assert.equal(signer.approvedB3({ ...receipt, ...change }, binding), false);
-  }
-  assert.equal(signer.approvedB3(receipt, { ...binding, writers: [{ id: 1, login: "matej" }] }), false);
-  assert.equal(signer.approvedB3(receipt, { ...binding, writers: [null] }), false);
-});

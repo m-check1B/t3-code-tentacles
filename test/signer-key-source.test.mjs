@@ -7,7 +7,7 @@ import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
-import { SIGNING_ITEM, FORGEJO_READ_ITEM, NEXT_SIGNING_ITEM } from "../scripts/release/sign-manifest.mjs";
+import { SIGNING_ITEM, NEXT_SIGNING_ITEM } from "../scripts/release/sign-manifest.mjs";
 
 const HELPER = new URL("../scripts/release/signer-key-source.mjs", import.meta.url).href;
 const VALUE = "SYNTHETIC-ONLY";
@@ -51,7 +51,7 @@ function launch(t, code) {
   return { child, outputs, closed };
 }
 
-for (const item of [SIGNING_ITEM, FORGEJO_READ_ITEM]) {
+for (const item of [SIGNING_ITEM, "tentacles-signer-forgejo-read-token"]) {
   test(`helper resolves exact ${item} and writes to inherited fd only`, async (t) => {
     const f = fixture(t);
     const run = launch(t, f.runner(item));

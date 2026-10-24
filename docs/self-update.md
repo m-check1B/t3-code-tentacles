@@ -134,16 +134,34 @@ node scripts/release/sign-manifest.mjs --draft draft.json --previous signed-curr
 - The commit is the merge commit of a merged PR into that branch, and an
   ancestor of the branch tip.
 - The signed commit equals the merged PR head (fast-forward merges only).
-- A Forgejo comment or approved review has the exact first line
-  `B3 APPROVE head=<full 40-character SHA>` (`CLEAR` and `PASS` also work).
-  Its authenticated account id and login must match
-  `scripts/release/b3-reviewers.mjs`, and differ from the PR author and the
-  commit author/committer. Missing account identities fail closed.
-  Its creation/submission timestamp must be after that commit and before signing,
-  with an equal update timestamp. Edited, stale, dismissed, other-head or old
-  receipts fail closed; reviews without update-time evidence also fail closed.
-  Only the first 50 comments and reviews are considered; a receipt outside
-  those pages leaves signing on hold.
+- The GitHub PR has exactly one standalone `writer-thread=<id>` line in its
+  body. An unedited **PR conversation comment** from `m-check1B` (numeric id
+  `127414494` **and** exact login pinned in source) starts with:
+
+  ```text
+  APPROVE tentacles-private#<PR number> <full head SHA> P1=0 P2=0
+  writer-thread=<writer id> reviewer-thread=<reviewer id>
+  ```
+
+  Both thread ids must be present and different, and the writer must equal the
+  PR body's writer. Duplicate or malformed markers fail closed. Review API
+  submissions, quoted text and older Forgejo receipt formats do not count.
+- The receipt is created strictly after authenticated evidence that this exact
+  head was on GitHub, and no later than merge. GitHub's commit `pushedDate` is
+  nullable, so the signer uses a GitHub Actions check suite's server-generated
+  creation time for that exact SHA and canonical repository as a conservative
+  post-push bound (pinned app id `15368` and slug `github-actions`). A receipt
+  predating that suite is refused even if it followed the push. Commit dates
+  and PR-wide update times cannot substitute; absent evidence holds signing.
+  Associated PRs, check suites and comments are fully paginated.
+- **This is weaker than account independence.** All agents use the same GitHub
+  account; thread ids are self-attested and the shared account can misstate
+  them. The check cannot cryptographically establish two independent people or
+  agents. Independent review remains an operational gate. There is no CLI or
+  environment override for account, thread, head, freshness or merge checks.
+- **First real signing remains Founder-gated (KRA-8371 U6)** and requires
+  GUARDIAN to audit the exact signer/reader bytes and vault item setup. This
+  port authorizes no signing, keys, vault access or lifting of the Pro hold.
 - A clean rebuild (`git archive` + `npm pack --ignore-scripts`) and the
   published release asset both match the entry's sha256.
 - The commit's `package.json` version matches the entry, and so do its
@@ -172,7 +190,6 @@ Only the Founder may create these exact vault items (no prefix matching):
 | --- | --- |
 | `tentacles-manifest-signing-key-current` | Current Ed25519 PKCS8 PEM signing key |
 | `tentacles-manifest-signing-key-next` | Separate next key; never read by this signer |
-| `tentacles-signer-forgejo-read-token` | Read-only Forgejo provenance token |
 
 The private key is fetched only after all checks pass. The reader is the
 repo-relative `scripts/release/signer-key-source.mjs`, pinned by SHA-256 in
@@ -228,7 +245,9 @@ The compiled source is the private `m-check1B/t3-code-tentacles-private`
 GitHub repository. No Forgejo URL or alternative host is accepted by the
 updater. Private assets require access; a customer without access fails closed.
 Customer distribution is still unproven and needs a separately reviewed source
-decision. The live signer refuses with `github_provenance_unavailable` until
-the stacked GitHub B3 provenance change lands. No vault lookup or network
-request is made by that disabled backend. First real signing remains
-Founder-gated under KRA-8371 U6 and requires the exact-byte GUARDIAN audit.
+decision. Provenance and release reads use the runner/operator's existing
+GitHub CLI authentication with the GitHub host pinned. The obsolete Forgejo read
+vault item is no longer fetched by the signer. The key-reader's audited bytes
+remain unchanged; only the current signing-key item is reachable from the
+signer after every provenance/policy check passes. The updater still refuses
+redirects, so private/moved assets hold rather than falling back to a LAN host.

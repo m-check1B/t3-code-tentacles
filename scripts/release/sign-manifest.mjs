@@ -27,6 +27,7 @@ import { createHash, createPrivateKey, createPublicKey, sign, verify } from "nod
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { B3_REVIEWERS } from "./b3-reviewers.mjs";
+import { releaseAssetUrl, RELEASE_SERVER } from "../../src/updater/release-source.mjs";
 import {
   compareVersions, ENVELOPE_SCHEMA, keyId, validateManifest,
 } from "../../src/updater/manifest.mjs";
@@ -36,13 +37,13 @@ export const REPOSITORY = "m-check1B/t3-code-tentacles-private";
 export const PROTECTED_BRANCH = "jack/0.4.1-maintenance";
 export const SIGNING_ITEM = "tentacles-manifest-signing-key-current";
 export const NEXT_SIGNING_ITEM = "tentacles-manifest-signing-key-next"; // never fetched here
-export const FORGEJO_READ_ITEM = "tentacles-signer-forgejo-read-token";
 // Execute verified source bytes on stdin, so replacing the path after hashing
 // cannot substitute a different program. Secrets use fd 3, never helper stdout.
 export const KEY_SOURCE = fileURLToPath(new URL("./signer-key-source.mjs", import.meta.url));
 export const KEY_SOURCE_SHA256 = "bacdb830730c868bd7a1cc5300844e8d4d799ea2d7f82f5ffe07704ac57ed1cf";
 export const MAX_EXPIRY_DAYS = 45;
-const B3_RECEIPT = /^B3 (?:APPROVE|CLEAR|PASS) head=([0-9a-f]{40})$/;
+const B3_RECEIPT = /^APPROVE tentacles-private#([1-9][0-9]*) ([0-9a-f]{40}) P1=0 P2=0$/;
+const THREAD = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/;
 const FOUNDER_REF = /^[A-Za-z0-9._:#/-]{3,160}$/;
 const HEX40 = /^[0-9a-f]{40}$/;
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
@@ -130,24 +131,64 @@ export function runChild(spawnImpl, command, args, {
   });
 }
 
-/** Authenticated API identity, independent of BOTH PR and commit writers.
- * Missing/edited/stale timestamp evidence fails closed. Only the first line is
- * the receipt; mentioning a second SHA elsewhere cannot satisfy the binding.
- */
-export function approvedB3(receipt, { head, writers, committedAt, now, review = false }) {
+/** Thread ids are self-attestations under one pinned GitHub account. They
+ * provide weaker separation than independent authenticated accounts. */
+export function writerThread(body) {
+  if (typeof body !== "string") return null;
+  const lines = body.split("\n").filter((line) => line.startsWith("writer-thread="));
+  if (lines.length !== 1) return null;
+  const id = lines[0].slice("writer-thread=".length);
+  return THREAD.test(id) ? id : null;
+}
+
+export function approvedB3(receipt, { head, number, writerThread: writer, headAvailableAt, mergedAt, now }) {
   const author = receipt?.user;
   if (!B3_REVIEWERS.some((account) => account.id === author?.id && account.login === author?.login)) return false;
-  if (writers.some((writer) => !Number.isSafeInteger(writer?.id) || typeof writer?.login !== "string"
-    || writer.id === author.id || writer.login.toLowerCase() === author.login.toLowerCase())) return false;
-  const match = typeof receipt?.body === "string" && B3_RECEIPT.exec(receipt.body.split("\n")[0]);
-  if (!match || match[1] !== head) return false;
-  const created = review ? receipt.submitted_at : receipt.created_at;
-  const at = Date.parse(created);
+  if (typeof receipt?.body !== "string" || !THREAD.test(writer ?? "")) return false;
+  const lines = receipt.body.split("\n");
+  const match = B3_RECEIPT.exec(lines[0]);
+  if (!match || Number(match[1]) !== number || match[2] !== head) return false;
+  const markers = lines.filter((line) => /(?:writer|reviewer)-thread=/.test(line));
+  if (markers.length !== 1) return false;
+  const threads = /^writer-thread=([^ ]+) reviewer-thread=([^ ]+)$/.exec(markers[0]);
+  if (!threads || threads[1] !== writer || !THREAD.test(threads[2]) || threads[1] === threads[2]) return false;
+  const at = Date.parse(receipt.created_at);
   const updated = Date.parse(receipt.updated_at);
-  const commitTime = Date.parse(committedAt);
-  if (!Number.isFinite(at) || !Number.isFinite(commitTime) || updated !== at || at < commitTime || at > now) return false;
-  if (review && (receipt.state !== "APPROVED" || receipt.commit_id !== head || receipt.dismissed === true || receipt.stale === true)) return false;
-  return true;
+  const available = Date.parse(headAvailableAt);
+  const merged = Date.parse(mergedAt);
+  return Number.isFinite(at) && Number.isFinite(available) && Number.isFinite(merged)
+    && updated === at && at > available && at <= merged && merged <= now;
+}
+
+/** GitHub exposes no reliable pushedDate for every commit. A GitHub Actions
+ * suite created for this exact head is authenticated evidence that the head
+ * already existed on GitHub; requiring the comment AFTER it is conservative.
+ * No client-authored commit date or PR-wide updated_at can substitute. */
+export function headAvailableAt(suites, head, now) {
+  const times = suites.filter((suite) => suite?.head_sha === head
+    && suite?.repository?.full_name === REPOSITORY
+    && suite?.app?.id === 15368 && suite?.app?.slug === "github-actions")
+    .map((suite) => Date.parse(suite.created_at)).filter((at) => Number.isFinite(at) && at <= now);
+  return times.length ? new Date(Math.min(...times)).toISOString() : null;
+}
+
+export async function verifyGithubProvenance(backend, entry, now) {
+  const candidates = await backend.list(`/commits/${entry.commit}/pulls?per_page=100`);
+  const merged = candidates.filter((pull) => pull?.base?.ref === PROTECTED_BRANCH
+    && pull?.base?.repo?.full_name === REPOSITORY && pull?.head?.sha === entry.commit);
+  // Ambiguity cannot select whichever PR happens to have an approval.
+  if (merged.length !== 1 || !Number.isSafeInteger(merged[0].number) || merged[0].number <= 0) refuse("pr_not_merged", entry.version);
+  const pull = await backend.api(`/pulls/${merged[0].number}`);
+  if (pull?.number !== merged[0].number || pull?.merged !== true || pull?.base?.ref !== PROTECTED_BRANCH
+    || pull?.base?.repo?.full_name !== REPOSITORY || pull?.head?.repo?.full_name !== REPOSITORY
+    || pull?.merge_commit_sha !== entry.commit || !HEX40.test(pull?.head?.sha ?? "")) refuse("pr_not_merged", entry.version);
+  if (pull.head.sha !== entry.commit) refuse("b3_head_not_signed_commit", entry.version);
+  const suites = await backend.list(`/commits/${entry.commit}/check-suites?per_page=100`, "check_suites");
+  const binding = { head: entry.commit, number: pull.number, writerThread: writerThread(pull.body),
+    headAvailableAt: headAvailableAt(suites, entry.commit, now), mergedAt: pull.merged_at, now };
+  const comments = await backend.list(`/issues/${pull.number}/comments?per_page=100`);
+  if (!comments.some((comment) => approvedB3(comment, binding))) refuse("b3_receipt_missing", entry.version);
+  return { pull, binding };
 }
 
 function parsePinnedKeys(source) {
@@ -162,9 +203,54 @@ function parseRemoteRpc(source) {
   return [...match[1].matchAll(/"([a-z-]+)"/g)].map((item) => item[1]);
 }
 
-/** Live signing stays closed until the GitHub B3 provenance port lands. */
-export function defaultBackends() {
-  refuse("github_provenance_unavailable");
+/** Default provenance backends; tests replace them with fixtures. */
+export function defaultBackends({ spawnImpl = spawn, workDir }) {
+  const mirror = path.join(workDir, "mirror.git");
+  const git = (args) => runChild(spawnImpl, "git", ["--git-dir", mirror, ...args]);
+  let fetched = false;
+  return {
+    async syncMirror() {
+      if (!fs.existsSync(mirror)) await runChild(spawnImpl, "git", ["init", "--bare", "--quiet", mirror]);
+      await git(["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential", "fetch", "--quiet", "--prune", `${RELEASE_SERVER}/${REPOSITORY}.git`, `+refs/heads/${PROTECTED_BRANCH}:refs/heads/${PROTECTED_BRANCH}`]);
+      fetched = true;
+    },
+    async isAncestor(commit) {
+      if (!fetched) refuse("mirror_not_synced");
+      try { await git(["merge-base", "--is-ancestor", commit, `refs/heads/${PROTECTED_BRANCH}`]); return true; } catch { return false; }
+    },
+    async showFile(commit, file) { return (await git(["show", `${commit}:${file}`])).toString("utf8"); },
+    async rebuildSha256(commit) {
+      const build = fs.mkdtempSync(path.join(workDir, "rebuild-"));
+      try {
+        const archive = await git(["archive", "--format=tar", commit]);
+        await runChild(spawnImpl, "tar", ["-x", "-f", "-", "-C", build], { input: archive });
+        const name = (await runChild(spawnImpl, "npm", ["pack", "--ignore-scripts", "--silent"], { cwd: build })).toString("utf8").trim().split("\n").pop();
+        if (!/^tentacles-[0-9A-Za-z.-]+\.tgz$/.test(name)) refuse("rebuild_failed");
+        return sha256(fs.readFileSync(path.join(build, name)));
+      } finally { fs.rmSync(build, { recursive: true, force: true }); }
+    },
+    async api(suffix) {
+      const bytes = await runChild(spawnImpl, "gh", ["api", "--hostname", "github.com", `repos/${REPOSITORY}${suffix}`]);
+      try { return JSON.parse(bytes.toString("utf8")); } catch { refuse("github_response_invalid"); }
+    },
+    async list(suffix, field = null) {
+      const bytes = await runChild(spawnImpl, "gh", ["api", "--hostname", "github.com", "--paginate", "--slurp", `repos/${REPOSITORY}${suffix}`]);
+      let pages;
+      try { pages = JSON.parse(bytes.toString("utf8")); } catch { refuse("github_response_invalid"); }
+      if (!Array.isArray(pages) || pages.some((page) => !Array.isArray(field ? page?.[field] : page))) refuse("github_response_invalid");
+      return pages.flatMap((page) => field ? page[field] : page);
+    },
+    async releaseAssetSha256(version) {
+      const release = await this.api(`/releases/tags/v${version}`);
+      if (!Number.isSafeInteger(release?.id) || release.id <= 0 || release.tag_name !== `v${version}` || release.draft !== false) refuse("release_asset_unavailable", version);
+      const assets = await this.list(`/releases/${release.id}/assets?per_page=100`);
+      const matching = assets.filter((asset) => asset?.name === `tentacles-${version}.tgz`);
+      if (matching.length !== 1 || !Number.isSafeInteger(matching[0].id) || matching[0].id <= 0
+        || matching[0].browser_download_url !== releaseAssetUrl(`v${version}`, `tentacles-${version}.tgz`)) refuse("release_asset_unavailable", version);
+      const bytes = await runChild(spawnImpl, "gh", ["api", "--hostname", "github.com", "-H", "Accept: application/octet-stream", `repos/${REPOSITORY}/releases/assets/${matching[0].id}`]);
+      return sha256(bytes);
+    },
+  };
 }
 
 /** Read pinned bytes, not a mutable home-directory executable. */
@@ -185,7 +271,7 @@ export function keySourceBytes(keySource = KEY_SOURCE) {
 
 /** Fetch a value via fd only and clear its concatenated copy after consumption. */
 export async function fetchSecret(spawnImpl, keySource, item, consume) {
-  if (![SIGNING_ITEM, FORGEJO_READ_ITEM].includes(item)) refuse("vault_item_not_allowed");
+  if (item !== SIGNING_ITEM) refuse("vault_item_not_allowed");
   const source = keySourceBytes(keySource);
   const bytes = await runChild(spawnImpl, process.execPath, ["--input-type=module", "-", item], {
     input: source, maxBytes: 16 * 1024, timeoutMs: 30_000, secret: true,
@@ -244,7 +330,6 @@ export async function signManifest({
 } = {}) {
   const ownsWorkDir = backends === null;
   let backend;
-  let token = null;
   try {
     backend = backends ?? defaultBackends({ spawnImpl, fetchImpl, workDir });
     if (founderOk !== null && !FOUNDER_REF.test(founderOk)) refuse("founder_ok_reference_invalid");
@@ -266,35 +351,14 @@ export async function signManifest({
       return !old;
     });
 
-    token = await fetchSecret(spawnImpl, keySource, FORGEJO_READ_ITEM, (bytes) => bytes.toString("utf8"));
-    if (!/^[A-Za-z0-9]{16,128}$/.test(token)) refuse("forgejo_read_token_invalid");
-    const branch = await backend.api(token, `/branches/${encodeURIComponent(PROTECTED_BRANCH)}`);
+    const branch = await backend.api(`/branches/${encodeURIComponent(PROTECTED_BRANCH)}`);
     if (branch?.protected !== true) refuse("branch_not_protected");
     await backend.syncMirror();
 
     const pinnedAt = new Map();
     for (const entry of fresh) {
       if (!HEX40.test(entry.commit) || !(await backend.isAncestor(entry.commit))) refuse("commit_not_on_protected_branch", entry.version);
-      const pull = await backend.api(token, `/commits/${entry.commit}/pull`);
-      if (pull?.merged !== true || pull?.base?.ref !== PROTECTED_BRANCH || pull?.merge_commit_sha !== entry.commit
-        || !Number.isSafeInteger(pull?.number) || !HEX40.test(pull?.head?.sha ?? "")) {
-        refuse("pr_not_merged", entry.version);
-      }
-      // The signed entry must be the reviewed head, not an unreviewed merge
-      // commit. This lane supports fast-forward merges; other strategies HOLD.
-      if (pull.head.sha !== entry.commit) refuse("b3_head_not_signed_commit", entry.version);
-      const commits = await backend.api(token, `/commits?sha=${pull.head.sha}&limit=1`);
-      const commit = Array.isArray(commits) && commits[0];
-      if (commit?.sha !== pull.head.sha) refuse("commit_identity_missing", entry.version);
-      const binding = {
-        head: entry.commit, writers: [pull.user, commit?.author, commit?.committer],
-        committedAt: commit?.commit?.committer?.date, now,
-      };
-      const comments = await backend.api(token, `/issues/${pull.number}/comments?limit=50`);
-      const reviews = await backend.api(token, `/pulls/${pull.number}/reviews?limit=50`);
-      const receipt = (Array.isArray(comments) && comments.some((comment) => approvedB3(comment, binding)))
-        || (Array.isArray(reviews) && reviews.some((review) => approvedB3(review, { ...binding, review: true })));
-      if (!receipt) refuse("b3_receipt_missing", entry.version);
+      await verifyGithubProvenance(backend, entry, now);
       const packageJson = JSON.parse(await backend.showFile(entry.commit, "package.json"));
       if (packageJson.version !== entry.version) refuse("version_mismatch", entry.version);
       const rpc = parseRemoteRpc(await backend.showFile(entry.commit, "src/outbound-pairer.mjs"));
@@ -303,7 +367,7 @@ export async function signManifest({
       if (keys.length !== 2 || new Set(keys).size !== 2) refuse("pinned_keys_not_configured", entry.version);
       pinnedAt.set(entry.version, keys);
       if ((await backend.rebuildSha256(entry.commit)) !== entry.sha256) refuse("rebuild_sha_mismatch", entry.version);
-      if ((await backend.releaseAssetSha256(token, entry.version)) !== entry.sha256) refuse("release_asset_sha_mismatch", entry.version);
+      if ((await backend.releaseAssetSha256(entry.version)) !== entry.sha256) refuse("release_asset_sha_mismatch", entry.version);
     }
 
     let keysChanged = false;
@@ -360,8 +424,6 @@ export async function signManifest({
     fs.writeFileSync(logFile, `${JSON.stringify(record)}\n`, { flag: "a", mode: 0o600 });
     return { record, linearComment: linearComment(record) };
   } finally {
-    // The token string and native KeyObject are runtime-managed, not erased.
-    token = null;
     if (ownsWorkDir) fs.rmSync(workDir, { recursive: true, force: true });
   }
 }
