@@ -87,7 +87,7 @@ const bytes = (value) => Buffer.byteLength(JSON.stringify(value), "utf8");
 
 test("R4: B3's 1,065,172-byte inventory case keeps the core doctor catalog", async () => {
   const skills = Array.from({ length: 512 }, (_, i) => ({ name: "界".repeat(120) + String(i).padStart(8, "0"), scope: "project", enabled: true }));
-  const labs = ORIGINATE_LABS.filter((id) => !["hermes", "deepseek", "kimi", "pi", "codex-app"].includes(id));
+  const labs = ["codex", "claudeAgent", "grok", "cursor", "opencode"];
   assert.equal(labs.length, 5);
   const providers = labs.map((instanceId) => ({ instanceId, driver: instanceId, installed: true, status: "ready", skills, models: [{ slug: "synthetic-model", isDefault: true }] }));
   const client = {

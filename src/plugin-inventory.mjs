@@ -7,6 +7,7 @@
 // reports an unobserved or stale list as current.
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import path from "node:path";
 import { looksSecret } from "./capabilities.mjs";
 
 export const PLUGIN_INVENTORY_VERSION = 1;
@@ -35,6 +36,7 @@ function exactText(value) {
 }
 
 const CONTEXT_ENV = new Set(["CODEX_HOME", "HOME", "PATH"]);
+const LAUNCH_ARGS_ENV = "T3CODE_CODEX_LAUNCH_ARGS";
 
 function plainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -47,7 +49,7 @@ function setting(config, key) {
 // The plugin context of T3's `codex` instance, resolved like the doctor lab
 // row: an explicit providerInstances entry wins over legacy provider settings.
 // Anything that could make T3's Codex read a different home than this listing
-// (launch arguments, instance environment for CODEX_HOME/HOME/PATH, or a
+// (effective launch arguments, instance environment for CODEX_HOME/HOME/PATH, or a
 // CODEX_HOME in this process with no configured homePath) is not attributed.
 // The shadow home only separates auth.json; plugins live in CODEX_HOME.
 export function codexPluginContext(settings, env = process.env) {
@@ -69,11 +71,24 @@ export function codexPluginContext(settings, env = process.env) {
   if (Array.isArray(instance?.environment) && instance.environment.some((variable) => CONTEXT_ENV.has(variable?.name))) {
     return { error: "environment_unverified" };
   }
-  if (setting(config, "launchArgs")) return { error: "launch_args_unverified" };
+  const overrides = (instance?.environment ?? []).filter(variable => variable?.name === LAUNCH_ARGS_ENV);
+  if (overrides.length > 1 || overrides.some(variable => variable.valueRedacted === true
+    || variable.sensitive === true || typeof variable.value !== "string")) {
+    return { error: "environment_unverified" };
+  }
+  const override = overrides.length ? overrides[0].value : env[LAUNCH_ARGS_ENV];
+  if (override !== undefined && typeof override !== "string") return { error: "environment_unverified" };
+  // T3 resolves the merged environment override before config.launchArgs.
+  // No nonempty launch argv is reproduced by `plugin list`, so quarantine it.
+  if (override?.trim() || setting(config, "launchArgs")) return { error: "launch_args_unverified" };
   const binary = setting(config, "binaryPath") ?? "codex";
-  const home = setting(config, "homePath");
+  const configuredHome = config.homePath?.trim() ? config.homePath : null;
+  // T3 expands tilde using its own home and resolves relative paths in its
+  // server cwd. Neither base is supplied by settings; never guess ours.
+  if (configuredHome && !path.isAbsolute(configuredHome)) return { error: "home_unverified" };
+  const home = configuredHome ? path.resolve(configuredHome) : null;
   if (!home && typeof env.CODEX_HOME === "string" && env.CODEX_HOME) return { error: "default_context_unverified" };
-  return { binary, home, key: digest(JSON.stringify([binary, home])) };
+  return { binary, home, key: digest(JSON.stringify([binary, home, overrides.length > 0, override ?? null])) };
 }
 
 // Installed plugins only. Identity, publisher marketplace, version and enabled

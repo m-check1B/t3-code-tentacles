@@ -6,6 +6,10 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- Codex plugin inventory accounts for the selected instance's launch-argument
+  environment override and cache identity (KRA-6203). Unverified overrides and
+  relative/tilde homes start no child; absolute homes use T3-equivalent path
+  resolution without trimming significant path bytes.
 - Doctor skill/plugin metadata shares capability secret-shape rejection before
   hashing (KRA-6203). Codex plugin probes require a verified, enabled Codex
   driver and one complete explicit or legacy configuration. All optional
