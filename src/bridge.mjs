@@ -36,6 +36,7 @@ import { DEFAULT_PAIR_STATE_FILE, publishLockFile, readPairPresence } from "./pa
 import { inspectHermesOpenaiCodexAuth } from "./hermes-acp-launch.mjs";
 import { readBoundedResponseText, readOrchestrationSnapshot, T3HttpError, T3_REAUTH_ACTION } from "./t3-client.mjs";
 import { LAB_NAMES, labName } from "./lab-names.mjs";
+import { ANTIGRAVITY_INSTANCE_ID, antigravityAction, applyAntigravityState } from "./antigravity.mjs";
 
 const HERMES_MENTION = /(^|\s)@hermes\b/i;
 const BRIDGE_OWNER_VARIABLE = "T3_HERMES_BRIDGE_OWNER";
@@ -1181,6 +1182,7 @@ function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
 }
 
 function doctorAction(lab) {
+  if (lab.instanceId === ANTIGRAVITY_INSTANCE_ID) return antigravityAction(lab.code);
   if (!lab.installed) return labInstallHint(lab.instanceId);
   if (lab.code === "codex_auth_missing") return "Authenticate openai-codex through Hermes' normal local setup";
   if (lab.code === "hermes_unreachable") return "Start or recover the loopback Hermes health endpoint";
@@ -1246,6 +1248,8 @@ export async function doctor(client, {
   for (const labId of ORIGINATE_LABS) {
     labs.push(labRow({ instanceId: labId, advertised: true, settings, configById, modelsMode }));
   }
+  const antigravityLab = labs.find((lab) => lab.instanceId === ANTIGRAVITY_INSTANCE_ID);
+  if (antigravityLab) applyAntigravityState(antigravityLab, configById.get(ANTIGRAVITY_INSTANCE_ID), serverVersion);
 
   const adapterCredential = inspectAdapterAuth(openrouterTokenFile);
   for (const labId of ["kimi", "deepseek"]) {

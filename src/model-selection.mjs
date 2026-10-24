@@ -9,6 +9,7 @@ export const ORIGINATE_LABS = Object.freeze([
   "kimi",
   "pi",
   "opencode",
+  "antigravity",
 ]);
 
 export const ADAPTER_LABS = Object.freeze(["hermes", "pi", "deepseek", "kimi"]);
@@ -24,6 +25,8 @@ export const LAB_DEFAULT_MODELS = Object.freeze({
   "codex-app": process.env.T3_CODEX_APP_MODEL || process.env.T3_CODEX_MODEL || "gpt-5.6-luna",
   claudeAgent: process.env.T3_CLAUDE_MODEL || "claude-sonnet-5",
   opencode: process.env.T3_OPENCODE_MODEL || "opencode/big-pickle",
+  // KRA-6725: T3 marks the live default; this is only the manifest fallback.
+  antigravity: process.env.T3_ANTIGRAVITY_MODEL || "gemini-3.8-flash-high",
 });
 
 export function labKind(instanceId) {
