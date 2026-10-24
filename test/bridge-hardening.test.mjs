@@ -108,10 +108,10 @@ test("doctor bounds and validates the Hermes health response", async () => {
   assert.equal(result.product, "Tentacles");
   assert.deepEqual(result.pairing, { status: "paired" });
   assert.match(formatDoctor(result), /Remote pair: paired/);
-  assert.equal(result.labs.length, 15);
+  assert.equal(result.labs.length, 16);
   assert.deepEqual(result.labs.map((lab) => lab.instanceId), [
     "hermes", "codex", "codex-app", "claudeAgent", "grok", "cursor", "deepseek", "kimi", "pi", "opencode",
-    "codex-noweb", "opencode-noweb", "grok-noweb", "cursor-noweb", "deepseek-noweb",
+    "codex-noweb", "opencode-noweb", "grok-noweb", "cursor-noweb", "deepseek-noweb", "antigravity",
   ]);
   for (const lab of result.labs) {
     assert.equal(lab.enabled, false);
@@ -203,7 +203,7 @@ test("doctor prints an advertised lab matrix without secrets and keeps Cursor ex
   assert.equal(byId.cursor.defaultModel, null);
   assert.equal(byId.cursor.code, "disabled");
   assert.equal(byId.pi.code, "provider_error");
-  assert.equal(result.labs.length, 15);
+  assert.equal(result.labs.length, 16);
   assert.equal(result.t3.version, null);
   assert.equal(JSON.stringify(result).includes("should-not-leak"), false);
   assert.equal(JSON.stringify(result).includes("PRIVATE-PROJECT-CANARY"), false);

@@ -21,6 +21,7 @@ export const ORIGINATE_LABS = Object.freeze([
   "pi",
   "opencode",
   ...NOWEB_LABS,
+  "antigravity",
 ]);
 
 export const ADAPTER_LABS = Object.freeze(["hermes", "pi", "deepseek", "kimi"]);

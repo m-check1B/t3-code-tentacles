@@ -13,6 +13,7 @@ export const LAB_NAMES = Object.freeze({
   kimi: "Kimi CLI",
   pi: "Pi CLI",
   hermes: "Hermes CLI",
+  antigravity: "Antigravity (Gemini)",
 });
 
 export function labName(instanceId) {
