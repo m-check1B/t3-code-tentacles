@@ -20,6 +20,17 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- Antigravity (Gemini) lab (KRA-6725): doctor advertises T3's native
+  `antigravity` instance as "Antigravity (Gemini)". T3 owns the ACP agent
+  download and the Google sign-in; Tentacles never handles Google credentials.
+  The row adds `signedIn` and a fixed `setupUrl`
+  (`t3code://app/settings/providers?instanceId=antigravity`). Its codes name
+  the fix: `t3_update_required`, `disabled`, `not_installed`,
+  `sign_in_unchecked` (installed, no models before the first session) and
+  `not_signed_in`. Unknown sign-in or readiness stays not ready, even when
+  cached models exist. Source-only refresh; installed/runtime compatibility
+  remains separately verified.
+
 - Capability-gated fresh native context and fixed-title Talk forwarding across
   legacy T3 and Orchestrator V2, with exact applied-generation receipts and
   origination replay validation (KRA-6411, KRA-7684). Missing or zero runtime
