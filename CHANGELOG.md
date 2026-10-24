@@ -6,6 +6,7 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- Isolate model-selection, bridge-hardening and doctor golden test defaults from ambient model variables without weakening assertions or changing auth rotation coverage (KRA-8794).
 - Report rejects short thread IDs before lookup with guidance to obtain the
   full UUID from originate or observe (KRA-7728). Unique, ambiguous, unknown
   and unauthorized prefixes are display-only; full UUIDs retain T3's
