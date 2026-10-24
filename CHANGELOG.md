@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Port release publishing to the private GitHub canonical repository, verify
+  checksums and existing tags, and take release notes from CHANGELOG (KRA-8749).
+  The updater rejects other release sources; live signing holds until the
+  GitHub B3 provenance port lands.
+
+
 ### Added
 
 - A failed `turn-result` carries `failureDetail`, the redacted first line of

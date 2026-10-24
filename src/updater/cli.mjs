@@ -11,7 +11,7 @@ import { Launcher } from "./launcher.mjs";
 import { readSelfUpdateSummary, requireComputerId } from "./events.mjs";
 import { fsyncPath } from "./safe-tar.mjs";
 
-export const UPDATER_FILES = Object.freeze(["cli.mjs", "events.mjs", "launcher.mjs", "manifest.mjs", "pinned.mjs", "safe-tar.mjs", "updater.mjs"]);
+export const UPDATER_FILES = Object.freeze(["cli.mjs", "events.mjs", "launcher.mjs", "manifest.mjs", "pinned.mjs", "release-source.mjs", "safe-tar.mjs", "updater.mjs"]);
 const USAGE = "usage: tentacles-updater status | now | undo | launch [--computer-id ID] -- <tentacles args...>";
 
 /** Copy the updater out of a verified tree into <home>/updater (explicit operator step). */

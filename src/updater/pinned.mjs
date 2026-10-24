@@ -6,9 +6,8 @@
 // the release build. Real keys are added only by a Founder-approved PR after the
 // GUARDIAN audit of the signer and the vault item setup (U1, U2).
 
-// Release assets of matej/t3-code-tentacles on the canonical Forgejo, IP-first.
-// Integrity comes from the signed manifest, not from the transport.
-export const UPDATE_BASE_URL = "http://192.168.0.21:3000/matej/t3-code-tentacles/releases/download";
+// The canonical private GitHub release source is compiled into every build.
+export { RELEASE_DOWNLOAD as UPDATE_BASE_URL } from "./release-source.mjs";
 
 // The signed manifest is published as an asset of this fixed release tag.
 export const MANIFEST_TAG = "tentacles-manifest";

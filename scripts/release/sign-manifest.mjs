@@ -31,11 +31,9 @@ import {
   compareVersions, ENVELOPE_SCHEMA, keyId, validateManifest,
 } from "../../src/updater/manifest.mjs";
 
-export const FORGEJO_API = "http://192.168.0.21:3000/api/v1";
-export const FORGEJO_GIT = "ssh://git@192.168.0.21:2222/matej/t3-code-tentacles.git";
-export const REPOSITORY = "matej/t3-code-tentacles";
+export { RELEASE_DOWNLOAD } from "../../src/updater/release-source.mjs";
+export const REPOSITORY = "m-check1B/t3-code-tentacles-private";
 export const PROTECTED_BRANCH = "jack/0.4.1-maintenance";
-export const RELEASE_DOWNLOAD = `http://192.168.0.21:3000/${REPOSITORY}/releases/download`;
 export const SIGNING_ITEM = "tentacles-manifest-signing-key-current";
 export const NEXT_SIGNING_ITEM = "tentacles-manifest-signing-key-next"; // never fetched here
 export const FORGEJO_READ_ITEM = "tentacles-signer-forgejo-read-token";
@@ -164,47 +162,9 @@ function parseRemoteRpc(source) {
   return [...match[1].matchAll(/"([a-z-]+)"/g)].map((item) => item[1]);
 }
 
-/** Default provenance backends; tests replace them with fixtures. */
-export function defaultBackends({ spawnImpl = spawn, fetchImpl = globalThis.fetch, workDir }) {
-  const mirror = path.join(workDir, "mirror.git");
-  const git = (args) => runChild(spawnImpl, "git", ["--git-dir", mirror, ...args]);
-  let fetched = false;
-  return {
-    async syncMirror() {
-      if (!fs.existsSync(mirror)) await runChild(spawnImpl, "git", ["init", "--bare", "--quiet", mirror]);
-      await git(["fetch", "--quiet", "--prune", FORGEJO_GIT, `+refs/heads/${PROTECTED_BRANCH}:refs/heads/${PROTECTED_BRANCH}`]);
-      fetched = true;
-    },
-    async isAncestor(commit) {
-      if (!fetched) refuse("mirror_not_synced");
-      try { await git(["merge-base", "--is-ancestor", commit, `refs/heads/${PROTECTED_BRANCH}`]); return true; } catch { return false; }
-    },
-    async showFile(commit, file) { return (await git(["show", `${commit}:${file}`])).toString("utf8"); },
-    async rebuildSha256(commit) {
-      const build = fs.mkdtempSync(path.join(workDir, "rebuild-"));
-      try {
-        const archive = await git(["archive", "--format=tar", commit]);
-        await runChild(spawnImpl, "tar", ["-x", "-f", "-", "-C", build], { input: archive });
-        const name = (await runChild(spawnImpl, "npm", ["pack", "--ignore-scripts", "--silent"], { cwd: build })).toString("utf8").trim().split("\n").pop();
-        if (!/^tentacles-[0-9A-Za-z.-]+\.tgz$/.test(name)) refuse("rebuild_failed");
-        return sha256(fs.readFileSync(path.join(build, name)));
-      } finally { fs.rmSync(build, { recursive: true, force: true }); }
-    },
-    async api(token, suffix) {
-      const response = await fetchImpl(`${FORGEJO_API}/repos/${REPOSITORY}${suffix}`, {
-        redirect: "error", signal: AbortSignal.timeout(30_000), headers: { authorization: `token ${token}` },
-      });
-      if (!response.ok) { await response.body?.cancel?.(); refuse("forgejo_unavailable", `${response.status}`); }
-      return response.json();
-    },
-    async releaseAssetSha256(token, version) {
-      const response = await fetchImpl(`${RELEASE_DOWNLOAD}/v${version}/tentacles-${version}.tgz`, {
-        redirect: "error", signal: AbortSignal.timeout(120_000), headers: { authorization: `token ${token}` },
-      });
-      if (!response.ok) { await response.body?.cancel?.(); refuse("release_asset_unavailable", version); }
-      return sha256(Buffer.from(await response.arrayBuffer()));
-    },
-  };
+/** Live signing stays closed until the GitHub B3 provenance port lands. */
+export function defaultBackends() {
+  refuse("github_provenance_unavailable");
 }
 
 /** Read pinned bytes, not a mutable home-directory executable. */
@@ -283,9 +243,10 @@ export async function signManifest({
   workDir = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles-signer-")),
 } = {}) {
   const ownsWorkDir = backends === null;
-  const backend = backends ?? defaultBackends({ spawnImpl, fetchImpl, workDir });
+  let backend;
   let token = null;
   try {
+    backend = backends ?? defaultBackends({ spawnImpl, fetchImpl, workDir });
     if (founderOk !== null && !FOUNDER_REF.test(founderOk)) refuse("founder_ok_reference_invalid");
     if (fs.existsSync(outFile)) refuse("output_exists");
     let draft;

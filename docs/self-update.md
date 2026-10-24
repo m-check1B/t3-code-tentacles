@@ -221,3 +221,14 @@ The release pin check is in `.github/workflows/release.yml`, not `.forgejo/`.
 **Outputs.** The script writes the signed envelope with `wx`, appends one
 hash-chained line to the log, and prints the Linear comment body for the
 captain to post.
+
+## GitHub release transition (KRA-8749)
+
+The compiled source is the private `m-check1B/t3-code-tentacles-private`
+GitHub repository. No Forgejo URL or alternative host is accepted by the
+updater. Private assets require access; a customer without access fails closed.
+Customer distribution is still unproven and needs a separately reviewed source
+decision. The live signer refuses with `github_provenance_unavailable` until
+the stacked GitHub B3 provenance change lands. No vault lookup or network
+request is made by that disabled backend. First real signing remains
+Founder-gated under KRA-8371 U6 and requires the exact-byte GUARDIAN audit.
