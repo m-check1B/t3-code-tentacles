@@ -86,3 +86,9 @@ test("the workflow publish command runs end-to-end against a local fake gh only"
   assert.match(call.notes, /Exact release notes/);
   assert.equal(JSON.parse(stdout).sha256, f.digest);
 });
+
+test("the retired Forgejo publisher cannot publish when invoked directly", async () => {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  await assert.rejects(promisify(execFile)(process.execPath, [new URL("../scripts/publish-forgejo-release.mjs", import.meta.url).pathname], { env: {} }), error => error.code === 1 && error.stderr.includes("publication is retired"));
+});
