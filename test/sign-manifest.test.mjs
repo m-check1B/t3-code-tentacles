@@ -1,15 +1,15 @@
 // KRA-8371 (U1, U2): the no-AI signer. Provenance backends are fixtures; the
-// key source is a real child process serving an EPHEMERAL key, so the spawn
-// recorder sees exactly what a real run would pass.
+// key-source pipe is stubbed with EPHEMERAL bytes; no vault or key file is used.
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { createHash, verify } from "node:crypto";
 import {
-  FORGEJO_READ_ITEM, NEXT_SIGNING_ITEM, PROTECTED_BRANCH, signManifest, SIGNING_ITEM,
+  FORGEJO_READ_ITEM, KEY_SOURCE, NEXT_SIGNING_ITEM, PROTECTED_BRANCH, signManifest, SIGNING_ITEM,
 } from "../scripts/release/sign-manifest.mjs";
 import { verifyManifest } from "../src/updater/manifest.mjs";
 import { entryFor, ephemeralKey, manifestOf, packageTgz, RPC, signEnvelope } from "./helpers/self-update-fixtures.mjs";
@@ -24,28 +24,29 @@ function workspace(t) {
   return dir;
 }
 
-/** A real executable key source: prints the ephemeral PEM or the token for the exact item name. */
-function keySource(dir, key) {
-  const pem = path.join(dir, "ephemeral-key.pem");
-  fs.writeFileSync(pem, key.privateKey.export({ format: "pem", type: "pkcs8" }), { mode: 0o600 });
-  const script = path.join(dir, "key-source.mjs");
-  fs.writeFileSync(script, `#!${process.execPath}
-import fs from "node:fs";
-const item = process.argv[2];
-if (item === ${JSON.stringify(SIGNING_ITEM)}) process.stdout.write(fs.readFileSync(${JSON.stringify(pem)}));
-else if (item === ${JSON.stringify(FORGEJO_READ_ITEM)}) process.stdout.write(${JSON.stringify(TOKEN)});
-else process.exit(3);
-`, { mode: 0o700 });
-  return script;
-}
-
-function recordingSpawn() {
+/** Stub the inherited fd, with no real helper/vault invocation or PEM on disk. */
+function recordingSpawn(key, { keyFinalNewline = true } = {}) {
   const calls = [];
+  const buffers = [];
   const spawnImpl = (command, args, options) => {
     calls.push({ command, args: [...args], env: { ...options.env } });
-    return spawn(command, args, options);
+    const child = new EventEmitter();
+    child.stdin = new PassThrough();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.stdio = [child.stdin, child.stdout, child.stderr, new PassThrough()];
+    child.kill = () => true;
+    child.stdin.on("finish", () => {
+      let bytes = args.at(-1) === SIGNING_ITEM
+        ? Buffer.from(key.privateKey.export({ format: "pem", type: "pkcs8" })) : Buffer.from(TOKEN);
+      if (!keyFinalNewline && args.at(-1) === SIGNING_ITEM) bytes = bytes.subarray(0, -1);
+      buffers.push(bytes);
+      child.stdio[3].emit("data", bytes);
+      child.emit("close", 0);
+    });
+    return child;
   };
-  return { calls, spawnImpl };
+  return { calls, spawnImpl, buffers };
 }
 
 function pinnedSource(keys) {
@@ -55,8 +56,9 @@ function pinnedSource(keys) {
 /** Provenance fixtures: everything is fine unless a test overrides one fact. */
 function backends({ keys, entries, overrides = {} }) {
   const byCommit = new Map(entries.map((entry) => [entry.commit, entry]));
+  let activeHead;
   const facts = {
-    protected: true, ancestor: true, merged: true, b3: true, rebuild: null, asset: null, version: null, rpc: RPC, pinned: keys,
+    protected: true, ancestor: true, merged: true, b3: true, approval: {}, writer: { id: 2, login: "synthetic-writer" }, rebuild: null, asset: null, version: null, rpc: RPC, pinned: keys,
     ...overrides,
   };
   return {
@@ -79,14 +81,23 @@ function backends({ keys, entries, overrides = {} }) {
       assert.equal(token, TOKEN);
       if (suffix === `/branches/${encodeURIComponent(PROTECTED_BRANCH)}`) return { protected: facts.protected };
       const pull = /^\/commits\/([0-9a-f]{40})\/pull$/.exec(suffix);
-      if (pull) return { number: 71, merged: facts.merged, base: { ref: PROTECTED_BRANCH }, merge_commit_sha: pull[1], head: { sha: "a".repeat(40) } };
-      if (suffix.startsWith("/issues/71/comments")) return facts.b3 ? [{ body: `B3 APPROVE ${"a".repeat(40)}\nchecked` }] : [{ body: "looks fine" }];
+      if (pull) { activeHead = pull[1]; return { number: 71, merged: facts.merged, base: { ref: PROTECTED_BRANCH }, merge_commit_sha: pull[1], user: facts.writer, head: { sha: pull[1] } }; }
+      if (suffix.startsWith("/issues/71/comments")) return facts.b3 ? [{
+        body: `B3 APPROVE head=${activeHead}\nchecked`, user: { id: 1, login: "matej" },
+        created_at: "2026-10-22T07:10:00.000Z", updated_at: "2026-10-22T07:10:00.000Z", ...facts.approval,
+      }] : [{ body: "looks fine" }];
+      if (suffix.startsWith("/pulls/71/reviews")) return [];
+      if (/^\/commits\?sha=[0-9a-f]{40}&limit=1$/.test(suffix)) return [{
+        sha: activeHead,
+        author: facts.writer, committer: { id: 3, login: "synthetic-committer" },
+        commit: { committer: { date: "2026-10-22T07:00:00.000Z" } },
+      }];
       throw new Error(`unexpected api ${suffix}`);
     },
   };
 }
 
-function scenario(t, { previousFloor = "0.4.1-jack.1", draftFloor = "0.4.1-jack.1", overrides = {}, previous = true } = {}) {
+function scenario(t, { previousFloor = "0.4.1-jack.1", draftFloor = "0.4.1-jack.1", overrides = {}, previous = true, keyFinalNewline = true } = {}) {
   const dir = workspace(t);
   const current = ephemeralKey();
   const next = ephemeralKey();
@@ -96,11 +107,11 @@ function scenario(t, { previousFloor = "0.4.1-jack.1", draftFloor = "0.4.1-jack.
   fs.writeFileSync(previousFile, signEnvelope(manifestOf({ serial: 4, expires: EXPIRES, securityFloor: previousFloor, recommended: "0.4.1-jack.1", versions: [v1] }), current));
   const draftFile = path.join(dir, "draft.json");
   fs.writeFileSync(draftFile, JSON.stringify(manifestOf({ serial: previous ? 5 : 1, expires: EXPIRES, securityFloor: draftFloor, recommended: "0.4.1-jack.2", versions: [v1, v2] })));
-  const recorder = recordingSpawn();
+  const recorder = recordingSpawn(current, { keyFinalNewline });
   const run = (founderOk = null) => signManifest({
     draftFile, previousFile: previous ? previousFile : null, logFile: path.join(dir, "signing.log"), outFile: path.join(dir, `signed-${Math.random()}.json`), founderOk, now: NOW,
   }, {
-    spawnImpl: recorder.spawnImpl, keySource: keySource(dir, current),
+    spawnImpl: recorder.spawnImpl, keySource: KEY_SOURCE,
     backends: backends({ keys: [current.raw, next.raw], entries: [v1, v2], overrides }),
   });
   return { dir, current, next, run, recorder, v2 };
@@ -111,7 +122,7 @@ async function refusal(promise) {
   return null;
 }
 
-const fetchedItems = (recorder) => recorder.calls.map((call) => call.args[0]);
+const fetchedItems = (recorder) => recorder.calls.map((call) => call.args.at(-1));
 
 test("signs a fully proven manifest; the envelope verifies on a device pinned to the same keys", async (t) => {
   const s = scenario(t);
@@ -145,7 +156,8 @@ test("key bytes never appear in argv, env, the log, the output or the Linear com
   }
   assert.deepEqual(fetchedItems(s.recorder), [FORGEJO_READ_ITEM, SIGNING_ITEM], "exact item names only; the next key is never fetched");
   assert.equal(fetchedItems(s.recorder).includes(NEXT_SIGNING_ITEM), false);
-  const artifacts = fs.readdirSync(s.dir).filter((name) => !["ephemeral-key.pem", "key-source.mjs"].includes(name)).map((name) => fs.readFileSync(path.join(s.dir, name), "utf8")).join("\n");
+  assert.ok(s.recorder.buffers.every((buffer) => buffer.every((byte) => byte === 0)), "every original secret chunk was cleared");
+  const artifacts = fs.readdirSync(s.dir).map((name) => fs.readFileSync(path.join(s.dir, name), "utf8")).join("\n");
   for (const needle of needles) {
     assert.equal(artifacts.includes(needle), false);
     assert.equal(linearComment.includes(needle), false);
@@ -217,4 +229,26 @@ test("the signed payload is exactly the validated draft", async (t) => {
   assert.deepEqual(JSON.parse(payload.toString()), JSON.parse(fs.readFileSync(path.join(s.dir, "draft.json"), "utf8")));
   assert.equal(verify(null, payload, s.current.publicKey, Buffer.from(envelope.signatures[0].sig, "base64")), true);
   assert.equal(createHash("sha256").update(payload).digest("hex").length, 64);
+});
+
+for (const [label, overrides] of [
+  ["unauthorized author", { approval: { user: { id: 99, login: "untrusted" } } }],
+  ["forged allowlisted login", { approval: { user: { id: 99, login: "matej" } } }],
+  ["writer self approval", { writer: { id: 1, login: "matej" } }],
+  ["other head", { approval: { body: `B3 APPROVE head=${"f".repeat(40)}` } }],
+  ["edited approval", { approval: { updated_at: "2026-10-22T07:20:00.000Z" } }],
+  ["old approval", { approval: { created_at: "2026-10-21T07:10:00.000Z", updated_at: "2026-10-21T07:10:00.000Z" } }],
+]) {
+  test(`B3 refuses ${label} before fetching the signing key`, async (t) => {
+    const s = scenario(t, { overrides });
+    assert.equal(await refusal(s.run()), "b3_receipt_missing");
+    assert.equal(fetchedItems(s.recorder).includes(SIGNING_ITEM), false);
+  });
+}
+
+test("accepts a PKCS8 vault value without a trailing newline (nasvault set-password contract)", async (t) => {
+  const s = scenario(t, { keyFinalNewline: false });
+  const { record } = await s.run();
+  assert.equal(record.serial, 5);
+  assert.ok(s.recorder.buffers.every((bytes) => bytes.every((byte) => byte === 0)));
 });

@@ -19,6 +19,8 @@ export const MANIFEST_ASSET = "tentacles-manifest.json";
 export const PINNED_PUBLIC_KEYS = Object.freeze([]);
 
 // Losing ~/.tentacles/state never lets the device accept a serial below this (U3).
+// Release captain: raise this to the release serial in every audited release PR,
+// including the separately installed updater copy; 1 is only the bootstrap floor.
 export const MIN_MANIFEST_SERIAL = 1;
 
 export const MANIFEST_SCHEMA = "tentacles-manifest/v1";

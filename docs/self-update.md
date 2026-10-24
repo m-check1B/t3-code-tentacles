@@ -133,7 +133,17 @@ node scripts/release/sign-manifest.mjs --draft draft.json --previous signed-curr
 - The protected branch `jack/0.4.1-maintenance` is reported as protected.
 - The commit is the merge commit of a merged PR into that branch, and an
   ancestor of the branch tip.
-- The PR has a `B3 APPROVE|CLEAR|PASS` comment that cites the PR head sha.
+- The signed commit equals the merged PR head (fast-forward merges only).
+- A Forgejo comment or approved review has the exact first line
+  `B3 APPROVE head=<full 40-character SHA>` (`CLEAR` and `PASS` also work).
+  Its authenticated account id and login must match
+  `scripts/release/b3-reviewers.mjs`, and differ from the PR author and the
+  commit author/committer. Missing account identities fail closed.
+  Its creation/submission timestamp must be after that commit and before signing,
+  with an equal update timestamp. Edited, stale, dismissed, other-head or old
+  receipts fail closed; reviews without update-time evidence also fail closed.
+  Only the first 50 comments and reviews are considered; a receipt outside
+  those pages leaves signing on hold.
 - A clean rebuild (`git archive` + `npm pack --ignore-scripts`) and the
   published release asset both match the entry's sha256.
 - The commit's `package.json` version matches the entry, and so do its
@@ -154,14 +164,59 @@ node scripts/release/sign-manifest.mjs --draft draft.json --previous signed-curr
 - any change of the pinned keys;
 - the first manifest.
 
-**Key custody.**
+**Key custody and human setup (U2).**
 
-- The private key is fetched only after every check has passed, from
-  `~/bin/tentacles-signer-key-source` by the exact item name
-  `tentacles-manifest-signing-key-current`.
-- It arrives on a pipe and is held in memory only. It never appears in argv,
-  env, on disk or on stdout.
-- `tentacles-manifest-signing-key-next` is never fetched by this script.
+Only the Founder may create these exact vault items (no prefix matching):
+
+| Item | Purpose |
+| --- | --- |
+| `tentacles-manifest-signing-key-current` | Current Ed25519 PKCS8 PEM signing key |
+| `tentacles-manifest-signing-key-next` | Separate next key; never read by this signer |
+| `tentacles-signer-forgejo-read-token` | Read-only Forgejo provenance token |
+
+The private key is fetched only after all checks pass. The reader is the
+repo-relative `scripts/release/signer-key-source.mjs`, pinned by SHA-256 in
+`sign-manifest.mjs`. The signer executes the verified bytes on stdin, preventing
+path replacement between hashing and execution. There is no home-directory
+helper, environment key, disk fallback, raw `bw` call or CI signing step.
+
+The helper uses only `~/bin/nasvault`: a metadata-only `list` must contain
+exactly one full matching name, then `to-file <exact-name> /dev/fd/3 --password`
+opens the inherited pipe. No disk file is created. Only the canonical Pro
+nasvault's exact non-secret success status is accepted and consumed internally;
+any extra helper stdout/stderr, nasvault error, missing/duplicate item, empty
+value or oversized output aborts. Scoped-host nasvault implementations that
+refuse an existing descriptor are unsupported and fail closed. The next-key
+item is never fetched.
+
+The signer kills the reader process group at 30 seconds, on failure and on
+handled termination. The reader watches its parent every 100 ms and kills its
+group if the parent dies, with its own 25-second deadline. JS-owned original
+pipe chunks, rejected chunks and the concatenated consumer copy are zeroed;
+this does not promise erasure of immutable strings, OS pipe buffers or native
+crypto allocations, or synchronous cleanup of a SIGKILLed process's memory.
+
+Human setup check, on the dedicated no-AI signer host **after GUARDIAN approves
+this reader, its nasvault implementation, host, parent and output fd in the
+reader manifest**:
+
+```
+node scripts/release/sign-manifest.mjs --check-key-source
+~/bin/nasvault list tentacles-manifest-signing-key-
+~/bin/nasvault list tentacles-signer-forgejo-read-token
+```
+
+The first command only checks pinned source bytes; it never runs the reader or
+opens a vault. The two metadata-only lists must show exactly the three full
+names above, once each. They do not prove key validity. Record only names,
+helper hash, host and approval receipt; never values. Stop on any nasvault error.
+Do not perform a first real signing until the separate GUARDIAN audit and
+Founder-owned setup are complete. Tests use synthetic bytes and stub readers.
+
+**Release floor.** `MIN_MANIFEST_SERIAL` in `src/updater/pinned.mjs` is a
+bootstrap value of 1. The release captain must raise it to the new serial in
+each reviewed release and refresh the separately installed updater copy.
+The release pin check is in `.github/workflows/release.yml`, not `.forgejo/`.
 
 **Outputs.** The script writes the signed envelope with `wx`, appends one
 hash-chained line to the log, and prints the Linear comment body for the
