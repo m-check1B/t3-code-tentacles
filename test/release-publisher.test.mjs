@@ -5,6 +5,8 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { publishRelease } from "../scripts/publish-github-release.mjs";
+import { PINNED_PUBLIC_KEYS, MANIFEST_TAG, MANIFEST_ASSET } from "../src/updater/pinned.mjs";
+import { ephemeralKey } from "./helpers/self-update-fixtures.mjs";
 
 function fixture(t) {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles-publish-"));
@@ -66,6 +68,94 @@ test("gh errors are suppressed and temporary notes are removed", async (t) => {
   assert.equal(fs.existsSync(notesFile), false);
 });
 
+test("tgz plus sha256 with shipped empty keys publishes and reports the gate skipped", async (t) => {
+  const f = fixture(t);
+  const messages = [];
+  let calls = 0;
+  assert.equal(PINNED_PUBLIC_KEYS.length, 0);
+  await publishRelease({ ...f, log: message => messages.push(message), runGh: async () => { calls += 1; } });
+  assert.equal(calls, 1);
+  assert.deepEqual(messages, ["pinned-keys gate: skipped, release publishes no signed manifest, feed or signature (KRA-8371)"]);
+});
+
+test("every extra manifest, feed, signature or unknown asset with empty keys is refused before gh", async (t) => {
+  const f = fixture(t);
+  for (const extra of [MANIFEST_ASSET, `${f.filename}.sig`, `${f.filename}.sign`, `${f.filename}.minisig`, `${f.filename}.asc`, "latest.yml", "self-update.json", "unknown.bin"]) {
+    await t.test(extra, async () => {
+      fs.writeFileSync(path.join(f.cwd, extra), "synthetic extra asset");
+      let calls = 0;
+      await assert.rejects(publishRelease({ ...f, assets: [f.filename, `${f.filename}.sha256`, extra],
+        log: () => {}, runGh: async () => { calls += 1; } }), /two pinned Ed25519 public keys/);
+      assert.equal(calls, 0);
+    });
+  }
+});
+
+test("the manifest tag with empty keys is refused even with only tgz plus sha256", async (t) => {
+  const f = fixture(t);
+  await assert.rejects(publishRelease({ ...f, environment: { ...f.environment, GITHUB_REF_NAME: MANIFEST_TAG },
+    log: () => {}, runGh: async () => assert.fail("must refuse before gh") }), /two pinned Ed25519 public keys/);
+});
+
+test("two valid distinct keys allow manifest publication with exactly the checked assets", async (t) => {
+  const f = fixture(t);
+  const publicKeys = [ephemeralKey().raw, ephemeralKey().raw];
+  fs.writeFileSync(path.join(f.cwd, MANIFEST_ASSET), "synthetic manifest");
+  let calls = 0;
+  for (const tag of [f.environment.GITHUB_REF_NAME, MANIFEST_TAG]) {
+    const assets = [f.filename, `${f.filename}.sha256`, MANIFEST_ASSET];
+    const checkedAssets = [...assets];
+    const messages = [];
+    await publishRelease({ ...f, environment: { ...f.environment, GITHUB_REF_NAME: tag }, assets, publicKeys,
+      log: message => { messages.push(message); assets.push("unchecked.sig"); }, runGh: async args => {
+        calls += 1;
+        assert.deepEqual(args.slice(0, 6), ["release", "create", tag, ...checkedAssets]);
+        assert.equal(args.includes("unchecked.sig"), false);
+      } });
+    assert.deepEqual(messages, ["pinned-keys gate: required, 2 configured (KRA-8371)"]);
+  }
+  assert.equal(calls, 2);
+});
+
+test("extra assets still require exactly two valid distinct keys", async (t) => {
+  const f = fixture(t);
+  const key = ephemeralKey().raw;
+  for (const publicKeys of [[key], [key, key], [key, "bm90LWEta2V5"]]) {
+    let calls = 0;
+    await assert.rejects(publishRelease({ ...f, assets: [f.filename, `${f.filename}.sha256`, MANIFEST_ASSET], publicKeys,
+      log: () => {}, runGh: async () => { calls += 1; } }));
+    assert.equal(calls, 0);
+  }
+});
+
+test("asset names cannot inject gh options, labels or paths even with valid keys", async (t) => {
+  const f = fixture(t);
+  const publicKeys = [ephemeralKey().raw, ephemeralKey().raw];
+  for (const asset of ["--notes-file", "../manifest.json", "manifest.json#label", "subdir/manifest.json"]) {
+    let calls = 0;
+    await assert.rejects(publishRelease({ ...f, assets: [f.filename, `${f.filename}.sha256`, asset], publicKeys,
+      log: () => {}, runGh: async () => { calls += 1; } }), /Invalid release assets/);
+    assert.equal(calls, 0);
+  }
+});
+
+test("the workflow gate checks the publisher's packed asset plan and reports skipped without gh", async (t) => {
+  const f = fixture(t);
+  const { execFileSync } = await import("node:child_process");
+  const workflow = fs.readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+  const command = /run: (node scripts\/publish-github-release\.mjs --check-pinned-keys)\s*$/m.exec(workflow)?.[1];
+  assert.ok(command, "workflow must check the publisher's actual asset plan");
+  assert.ok(workflow.indexOf(command) > workflow.indexOf("package_file=$(npm pack --silent)"));
+  assert.doesNotMatch(workflow, /run: node scripts\/release\/assert-pinned-keys\.mjs/);
+  assert.match(workflow.slice(0, workflow.indexOf(command)), /BRIDGE_PACKAGE_FILE: \$\{\{ steps\.pack\.outputs\.package_file \}\}/);
+  const script = new URL("../scripts/publish-github-release.mjs", import.meta.url).pathname;
+  const stdout = execFileSync(process.execPath, [script, "--check-pinned-keys"], { cwd: f.cwd, env: f.environment, encoding: "utf8" });
+  assert.equal(stdout.trim(), "pinned-keys gate: skipped, release publishes no signed manifest, feed or signature (KRA-8371)");
+  assert.throws(() => execFileSync(process.execPath, [script, "--check-pinned-keys"], {
+    cwd: f.cwd, env: { ...f.environment, GITHUB_REF_NAME: MANIFEST_TAG }, stdio: "pipe",
+  }));
+});
+
 test("the workflow publish command runs end-to-end against a local fake gh only", async (t) => {
   const f = fixture(t);
   const { execFile } = await import("node:child_process");
@@ -73,7 +163,7 @@ test("the workflow publish command runs end-to-end against a local fake gh only"
   const fake = path.join(f.cwd, "gh");
   fs.writeFileSync(fake, `#!${process.execPath}\nconst fs = require('node:fs'); const args = process.argv.slice(2); fs.writeFileSync('gh-call.json', JSON.stringify({ args, notes: fs.readFileSync(args[args.indexOf('--notes-file') + 1], 'utf8') }));\n`, { mode: 0o700 });
   const workflow = fs.readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
-  const command = /run: (node scripts\/publish-github-release\.mjs)/.exec(workflow)?.[1];
+  const command = /run: (node scripts\/publish-github-release\.mjs)\s*$/m.exec(workflow)?.[1];
   assert.ok(command, "must exercise the workflow's actual publish script");
   const script = new URL(`../${command.slice(5)}`, import.meta.url);
   const { stdout } = await promisify(execFile)(process.execPath, [script.pathname], { cwd: f.cwd, env: { ...f.environment, PATH: f.cwd } });
