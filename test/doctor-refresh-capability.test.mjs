@@ -63,6 +63,15 @@ for (const input of [{ status: "ready" }, { enabled: false }, { installed: false
   });
 }
 
+test("doctor never refreshes an uninstalled snapshot with retained enabled settings", async (t) => {
+  const { client, calls, options } = fixture(t, { installed: false, status: "error" });
+  client.getSettings = async () => ({ providerInstances: { cursor: { driver: "cursor", enabled: true } } });
+  await doctor(client, options);
+  assert.deepEqual(calls.refresh, []);
+  assert.equal(calls.config, 1);
+  assert.equal(fs.existsSync(options.refreshDirectory), false);
+});
+
 test("doctor aborts a hanging refresh inside its deadline and retains a fail-closed row", async (t) => {
   const { client, calls, options } = fixture(t);
   let signal;
@@ -77,6 +86,9 @@ test("doctor aborts a hanging refresh inside its deadline and retains a fail-clo
 for (const [label, capability] of [
   ["upstream SPA", "<html>SYNTHETIC_PRIVATE_BODY</html>"],
   ["missing capability", { talkTurnResult: "v2", body: "SYNTHETIC_PRIVATE_BODY" }],
+  ["unknown field", { talkTurnResult: "v1", junk: true }],
+  ["unrelated body", { talkTurnResult: "v1", body: "SYNTHETIC_PRIVATE_BODY" }],
+  ["unagreed extension", { talkTurnResult: "v1", talkFreshProviderContext: "v1", talkFreshProviderContextProviders: ["codex"] }],
   ["missing route", new T3HttpError({ method: "GET", pathname: "/api/orchestration/turn-result", status: 404 })],
 ]) {
   test(`doctor reports actionable missing capability for ${label}`, async (t) => {
@@ -84,6 +96,8 @@ for (const [label, capability] of [
     const report = await doctor(client, options);
     assert.equal(calls.capability, 1);
     assert.equal(report.capabilities.talkTurnResult, null);
+    assert.equal(report.capabilities.turnInterrupt ?? null, null);
+    assert.equal(Object.hasOwn(report.capabilities, "talkFreshProviderContext"), false);
     assert.equal(report.t3.talk.status, "missing");
     assert.equal(report.t3.talk.code, "t3_not_patched");
     assert.match(report.t3.talk.action, /update T3/i);
@@ -94,7 +108,7 @@ for (const [label, capability] of [
 }
 
 test("doctor reports only bounded capability fields for a patched T3", async (t) => {
-  const { client, options } = fixture(t, { status: "ready", capability: { talkTurnResult: "v1", body: "SYNTHETIC_PRIVATE_BODY" } });
+  const { client, options } = fixture(t, { status: "ready", capability: { talkTurnResult: "v1" } });
   const report = await doctor(client, options);
   assert.equal(report.capabilities.talkTurnResult, "v1");
   assert.deepEqual(report.t3.talk, { status: "present", code: null, action: null });
