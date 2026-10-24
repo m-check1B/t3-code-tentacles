@@ -120,3 +120,17 @@ test("authenticated lab still requires explicit ready, installed and a live mode
   assert.equal(row.installed, false);
   assert.equal(row.ready, false);
 });
+
+test("Antigravity never invents a default model from a fixed fallback", async () => {
+  const c = client({ provider: { status: "ready", installed: true, auth: { status: "authenticated" } } });
+  const rpc = c.rpc;
+  c.rpc = async () => {
+    const config = await rpc();
+    config.providers[0].models = MODELS.map(({ isDefault, ...model }) => model);
+    return config;
+  };
+  const row = (await doctor(c, { fetchImpl })).labs.find((lab) => lab.instanceId === "antigravity");
+  assert.equal(row.defaultModel, null);
+  assert.equal(row.ready, false);
+  assert.equal(row.code, "default_model_unavailable");
+});
