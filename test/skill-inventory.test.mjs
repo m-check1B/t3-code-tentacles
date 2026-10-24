@@ -40,16 +40,23 @@ test("skill inventory drops unsafe names, normalizes scope and bounds size", () 
     { name: "bad\u0007name", scope: "user", enabled: true },
     { name: "", enabled: true },
     { name: "x".repeat(129), enabled: true },
-    { name: "odd-scope", scope: "../etc", enabled: "yes" },
+    { name: "odd-scope", scope: "../etc", enabled: true },
+    { name: "odd-enabled", enabled: "yes" },
+    { name: " padded", enabled: true },
+    { name: "a/b", enabled: true },
+    { name: "rtl\u202egnp", enabled: true },
     ...Array.from({ length: 600 }, (_, index) => ({ name: `bulk-${String(index).padStart(3, "0")}`, scope: "user", enabled: true })),
   ];
   const row = skillInventoryRow("codex", { skills });
-  assert.equal(row.dropped, 3);
-  assert.equal(row.count, 602);
+  // Nothing is normalized: bad scope/enabled/whitespace/path/bidi names are dropped.
+  assert.equal(row.dropped, 8);
+  assert.equal(row.count, 601);
   assert.equal(row.truncated, true);
   assert.equal(row.skills.length, 512);
-  const odd = skillInventoryRow("codex", { skills: [skills[4]] }).skills[0];
-  assert.deepEqual(odd, { name: "odd-scope", scope: null, enabled: null });
+  assert.deepEqual(skillInventoryRow("codex", { skills: [{ name: "bare" }] }).skills, [
+    { name: "bare", scope: null, enabled: null },
+  ]);
+  assert.equal(skillInventoryRow("hermes", { skills: [{ name: "x", enabled: true }] }).state, "unavailable");
 });
 
 test("skill inventory digest is order independent and changes with state", () => {

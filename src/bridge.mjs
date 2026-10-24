@@ -1000,22 +1000,30 @@ const SKILL_SCOPE = /^[a-z][a-z0-9_-]{0,31}$/;
 // Read-only projection of the native skills T3 already reports per lab.
 // Names, scope and enabled state only: local paths and descriptions stay on
 // this computer. A non-array list is unobserved, never an empty inventory.
+// Entries are never normalized: anything not representable exactly is
+// counted as dropped, so consumers can refuse a lossy list.
+const SKILL_NAME_UNSAFE = /[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069/\\]/;
 export function skillInventoryRow(instanceId, configProvider) {
+  const unavailable = { instanceId, state: "unavailable", count: null, dropped: 0, truncated: false, digest: null, skills: [] };
+  // Hermes stays unadmitted until isolation proof; its skills do not leave the computer.
+  if (instanceId === "hermes") return unavailable;
   const skills = configProvider?.skills;
-  if (!Array.isArray(skills)) return { instanceId, state: "unavailable", count: null, dropped: 0, truncated: false, digest: null, skills: [] };
+  if (!Array.isArray(skills)) return unavailable;
   const rows = [];
   let dropped = 0;
   for (const entry of skills) {
-    const name = typeof entry?.name === "string" ? entry.name.trim() : "";
-    if (!name || name.length > SKILL_NAME_MAX || /[\u0000-\u001f\u007f]/.test(name)) {
+    const name = entry?.name;
+    const scope = entry?.scope ?? null;
+    const enabled = entry?.enabled ?? null;
+    if (
+      typeof name !== "string" || !name || name.length > SKILL_NAME_MAX || name !== name.trim() || SKILL_NAME_UNSAFE.test(name)
+      || (scope !== null && (typeof scope !== "string" || !SKILL_SCOPE.test(scope)))
+      || (enabled !== null && typeof enabled !== "boolean")
+    ) {
       dropped += 1;
       continue;
     }
-    rows.push({
-      name,
-      scope: typeof entry.scope === "string" && SKILL_SCOPE.test(entry.scope) ? entry.scope : null,
-      enabled: typeof entry.enabled === "boolean" ? entry.enabled : null,
-    });
+    rows.push({ name, scope, enabled });
   }
   rows.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : String(a.scope) < String(b.scope) ? -1 : String(a.scope) > String(b.scope) ? 1 : 0));
   const kept = rows.slice(0, SKILL_INVENTORY_LIMIT);
