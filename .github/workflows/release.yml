@@ -26,8 +26,6 @@ jobs:
           node-version: 22
       - name: Verify tag matches package version
         run: test "$GITHUB_REF_NAME" = "v$(node -p 'require("./package.json").version')"
-      - name: Refuse release without pinned update keys (KRA-8371)
-        run: node scripts/release/assert-pinned-keys.mjs
       - run: npm ci
       - run: npm run check
       - run: npm test
@@ -38,6 +36,10 @@ jobs:
           package_file=$(npm pack --silent)
           shasum -a 256 "$package_file" > "$package_file.sha256"
           echo "package_file=$package_file" >> "$GITHUB_OUTPUT"
+      - name: Check pinned keys for the release assets (KRA-8371)
+        env:
+          BRIDGE_PACKAGE_FILE: ${{ steps.pack.outputs.package_file }}
+        run: node scripts/publish-github-release.mjs --check-pinned-keys
       - name: Publish canonical GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

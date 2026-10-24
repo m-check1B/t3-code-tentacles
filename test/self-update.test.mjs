@@ -87,6 +87,26 @@ test("the next pinned key verifies too (rotation), and no pinned key fails close
   assert.deepEqual(PINNED_PUBLIC_KEYS, [], "no real key is committed before the GUARDIAN key ceremony");
 });
 
+test("shipped empty pins refuse signed-looking and unsigned manifests before any install or fetch", async (t) => {
+  assert.equal(PINNED_PUBLIC_KEYS.length, 0);
+  const key = ephemeralKey();
+  const v = packageTgz("0.4.1-jack.2");
+  const manifest = manifestOf({ expires: LATER, securityFloor: "0.4.1-jack.2", recommended: "0.4.1-jack.2", versions: [entryFor("0.4.1-jack.2", v)] });
+  for (const bytes of [signEnvelope(manifest, key), Buffer.from(JSON.stringify(manifest))]) {
+    assert.equal(codeOf(() => verifyManifest(bytes, { publicKeys: PINNED_PUBLIC_KEYS, now: NOW, minSerial: 1 })), "updater_unconfigured");
+    const home = tempHome(t);
+    let fetches = 0;
+    const updater = new SelfUpdater({ home, computerId: "computer-a1", now: () => NOW,
+      fetchImpl: async () => { fetches += 1; return new Response(bytes); },
+      isIdle: async () => true, restart: async () => assert.fail("must not restart"),
+    });
+    assert.strictEqual(updater.publicKeys, PINNED_PUBLIC_KEYS);
+    assert.deepEqual(await updater.run({ trigger: "now" }), { status: "failed", reason: "updater_unconfigured" });
+    assert.equal(fetches, 0);
+    assert.equal(fs.existsSync(path.join(home, "versions")), false);
+  }
+});
+
 test("replay: a lower serial, a same-serial different manifest and a serial below the compiled minimum are refused", () => {
   const key = ephemeralKey();
   const v = packageTgz("0.4.1-jack.2");
