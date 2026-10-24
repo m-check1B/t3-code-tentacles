@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.4.1-jack.3] - 2026-10-24
+
+### Fixed
+
+- Backport V1 observe counting: only non-null active turn IDs or starting/running
+  sessions count as active; ready and interrupted sessions have separate counters
+  (KRA-8227).
+- Isolate model-selection and bridge-hardening test defaults from ambient model
+  variables while retaining assertions and auth rotation coverage (KRA-8794).
+
 ## [0.4.1-jack.2] - 2026-10-24
 
 - Scope the pinned-key release gate to signed-update publication; package-only releases skip it while manifests, feeds and signatures still require two pinned keys (KRA-8371).

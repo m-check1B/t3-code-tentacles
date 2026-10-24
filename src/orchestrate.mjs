@@ -540,7 +540,7 @@ export async function observe(client) {
     }
   }
   const activeTurns = threads
-    .filter((thread) => thread.session && ["starting", "running", "ready", "interrupted"].includes(thread.session.status))
+    .filter((thread) => thread.session && (thread.session.activeTurnId != null || ["starting", "running"].includes(thread.session.status)))
     .map((thread) => ({
       threadId: thread.id,
       title: thread.title,
@@ -566,6 +566,8 @@ export async function observe(client) {
       pendingApprovals: pendingWork.filter((entry) => entry.approvals).length,
       pendingUserInput: pendingWork.filter((entry) => entry.userInput).length,
       activeTurns: activeTurns.length,
+      readySessions: threads.filter((thread) => thread.session?.status === "ready").length,
+      interruptedSessions: threads.filter((thread) => thread.session?.status === "interrupted").length,
     },
   };
 }
