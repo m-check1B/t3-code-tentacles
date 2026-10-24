@@ -1,0 +1,309 @@
+{
+  "base": "5807e5ca91664a4fc0f1da85ff8aa4390b8d76ce",
+  "protocols": {
+    "1": {
+      "wire": [
+        {
+          "pathname": "/api/orchestration/threads/thread",
+          "method": "GET"
+        },
+        {
+          "pathname": "/api/orchestration/dispatch",
+          "method": "POST",
+          "body": {
+            "type": "thread.create",
+            "commandId": "thread-command",
+            "threadId": "thread",
+            "projectId": "project",
+            "title": "Synthetic",
+            "modelSelection": {
+              "instanceId": "codex",
+              "model": "gpt-5.6-sol",
+              "options": [
+                {
+                  "id": "reasoningEffort",
+                  "value": "high"
+                }
+              ]
+            },
+            "runtimeMode": "full-access",
+            "interactionMode": "default",
+            "branch": null,
+            "worktreePath": null,
+            "createdAt": "<timestamp>"
+          }
+        },
+        {
+          "pathname": "/api/orchestration/threads/thread",
+          "method": "GET"
+        },
+        {
+          "pathname": "/api/orchestration/dispatch",
+          "method": "POST",
+          "body": {
+            "type": "thread.turn.start",
+            "commandId": "first-command",
+            "threadId": "thread",
+            "message": {
+              "messageId": "first-message",
+              "role": "user",
+              "text": "first",
+              "attachments": []
+            },
+            "modelSelection": {
+              "instanceId": "codex",
+              "model": "gpt-5.6-sol",
+              "options": [
+                {
+                  "id": "reasoningEffort",
+                  "value": "high"
+                }
+              ]
+            },
+            "titleSeed": "Synthetic",
+            "runtimeMode": "full-access",
+            "interactionMode": "default",
+            "createdAt": "<timestamp>"
+          }
+        },
+        {
+          "pathname": "/api/orchestration/threads/thread",
+          "method": "GET"
+        },
+        {
+          "pathname": "/api/orchestration/threads/thread",
+          "method": "GET"
+        },
+        {
+          "pathname": "/api/orchestration/dispatch",
+          "method": "POST",
+          "body": {
+            "type": "thread.turn.start",
+            "commandId": "next-command",
+            "threadId": "thread",
+            "message": {
+              "messageId": "next-message",
+              "role": "user",
+              "text": "next",
+              "attachments": []
+            },
+            "modelSelection": {
+              "instanceId": "codex",
+              "model": "gpt-5.6-sol",
+              "options": [
+                {
+                  "id": "reasoningEffort",
+                  "value": "high"
+                }
+              ]
+            },
+            "runtimeMode": "full-access",
+            "interactionMode": "default",
+            "createdAt": "<timestamp>"
+          }
+        },
+        {
+          "pathname": "/api/orchestration/threads/thread",
+          "method": "GET"
+        },
+        {
+          "pathname": "/api/orchestration/turn-result",
+          "method": "GET"
+        },
+        {
+          "pathname": "/api/orchestration/turn-result",
+          "method": "POST",
+          "body": {
+            "threadId": "thread",
+            "messageId": "next-message",
+            "turnCommandId": "next-command"
+          }
+        }
+      ],
+      "doctor": {
+        "ready": true,
+        "capabilities": {
+          "talkTurnResult": "v1",
+          "turnInterrupt": "turn-interrupt-v1"
+        }
+      },
+      "receipt": {
+        "threadId": "thread",
+        "messageId": "next-message",
+        "turnCommandId": "next-command",
+        "turnId": "turn",
+        "assistantMessageId": "assistant",
+        "instanceId": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "state": "succeeded",
+        "outputText": "synthetic reply"
+      }
+    },
+    "2": {
+      "wire": [
+        {
+          "pathname": "/api/orchestration/threads/thread",
+          "method": "GET"
+        },
+        {
+          "method": "orchestration.dispatchCommand",
+          "payload": {
+            "type": "thread.create",
+            "commandId": "thread-command",
+            "threadId": "thread",
+            "projectId": "project",
+            "title": "Synthetic",
+            "modelSelection": {
+              "instanceId": "codex",
+              "model": "gpt-5.6-sol",
+              "options": [
+                {
+                  "id": "reasoningEffort",
+                  "value": "high"
+                }
+              ]
+            },
+            "runtimeMode": "full-access",
+            "createdBy": "user",
+            "creationSource": "mcp",
+            "interactionMode": "default",
+            "branch": null,
+            "worktreePath": null
+          }
+        },
+        {
+          "pathname": "/api/orchestration/threads/thread",
+          "method": "GET"
+        },
+        {
+          "method": "orchestration.dispatchCommand",
+          "payload": {
+            "type": "thread.runtime-mode.set",
+            "commandId": "first-command:runtime-mode",
+            "threadId": "thread",
+            "runtimeMode": "full-access"
+          }
+        },
+        {
+          "pathname": "/api/orchestration/threads/thread",
+          "method": "GET"
+        },
+        {
+          "method": "orchestration.dispatchMessageWithMode",
+          "payload": {
+            "type": "message.dispatch",
+            "runtimeMode": "full-access",
+            "commandId": "first-command",
+            "createdBy": "user",
+            "creationSource": "mcp",
+            "threadId": "thread",
+            "messageId": "first-message",
+            "text": "first",
+            "attachments": [],
+            "modelSelection": {
+              "instanceId": "codex",
+              "model": "gpt-5.6-sol",
+              "options": [
+                {
+                  "id": "reasoningEffort",
+                  "value": "high"
+                }
+              ]
+            },
+            "titleSeed": "Synthetic",
+            "deliveryIntent": "auto",
+            "dispatchMode": {
+              "type": "start_immediately"
+            }
+          }
+        },
+        {
+          "pathname": "/api/orchestration/threads/thread",
+          "method": "GET"
+        },
+        {
+          "pathname": "/api/orchestration/threads/thread",
+          "method": "GET"
+        },
+        {
+          "method": "orchestration.dispatchCommand",
+          "payload": {
+            "type": "thread.runtime-mode.set",
+            "commandId": "next-command:runtime-mode",
+            "threadId": "thread",
+            "runtimeMode": "full-access"
+          }
+        },
+        {
+          "pathname": "/api/orchestration/threads/thread",
+          "method": "GET"
+        },
+        {
+          "method": "orchestration.dispatchMessageWithMode",
+          "payload": {
+            "type": "message.dispatch",
+            "runtimeMode": "full-access",
+            "commandId": "next-command",
+            "createdBy": "user",
+            "creationSource": "mcp",
+            "threadId": "thread",
+            "messageId": "next-message",
+            "text": "next",
+            "attachments": [],
+            "modelSelection": {
+              "instanceId": "codex",
+              "model": "gpt-5.6-sol",
+              "options": [
+                {
+                  "id": "reasoningEffort",
+                  "value": "high"
+                }
+              ]
+            },
+            "deliveryIntent": "auto",
+            "dispatchMode": {
+              "type": "start_immediately"
+            }
+          }
+        },
+        {
+          "pathname": "/api/orchestration/threads/thread",
+          "method": "GET"
+        },
+        {
+          "pathname": "/api/orchestration/turn-result",
+          "method": "GET"
+        },
+        {
+          "pathname": "/api/orchestration/turn-result",
+          "method": "POST",
+          "body": {
+            "threadId": "thread",
+            "messageId": "next-message",
+            "turnCommandId": "next-command"
+          }
+        }
+      ],
+      "doctor": {
+        "ready": true,
+        "capabilities": {
+          "talkTurnResult": "v1",
+          "turnInterrupt": "turn-interrupt-v1"
+        }
+      },
+      "receipt": {
+        "threadId": "thread",
+        "messageId": "next-message",
+        "turnCommandId": "next-command",
+        "turnId": "turn",
+        "assistantMessageId": "assistant",
+        "instanceId": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "state": "succeeded",
+        "outputText": "synthetic reply"
+      }
+    }
+  }
+}

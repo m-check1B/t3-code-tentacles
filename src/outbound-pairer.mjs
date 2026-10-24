@@ -4,6 +4,7 @@ import { privateModeOk } from "./platform.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { randomUUID } from "node:crypto";
 import { continueThread, doctor, originate } from "./bridge.mjs";
+import { requireFreshFlags, requireFreshProviderContext, freshContextProviders } from "./fresh-provider-context.mjs";
 import { observe, REPORT_MODEL_LABEL, threadReportStatus } from "./orchestrate.mjs";
 import { PluginInventoryCache } from "./plugin-inventory.mjs";
 import { requireContinueSelection } from "./model-selection.mjs";
@@ -28,10 +29,10 @@ const offerSecrets = new WeakMap();
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const MAX_TIMER_MS = 2_147_483_647;
 const ORIGINATE_PARAM_KEYS = new Set([
-  "workspace", "title", "message", "instanceId", "model", "options", "budget", "runtimeMode", "idempotencyKey",
+  "workspace", "title", "message", "instanceId", "model", "options", "budget", "runtimeMode", "idempotencyKey", "freshProviderContext", "fixedTitle",
 ]);
 const CONTINUE_PARAM_KEYS = new Set([
-  "threadId", "message", "instanceId", "model", "options", "budget", "runtimeMode", "turnCommandId", "messageId",
+  "threadId", "message", "instanceId", "model", "options", "budget", "runtimeMode", "turnCommandId", "messageId", "freshProviderContext",
 ]);
 
 function isRecord(value) {
@@ -277,17 +278,26 @@ export class LoopbackRuntimeAdapter {
 
   originate(params) {
     const admitted = fullAccessParams(params, "originate", ORIGINATE_PARAM_KEYS);
-    this.prepareTalkWorkspaceImpl(admitted.workspace);
-    return this.originateImpl(this.client, admitted);
+    requireFreshFlags(admitted);
+    const dispatch = () => {
+      this.prepareTalkWorkspaceImpl(admitted.workspace);
+      return this.originateImpl(this.client, admitted);
+    };
+    return admitted.freshProviderContext === true || admitted.fixedTitle === true
+      ? requireFreshProviderContext(this.client, admitted).then(dispatch) : dispatch();
   }
 
   continue(params) {
     const input = fullAccessParams(params, "continue", CONTINUE_PARAM_KEYS);
     requireContinueSelection({ instanceId: input.instanceId, model: input.model, options: input.options, budget: input.budget });
+    requireFreshFlags(input);
+    const dispatch = () => input.freshProviderContext === true
+      ? requireFreshProviderContext(this.client, input).then(() => this.continueImpl(this.client, input))
+      : this.continueImpl(this.client, input);
     // Serialized with interrupt so a delayed Stop for A cannot land on B.
     return typeof input.threadId === "string"
-      ? this.withThreadLock(input.threadId, () => this.continueImpl(this.client, input))
-      : this.continueImpl(this.client, input);
+      ? this.withThreadLock(input.threadId, dispatch)
+      : dispatch();
   }
 
   threadArtifact(params) {
@@ -321,12 +331,14 @@ export class LoopbackRuntimeAdapter {
     }
     const report = await this.refreshModels();
     let supported = false;
+    let freshProviders = [];
     try {
       const capabilities = await this.client.request("/api/orchestration/turn-result");
       supported = capabilities?.talkTurnResult === "v1";
+      freshProviders = freshContextProviders(capabilities);
     } catch { /* Older or unavailable T3 has no exact-result capability. */ }
     // Exact interruption is only provable through the exact turn-result query.
-    const result = { ...report, capabilities: { talkTurnResult: supported ? "v1" : null, turnInterrupt: supported ? TURN_INTERRUPT_CONTRACT : null } };
+    const result = { ...report, capabilities: { talkTurnResult: supported ? "v1" : null, turnInterrupt: supported ? TURN_INTERRUPT_CONTRACT : null, ...(freshProviders.length ? { talkFreshProviderContext: "v1", talkFreshProviderContextProviders: [...freshProviders] } : {}) } };
     if (this.capabilityCache) {
       // KRA-7369: the connector inventory rides the lab-catalog answer, because
       // Sphere admits only the advertised v1 methods. A scan never delays this
@@ -363,8 +375,13 @@ export class LoopbackRuntimeAdapter {
       || (typeof result.outputText === "string" && Buffer.byteLength(result.outputText, "utf8") > 32 * 1024)) {
       throw new Error("Invalid correlated turn result");
     }
+    const fresh = Object.hasOwn(result, "freshProviderContext") || Object.hasOwn(result, "nativeContextGeneration");
+    if (fresh && (result.state === "pending" || !result.turnId || result.freshProviderContext !== true || result.nativeContextGeneration !== input.turnCommandId)) {
+      throw new Error("Invalid applied fresh provider context receipt");
+    }
+    if (fresh) await requireFreshProviderContext(this.client, { freshProviderContext: true, instanceId: result.instanceId });
     // Closed projection excludes all upstream additions and internal diagnostics.
-    return Object.fromEntries([...keys, "turnId", "assistantMessageId", "instanceId", "model", "effort", "state", "outputText"].map((key) => [key, result[key]]));
+    return { ...Object.fromEntries([...keys, "turnId", "assistantMessageId", "instanceId", "model", "effort", "state", "outputText"].map((key) => [key, result[key]])), ...(fresh ? { freshProviderContext: true, nativeContextGeneration: result.nativeContextGeneration } : {}) };
   }
 }
 

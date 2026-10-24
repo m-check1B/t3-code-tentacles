@@ -242,3 +242,43 @@ This code requires the reviewed Tentacles pairer runtime to be released on the
 paired computer. A Jack API/web release alone cannot update an old machine-side
 pairer. No desktop source/build/install is required by this patch, and no live
 Local reply is claimed from synthetic tests.
+
+### Additive fresh provider context (requires a supporting T3 build)
+
+A host may advertise `capabilities.talkFreshProviderContext: "v1"` together
+with an explicit `talkFreshProviderContextProviders` list. The bridge forwards
+this capability only when the authenticated T3 exact-result endpoint advertises
+both it and `talkTurnResult: "v1"`. Ordinary hosts and other providers retain
+their existing behavior. This source addition does not imply support in an
+already installed T3 build.
+
+For a supported provider, the closed `originate` and `continue` bodies accept
+`freshProviderContext: true` with an explicit `instanceId`. The bridge checks
+current support before preparing the workspace or dispatching. T3 must start a
+new native provider context for that command while preserving its visible
+thread. Originate additionally accepts `fixedTitle: true`, which retains the
+explicit title by omitting the turn's automatic title seed. Fixed title alone
+requires the same capability and explicit provider. Optional flags must be
+booleans; false means omitted. Changing either effective flag under an existing
+origination idempotency key is refused. Omitting the flags preserves the previous
+wire behavior without adding a capability probe to dispatch.
+
+Both legacy T3 and the Orchestrator V2 adapter carry the opted-in contract.
+V2 maps the flag onto `message.dispatch` through
+`orchestration.dispatchMessageWithMode`, preserving the runtime-mode prerequisite
+and the original command/message IDs. The client rechecks support before sending
+a fresh turn. Missing, zero, unknown-version or malformed fresh capabilities
+advertise no fresh fields and refuse opt-in requests before workspace changes.
+In particular, T3 `0.1.0-jack.1` advertising zero keeps the default wire unchanged;
+this is a capability rule, not a live compatibility claim for that build.
+
+Only a terminal exact-result receipt may contain `freshProviderContext: true`
+and `nativeContextGeneration`, and both must be present with the generation
+exactly equal to the accepted `turnCommandId`. The bridge forwards these fields
+from the correlated runtime result after verifying current provider support; it
+never manufactures an applied receipt from the request. Pending and legacy
+results omit both fields. A consumer must
+require this applied receipt before treating a fresh-context operation as
+complete. Visible thread reuse and native session/context reuse are separate
+contracts; preserving a visible thread does not authorize resuming old native
+memory.
