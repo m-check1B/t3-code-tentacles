@@ -44,9 +44,10 @@ test("signed-in antigravity is ready with the live default model", async () => {
   assert.equal(Object.hasOwn(row, "action"), false);
 });
 
-test("installed antigravity whose sign-in T3 has not checked yet stays usable", async () => {
+test("installed antigravity with unchecked sign-in stays not ready despite cached models", async () => {
   const row = await antigravityRow({ provider: { status: "warning", installed: true, auth: { status: "unknown" } } });
-  assert.equal(row.ready, true);
+  assert.equal(row.ready, false);
+  assert.equal(row.code, "sign_in_unchecked");
   assert.equal(row.signedIn, null);
   assert.equal(row.status, "installed");
 });
@@ -97,4 +98,25 @@ test("an agent error is reported as a provider error, never as ready", async () 
   const row = await antigravityRow({ provider: { status: "error", installed: true, auth: { status: "authenticated" } } });
   assert.equal(row.ready, false);
   assert.equal(row.code, "provider_error");
+});
+
+
+test("unknown or absent authentication never becomes ready, including upstream ready", async () => {
+  for (const auth of [undefined, {}, { status: "unknown" }, { status: "future-auth" }]) {
+    const row = await antigravityRow({ provider: { status: "ready", installed: true, auth } });
+    assert.equal(row.ready, false);
+    assert.equal(row.signedIn, null);
+    assert.equal(row.code, "sign_in_unchecked");
+  }
+});
+
+test("authenticated lab still requires explicit ready, installed and a live model", async () => {
+  for (const status of [undefined, "warning", "future-status"]) {
+    const row = await antigravityRow({ provider: { status, installed: true, auth: { status: "authenticated" } } });
+    assert.equal(row.ready, false);
+    assert.equal(row.signedIn, true);
+  }
+  const row = await antigravityRow({ provider: { status: "ready", installed: "true", auth: { status: "authenticated" } } });
+  assert.equal(row.installed, false);
+  assert.equal(row.ready, false);
 });
