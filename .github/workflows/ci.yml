@@ -17,5 +17,5 @@ jobs:
         with:
           node-version: 22
       - run: npm run check
-      - run: ~/bin/gate-slot npm test
+      - run: npm test
       - run: git diff --check
