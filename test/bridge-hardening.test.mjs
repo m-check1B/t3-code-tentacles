@@ -132,7 +132,7 @@ test("doctor keeps an installed Hermes lab fail-closed without bounded assistant
       instanceId: "hermes",
       status: "ready",
       installed: true,
-      models: [{ slug: "deepseek:deepseek-v4-flash" }],
+      models: [{ slug: "deepseek:deepseek-v4-flash", isDefault: true }],
     }] }),
   };
   const result = await doctor(client, {
@@ -161,7 +161,7 @@ test("doctor prints an advertised lab matrix without secrets and keeps Cursor ex
     rpc: async () => ({
       environment: { serverVersion: "/Users/private/TOKEN-CANARY" },
       providers: [
-        { instanceId: "hermes", driver: "grok", status: "ready", installed: true, models: [{ slug: "deepseek:deepseek-v4-flash" }] },
+        { instanceId: "hermes", driver: "grok", status: "ready", installed: true, models: [{ slug: "deepseek:deepseek-v4-flash", isDefault: true }] },
         { instanceId: "grok", driver: "grok", status: "ready", installed: true, models: [{ slug: "grok-4.6", name: "Grok 4.6" }] },
         { instanceId: "codex", driver: "codex", status: "ready", installed: true, models: [{ slug: "gpt-5.6-luna" }] },
         { instanceId: "claudeAgent", driver: "claudeAgent", status: "ready", installed: true, models: [{ slug: "claude-sonnet-5" }] },

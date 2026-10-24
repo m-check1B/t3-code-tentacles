@@ -4,7 +4,7 @@
     "1": {
       "wire": [
         {
-          "pathname": "/api/orchestration/threads/thread",
+          "pathname": "/api/orchestration/threads/12345678-1111-4111-8111-111111111111",
           "method": "GET"
         },
         {
@@ -13,7 +13,7 @@
           "body": {
             "type": "thread.create",
             "commandId": "thread-command",
-            "threadId": "thread",
+            "threadId": "12345678-1111-4111-8111-111111111111",
             "projectId": "project",
             "title": "Synthetic",
             "modelSelection": {
@@ -34,7 +34,7 @@
           }
         },
         {
-          "pathname": "/api/orchestration/threads/thread",
+          "pathname": "/api/orchestration/threads/12345678-1111-4111-8111-111111111111",
           "method": "GET"
         },
         {
@@ -43,7 +43,7 @@
           "body": {
             "type": "thread.turn.start",
             "commandId": "first-command",
-            "threadId": "thread",
+            "threadId": "12345678-1111-4111-8111-111111111111",
             "message": {
               "messageId": "first-message",
               "role": "user",
@@ -67,11 +67,11 @@
           }
         },
         {
-          "pathname": "/api/orchestration/threads/thread",
+          "pathname": "/api/orchestration/threads/12345678-1111-4111-8111-111111111111",
           "method": "GET"
         },
         {
-          "pathname": "/api/orchestration/threads/thread",
+          "pathname": "/api/orchestration/threads/12345678-1111-4111-8111-111111111111",
           "method": "GET"
         },
         {
@@ -80,7 +80,7 @@
           "body": {
             "type": "thread.turn.start",
             "commandId": "next-command",
-            "threadId": "thread",
+            "threadId": "12345678-1111-4111-8111-111111111111",
             "message": {
               "messageId": "next-message",
               "role": "user",
@@ -103,7 +103,7 @@
           }
         },
         {
-          "pathname": "/api/orchestration/threads/thread",
+          "pathname": "/api/orchestration/threads/12345678-1111-4111-8111-111111111111",
           "method": "GET"
         },
         {
@@ -114,7 +114,7 @@
           "pathname": "/api/orchestration/turn-result",
           "method": "POST",
           "body": {
-            "threadId": "thread",
+            "threadId": "12345678-1111-4111-8111-111111111111",
             "messageId": "next-message",
             "turnCommandId": "next-command"
           }
@@ -128,7 +128,7 @@
         }
       },
       "receipt": {
-        "threadId": "thread",
+        "threadId": "12345678-1111-4111-8111-111111111111",
         "messageId": "next-message",
         "turnCommandId": "next-command",
         "turnId": "turn",
@@ -143,7 +143,7 @@
     "2": {
       "wire": [
         {
-          "pathname": "/api/orchestration/threads/thread",
+          "pathname": "/api/orchestration/threads/12345678-1111-4111-8111-111111111111",
           "method": "GET"
         },
         {
@@ -151,7 +151,7 @@
           "payload": {
             "type": "thread.create",
             "commandId": "thread-command",
-            "threadId": "thread",
+            "threadId": "12345678-1111-4111-8111-111111111111",
             "projectId": "project",
             "title": "Synthetic",
             "modelSelection": {
@@ -173,7 +173,7 @@
           }
         },
         {
-          "pathname": "/api/orchestration/threads/thread",
+          "pathname": "/api/orchestration/threads/12345678-1111-4111-8111-111111111111",
           "method": "GET"
         },
         {
@@ -181,12 +181,12 @@
           "payload": {
             "type": "thread.runtime-mode.set",
             "commandId": "first-command:runtime-mode",
-            "threadId": "thread",
+            "threadId": "12345678-1111-4111-8111-111111111111",
             "runtimeMode": "full-access"
           }
         },
         {
-          "pathname": "/api/orchestration/threads/thread",
+          "pathname": "/api/orchestration/threads/12345678-1111-4111-8111-111111111111",
           "method": "GET"
         },
         {
@@ -197,7 +197,7 @@
             "commandId": "first-command",
             "createdBy": "user",
             "creationSource": "mcp",
-            "threadId": "thread",
+            "threadId": "12345678-1111-4111-8111-111111111111",
             "messageId": "first-message",
             "text": "first",
             "attachments": [],
@@ -219,11 +219,11 @@
           }
         },
         {
-          "pathname": "/api/orchestration/threads/thread",
+          "pathname": "/api/orchestration/threads/12345678-1111-4111-8111-111111111111",
           "method": "GET"
         },
         {
-          "pathname": "/api/orchestration/threads/thread",
+          "pathname": "/api/orchestration/threads/12345678-1111-4111-8111-111111111111",
           "method": "GET"
         },
         {
@@ -231,12 +231,12 @@
           "payload": {
             "type": "thread.runtime-mode.set",
             "commandId": "next-command:runtime-mode",
-            "threadId": "thread",
+            "threadId": "12345678-1111-4111-8111-111111111111",
             "runtimeMode": "full-access"
           }
         },
         {
-          "pathname": "/api/orchestration/threads/thread",
+          "pathname": "/api/orchestration/threads/12345678-1111-4111-8111-111111111111",
           "method": "GET"
         },
         {
@@ -247,7 +247,7 @@
             "commandId": "next-command",
             "createdBy": "user",
             "creationSource": "mcp",
-            "threadId": "thread",
+            "threadId": "12345678-1111-4111-8111-111111111111",
             "messageId": "next-message",
             "text": "next",
             "attachments": [],
@@ -268,7 +268,7 @@
           }
         },
         {
-          "pathname": "/api/orchestration/threads/thread",
+          "pathname": "/api/orchestration/threads/12345678-1111-4111-8111-111111111111",
           "method": "GET"
         },
         {
@@ -279,7 +279,7 @@
           "pathname": "/api/orchestration/turn-result",
           "method": "POST",
           "body": {
-            "threadId": "thread",
+            "threadId": "12345678-1111-4111-8111-111111111111",
             "messageId": "next-message",
             "turnCommandId": "next-command"
           }
@@ -293,7 +293,7 @@
         }
       },
       "receipt": {
-        "threadId": "thread",
+        "threadId": "12345678-1111-4111-8111-111111111111",
         "messageId": "next-message",
         "turnCommandId": "next-command",
         "turnId": "turn",

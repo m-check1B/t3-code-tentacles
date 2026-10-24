@@ -7,6 +7,14 @@ All notable changes to this project are documented here.
 ### Fixed
 
 - Isolate model-selection, bridge-hardening and doctor golden test defaults from ambient model variables without weakening assertions or changing auth rotation coverage (KRA-8794).
+- Report rejects short thread IDs before lookup with guidance to obtain the
+  full UUID from originate or observe (KRA-7728). Unique, ambiguous, unknown
+  and unauthorized prefixes are display-only; full UUIDs retain T3's
+  per-thread authorization without enumeration or first-match selection.
+- README and orchestration diagrams distinguish the Tentacles source version,
+  negotiated V1/V2 protocol, required patched T3 extensions and staged runtime
+  evidence (KRA-7187 G14). The corrected V2 source pointer and incomplete
+  estate cutover are explicit; unsupported cases remain documented.
 - Web-off twins require the exact observed provider driver to match both the
   expected twin driver and inspected settings (KRA-8722). Missing or conflicting
   identity reports unready with unknown web tools. Codex runtime diagnostics
@@ -14,6 +22,8 @@ All notable changes to this project are documented here.
 - Publish checksummed tarballs to the private canonical GitHub repository using
   existing gh authentication, an existing matching tag and CHANGELOG notes
   (KRA-8749). Forgejo publishing is removed.
+- Refresh stale enabled, installed provider snapshots during doctor, reread readiness, and rate-limit attempts across CLI invocations to one per instance/origin per 60 seconds (KRA-8833).
+- Probe the Local Talk turn-result contract within the doctor deadline; report actionable `t3_not_patched` or unavailable findings without response bodies, and reuse the outcome in paired doctor-status (KRA-8838).
 
 
 ### Fixed

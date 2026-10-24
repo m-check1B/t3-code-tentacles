@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { reauthenticate } from "./t3-auth.mjs";
 import { COMPUTER_COMMANDS, ensureForward, loadComputer, remoteIssueSpawn } from "./computers.mjs";
-import { T3Client } from "./t3-client.mjs";
+import { requireFullThreadId, T3Client } from "./t3-client.mjs";
 import {
   ALLOW_ALL_MENTION_POLICY,
   doctor,
@@ -247,7 +247,8 @@ report --thread returns a compact parent-check document (Done | generating |
 ready/idle | blocked, plus an error-presence marker and a bounded model label)
 from one per-thread HTTP read; provider error text is never printed.
 It does not scrape the observe snapshot. observe remains the additive full-state
-read.
+read. THREAD_ID must be a full thread UUID; short IDs are display-only. Use
+threadId from tentacles originate or threads[].id from tentacles observe.
 
 capabilities scan lists the connectors on this computer: vendor CLIs from the
 curated registry (installed, version, signed in or out), MCP servers, plugins and
@@ -336,6 +337,7 @@ async function main() {
     return;
   }
   if (!KNOWN_COMMANDS.has(command)) throw new Error(`Unknown command: ${command}\n\n${usage()}`);
+  const reportThreadId = command === "report" ? requireFullThreadId(required(options, "thread")) : null;
   const instanceId = options.instance || DEFAULT_INSTANCE_ID;
   assertNoReservedRemovedInstance(command, instanceId);
   const model = options.model || DEFAULT_MODEL;
@@ -557,7 +559,7 @@ async function main() {
     return;
   }
   if (command === "report") {
-    console.log(JSON.stringify(await report(client, required(options, "thread")), null, 2));
+    console.log(JSON.stringify(await report(client, reportThreadId), null, 2));
     return;
   }
   if (command === "act") {

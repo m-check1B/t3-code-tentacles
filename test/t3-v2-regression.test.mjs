@@ -5,7 +5,7 @@ import {translateCommand,threadDetailToV1,archivedShellToV1} from '../src/t3-v2.
 import {applyIntent,threadTurnStart} from '../src/orchestrate.mjs';
 const json=(body)=>new Response(JSON.stringify(body),{headers:{'content-type':'application/json'}});
 const make=(descriptor)=>new T3Client({orchestrationProtocol:'auto',token:'synthetic-review-only',fetchImpl:async()=>json(descriptor)});
-const thread={id:'audit-thread',projectId:'audit-project',title:'Neutral audit',modelSelection:{instanceId:'codex',model:'gpt-6-sol',options:[]},runtimeMode:'full-access'};
+const thread={id:'12345678-1111-4111-8111-111111111111',projectId:'audit-project',title:'Neutral audit',modelSelection:{instanceId:'codex',model:'gpt-6-sol',options:[]},runtimeMode:'full-access'};
 
 test('H01 explicit null protocol must refuse instead of downgrading to V1',async()=>{
  await assert.rejects(make({orchestrationProtocolVersion:null}).protocol());
