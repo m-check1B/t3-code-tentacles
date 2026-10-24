@@ -6,6 +6,20 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- Codex plugin inventory quarantines relative executable paths and bare command
+  names before spawning (KRA-6203, R8): settings do not prove T3's cwd or PATH.
+  Absolute executable paths remain supported and identify separate cache entries.
+- Codex plugin inventory accounts for the selected instance's launch-argument
+  environment override and cache identity (KRA-6203). Unverified overrides and
+  relative/tilde homes start no child; absolute homes use T3-equivalent path
+  resolution without trimming significant path bytes.
+- Doctor skill/plugin metadata shares capability secret-shape rejection before
+  hashing (KRA-6203). Codex plugin probes require a verified, enabled Codex
+  driver and one complete explicit or legacy configuration. All optional
+  inventories share a 128 KiB UTF-8 budget and the room left by core doctor
+  diagnostics; omitted entries retain truthful counts/digests and truncation,
+  and an oversized relay fallback marks inventories unavailable with null.
+
 - Isolate model-selection, bridge-hardening and doctor golden test defaults from ambient model variables without weakening assertions or changing auth rotation coverage (KRA-8794).
 - Report rejects short thread IDs before lookup with guidance to obtain the
   full UUID from originate or observe (KRA-7728). Unique, ambiguous, unknown
@@ -24,16 +38,29 @@ All notable changes to this project are documented here.
   (KRA-8749). Forgejo publishing is removed.
 - Refresh stale enabled, installed provider snapshots during doctor, reread readiness, and rate-limit attempts across CLI invocations to one per instance/origin per 60 seconds (KRA-8833).
 - Probe the Local Talk turn-result contract within the doctor deadline; report actionable `t3_not_patched` or unavailable findings without response bodies, and reuse the outcome in paired doctor-status (KRA-8838).
-
-
-### Fixed
-
 - Observe counts active turn IDs and starting/running work rather than idle
   ready or interrupted sessions (KRA-8227, 0.5.0-jack.2 candidate). Separate
   ready/interrupted session counters preserve both V1 and V2 classifications.
   CLI version tests read package metadata so release bumps remain testable.
 
 ### Added
+
+- `doctor-status` adds a versioned, read-only `pluginInventory` block
+  (KRA-6203): installed native Codex plugins (`pluginId`, `name`,
+  `marketplace`, `version`, `enabled`) read with `codex plugin list --json`
+  from the exact configured binary and `CODEX_HOME`; labs with launch
+  arguments are not attributed. The listing can take seconds, so the
+  long-running pairer refreshes it in the background (10 minute TTL) and
+  doctor only serves a fresh cached observation; the CLI `doctor` never
+  spawns it. Paths, sources and policies stay on the computer. Other labs
+  report `no_native_plugin_source`.
+- `doctor` (and paired `doctor-status`) adds a versioned, read-only
+  `skillInventory` block (KRA-6203): per originate lab, the native skills T3
+  already reports (`name`, `scope`, `enabled`), with `count`, `dropped`,
+  `truncated` (512 cap) and an order-independent `digest`. Paths and
+  descriptions never leave the computer. A lab without a reported skills list
+  is `unavailable` with a null count, never zero. Additive: the pairing method
+  list and Sphere contract are unchanged; older consumers ignore the field.
 
 - Antigravity (Gemini) lab (KRA-6725): doctor advertises T3's native
   `antigravity` instance as "Antigravity (Gemini)". T3 owns the ACP agent

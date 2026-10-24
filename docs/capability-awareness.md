@@ -25,6 +25,14 @@ MCP servers and plugins. Tentacles makes every agent **aware** of five things:
  └──────────────────────────────┘            └──────────────────────────────────────┘
 ```
 
+The separate native `pluginInventory` block attributes Codex plugins only to
+the selected, enabled Codex configuration. Listing requires an absolute binary
+path: relative paths and bare names (including the default `codex`) report
+`unavailable` with `binary_unverified` and start no child, because T3 settings
+do not prove its server cwd or PATH. The absolute binary participates in the
+cache key. Launch arguments, environment overrides and home paths retain their
+own attribution guards. This block does not change the registry below.
+
 ## 1. Curated CLI registry
 
 `CAPABILITY_REGISTRY` in `src/capabilities.mjs` is reviewed code, not user

@@ -38,6 +38,9 @@ import {
 import { DEFAULT_PAIR_STATE_FILE, publishLockFile, readPairPresence } from "./pair-state.mjs";
 import { inspectHermesOpenaiCodexAuth } from "./hermes-acp-launch.mjs";
 import { readBoundedResponseText, readOrchestrationSnapshot, T3HttpError, T3_REAUTH_ACTION } from "./t3-client.mjs";
+import { looksSecret } from "./capabilities.mjs";
+import { boundDoctorInventories } from "./inventory-budget.mjs";
+import { pluginInventoryBlock } from "./plugin-inventory.mjs";
 import { LAB_NAMES, labName } from "./lab-names.mjs";
 import { inspectInstanceWebTools } from "./web-tools.mjs";
 import { ANTIGRAVITY_INSTANCE_ID, antigravityAction, applyAntigravityState } from "./antigravity.mjs";
@@ -1005,6 +1008,51 @@ async function routeMentionsLocked(client, { stateFile, instanceId, model, maxMe
 }
 
 const DOCTOR_MODEL_LIMIT = 16;
+export const SKILL_INVENTORY_VERSION = 1;
+const SKILL_INVENTORY_LIMIT = 512;
+const SKILL_NAME_MAX = 128;
+const SKILL_SCOPE = /^[a-z][a-z0-9_-]{0,31}$/;
+
+// Read-only projection of the native skills T3 already reports per lab.
+// Names, scope and enabled state only: local paths and descriptions stay on
+// this computer. A non-array list is unobserved, never an empty inventory.
+// Entries are never normalized: anything not representable exactly is
+// counted as dropped, so consumers can refuse a lossy list.
+const SKILL_NAME_UNSAFE = /[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069/\\]/;
+export function skillInventoryRow(instanceId, configProvider) {
+  const unavailable = { instanceId, state: "unavailable", count: null, dropped: 0, truncated: false, digest: null, skills: [] };
+  // Hermes stays unadmitted until isolation proof; its skills do not leave the computer.
+  if (instanceId === "hermes") return unavailable;
+  const skills = configProvider?.skills;
+  if (!Array.isArray(skills)) return unavailable;
+  const rows = [];
+  let dropped = 0;
+  for (const entry of skills) {
+    const name = entry?.name;
+    const scope = entry?.scope ?? null;
+    const enabled = entry?.enabled ?? null;
+    if (
+      typeof name !== "string" || !name || name.length > SKILL_NAME_MAX || name !== name.trim() || SKILL_NAME_UNSAFE.test(name) || looksSecret(name)
+      || (scope !== null && (typeof scope !== "string" || !SKILL_SCOPE.test(scope) || looksSecret(scope)))
+      || (enabled !== null && typeof enabled !== "boolean")
+    ) {
+      dropped += 1;
+      continue;
+    }
+    rows.push({ name, scope, enabled });
+  }
+  rows.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : String(a.scope) < String(b.scope) ? -1 : String(a.scope) > String(b.scope) ? 1 : String(a.enabled) < String(b.enabled) ? -1 : String(a.enabled) > String(b.enabled) ? 1 : 0));
+  const kept = rows.slice(0, SKILL_INVENTORY_LIMIT);
+  return {
+    instanceId,
+    state: "observed",
+    count: rows.length,
+    dropped,
+    truncated: kept.length < rows.length,
+    digest: digest(JSON.stringify(rows.map((row) => [row.name, row.scope, row.enabled]))),
+    skills: kept,
+  };
+}
 const DOCTOR_STATUS_VALUES = new Set(["absent", "configured", "disabled", "error", "installed", "ready", "unavailable"]);
 
 function normalizedModelSlugs(provider) {
@@ -1342,6 +1390,7 @@ async function doctorReport(client, {
   openrouterTokenFile,
   pairStateFile = DEFAULT_PAIR_STATE_FILE,
   models: modelsMode = "summary",
+  pluginInventory = null,
   now = Date.now,
   refreshDirectory = path.join(path.dirname(DEFAULT_BRIDGE_STATE_FILE), "doctor-refresh"),
   signal,
@@ -1509,7 +1558,7 @@ async function doctorReport(client, {
   let leakedSessions;
   try { leakedSessions = await withinDoctorDeadline(signal, () => inspectLeakedSessions({ archivedShell: typeof client.archivedShell === "function" ? () => client.archivedShell({ signal }) : undefined })); }
   catch { leakedSessions = { status: "unavailable", count: null, threads: [] }; }
-  return {
+  return boundDoctorInventories({
     product: "Tentacles",
     capabilities: talk.capabilities,
     t3: { reachable: true, auth: { status: "valid" }, version: serverVersion, talk: talk.finding, projects: projects.length, threads: threads.length, leakedSessions },
@@ -1518,7 +1567,17 @@ async function doctorReport(client, {
     adapterCredential,
     hermes,
     nativeGrok,
-  };
+    skillInventory: {
+      version: SKILL_INVENTORY_VERSION,
+      labs: ORIGINATE_LABS.map((labId) => skillInventoryRow(labId, configById.get(labId))),
+    },
+    pluginInventory: pluginInventoryBlock(
+      ORIGINATE_LABS,
+      pluginInventory
+        ? pluginInventory.read(settings)
+        : { instanceId: "codex", state: "unavailable", code: "not_refreshed", count: null, dropped: 0, truncated: false, digest: null, observedAt: null, plugins: [] },
+    ),
+  });
 }
 
 function yesNo(value) {

@@ -531,7 +531,7 @@ test("a doctor-status reply that still overflows is resent without the inventory
     fs.writeFileSync(pairFile, JSON.stringify({ version: 1, endpoint: "wss://jack.example.invalid/api/tentacles/pair", pairToken: "synthetic-pair-token-value", expiresAt: new Date(Date.now() + 60_000).toISOString() }), { mode: 0o600 });
     const runtime = {
       seats: async () => null, originate: async () => null, continue: async () => null,
-      doctorStatus: async () => ({ pairing: { status: "paired" }, labs: [], capabilityInventory: { schema: CAPABILITIES_SCHEMA, filler: "y".repeat(4096) } }),
+      doctorStatus: async () => ({ pairing: { status: "paired" }, labs: [], skillInventory: { version: 1, labs: [], filler: "s".repeat(4096) }, pluginInventory: { version: 1, labs: [], filler: "p".repeat(4096) }, capabilityInventory: { schema: CAPABILITIES_SCHEMA, filler: "y".repeat(4096) } }),
     };
     const { OutboundPairer } = await import("../src/outbound-pairer.mjs");
     const controller = new AbortController();
@@ -547,7 +547,7 @@ test("a doctor-status reply that still overflows is resent without the inventory
     await running;
     const reply = sent.find((frame) => frame.id === "rpc-1");
     assert.equal(reply.type, "rpc.result");
-    assert.deepEqual(reply.result, { pairing: { status: "paired" }, labs: [], capabilityInventory: null });
+    assert.deepEqual(reply.result, { pairing: { status: "paired" }, labs: [], skillInventory: null, pluginInventory: null, capabilityInventory: null });
   } finally {
     fs.rmSync(box, { recursive: true, force: true });
   }

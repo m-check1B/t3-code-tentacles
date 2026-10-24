@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { continueThread, doctor, originate, probeTalkCapabilities } from "./bridge.mjs";
 import { requireFreshFlags, requireFreshProviderContext } from "./fresh-provider-context.mjs";
 import { observe, REPORT_MODEL_LABEL, threadReportStatus } from "./orchestrate.mjs";
+import { PluginInventoryCache } from "./plugin-inventory.mjs";
 import { requireContinueSelection } from "./model-selection.mjs";
 import { readBoundedWebSocketData } from "./t3-client.mjs";
 import {
@@ -13,6 +14,7 @@ import {
   DEFAULT_PAIR_STATE_FILE,
   writePairPresence,
 } from "./pair-state.mjs";
+import { boundDoctorInventories, withoutDoctorInventories } from "./inventory-budget.mjs";
 import { createThreadLock, TurnInterrupter } from "./turn-interrupt.mjs";
 import { boundForPublish, MAX_PUBLISH_BYTES } from "./capabilities.mjs";
 
@@ -241,6 +243,7 @@ export class LoopbackRuntimeAdapter {
     prepareTalkWorkspaceImpl = ensureLocalTalkWorkspace,
     continueImpl = continueThread,
     doctorImpl = doctor,
+    pluginInventory = new PluginInventoryCache(),
     threadEventsImpl = threadEvents,
     threadEventsDirectory,
     interruptOptions = {},
@@ -255,6 +258,7 @@ export class LoopbackRuntimeAdapter {
     this.prepareTalkWorkspaceImpl = prepareTalkWorkspaceImpl;
     this.continueImpl = continueImpl;
     this.doctorImpl = doctorImpl;
+    this.pluginInventory = pluginInventory;
     this.threadEventsImpl = threadEventsImpl;
     this.threadEventsDirectory = threadEventsDirectory;
     this.capabilityCache = capabilityCache;
@@ -312,6 +316,7 @@ export class LoopbackRuntimeAdapter {
       this.modelRefresh = Promise.resolve().then(() => this.doctorImpl(this.client, {
         pairStateFile: this.pairStateFile,
         models: "full",
+        pluginInventory: this.pluginInventory,
       })).finally(() => { this.modelRefresh = null; });
     }
     return this.modelRefresh;
@@ -337,7 +342,7 @@ export class LoopbackRuntimeAdapter {
         ? boundForPublish(this.capabilityCache.current, inventoryRoom(result, this.frameBytes))
         : null;
     }
-    return result;
+    return boundDoctorInventories(result, this.frameBytes);
   }
 
   interrupt(params) {
@@ -423,8 +428,9 @@ export function inventoryRoom(reply, frameBytes = DEFAULT_MAX_FRAME_BYTES) {
 
 /** An oversized reply that carries an inventory is resent without it, never as unavailable. */
 export function withoutInventory(message) {
-  if (message?.type !== "rpc.result" || !isRecord(message.result) || !message.result.capabilityInventory) return null;
-  return { ...message, result: { ...message.result, capabilityInventory: null } };
+  if (message?.type !== "rpc.result" || !isRecord(message.result)) return null;
+  const result = withoutDoctorInventories(message.result);
+  return result ? { ...message, result } : null;
 }
 
 function encodeBounded(message, maxBytes) {
