@@ -5,7 +5,7 @@ import { T3Client } from "../../src/t3-client.mjs";
 export const freshCapability = { talkTurnResult: "v1", talkFreshProviderContext: "v1", talkFreshProviderContextProviders: ["codex"] };
 
 // Exercise the real client/bridge/adapter boundary with an isolated T3 transport.
-export async function captureWire(protocol, { fresh = false, instanceId = "codex", capabilities = { talkTurnResult: "v1", talkFreshProviderContext: 0 } } = {}) {
+export async function captureWire(protocol, { fresh = false, instanceId = "codex", capabilities = { talkTurnResult: "v1" } } = {}) {
   const wire = [], threads = new Map();
   const result = { threadId: "12345678-1111-4111-8111-111111111111", messageId: "next-message", turnCommandId: "next-command", turnId: "turn", assistantMessageId: "assistant", instanceId, model: "gpt-5.6-sol", effort: "high", state: "succeeded", outputText: "synthetic reply", ...(fresh ? { freshProviderContext: true, nativeContextGeneration: "next-command" } : {}) };
   const apply = (command) => {
