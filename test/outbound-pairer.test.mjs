@@ -871,7 +871,7 @@ test("turn-result validates exact correlation, terminal text, bounds and negotia
   let result = { ...params, turnId: "turn", assistantMessageId: "assistant-message", instanceId: "codex", model: "model", effort: "high", state: "succeeded", outputText: "actual reply", internal: "must not escape" };
   const adapter = new LoopbackRuntimeAdapter({ client: { request: async (url, options) => {
     assert.equal(url, "/api/orchestration/turn-result");
-    if (!options) return { talkTurnResult: "v1" };
+    if (!options || options.method !== "POST") return { talkTurnResult: "v1" };
     assert.deepEqual(options.body, params);
     return result;
   } }, doctorImpl: async () => ({ ready: true }) });

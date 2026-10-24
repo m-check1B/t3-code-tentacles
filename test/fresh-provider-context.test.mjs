@@ -70,11 +70,12 @@ test("idempotent fresh originate replays the same identifiers but refuses semant
     await assert.rejects(originate(client, { ...input, fixedTitle: false }), /different input/);
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
-test("doctor advertises only the actual supported provider list", async () => {
-  for (const caps of [{}, capability]) {
+test("doctor advertises only the exact agreed capability envelope", async () => {
+  const exact = { talkTurnResult: "v1" };
+  for (const caps of [{}, capability, exact]) {
     const runtime = new LoopbackRuntimeAdapter({ client: fake(caps), doctorImpl: async () => ({ ready: true }) });
     const result = await runtime.doctorStatus();
-    assert.deepEqual(result.capabilities, caps === capability ? { ...capability, turnInterrupt: "turn-interrupt-v1" } : { talkTurnResult: null, turnInterrupt: null });
+    assert.deepEqual(result.capabilities, caps === exact ? { ...exact, turnInterrupt: "turn-interrupt-v1" } : { talkTurnResult: null, turnInterrupt: null });
   }
 });
 test("exact result forwards only actual applied context receipt and rejects the wrong generation", async () => {
@@ -135,7 +136,9 @@ test("fresh context reaches the legacy and V2 transports without a title seed", 
     assert.ok(messages.every((command) => command.freshProviderContext === true && !Object.hasOwn(command, "titleSeed")));
     assert.deepEqual(messages.map((command) => command.commandId), ["first-command", "next-command"]);
     assert.equal(actual.receipt.nativeContextGeneration, "next-command");
-    assert.equal(actual.doctor.capabilities.talkFreshProviderContext, "v1");
+    assert.equal(Object.hasOwn(actual.doctor.capabilities, "talkFreshProviderContext"), false);
+    assert.equal(actual.doctor.capabilities.talkTurnResult, null);
+    assert.equal(actual.doctor.capabilities.turnInterrupt, null);
   }
 });
 
@@ -196,7 +199,8 @@ test("doctor drops malformed capabilities and preserves interruption and invento
     const report = await runtime.doctorStatus();
     assert.equal(Object.hasOwn(report.capabilities, "talkFreshProviderContext"), false);
     assert.equal(Object.hasOwn(report.capabilities, "talkFreshProviderContextProviders"), false);
-    assert.equal(report.capabilities.turnInterrupt, caps?.talkTurnResult === "v1" ? "turn-interrupt-v1" : null);
+    assert.equal(report.capabilities.talkTurnResult, null);
+    assert.equal(report.capabilities.turnInterrupt, null);
     assert.equal(report.capabilityInventory, null);
   }
 });

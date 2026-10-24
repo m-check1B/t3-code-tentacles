@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {T3Client} from '../src/t3-client.mjs';
 import {threadTurnStart,applyIntent} from '../src/orchestrate.mjs';
 const json=x=>new Response(JSON.stringify(x));
-const thread={id:'neutral-thread',projectId:'neutral-project',modelSelection:{instanceId:'codex',model:'neutral'},runtimeMode:'full-access'};
+const thread={id:'12345678-1111-4111-8111-111111111111',projectId:'neutral-project',modelSelection:{instanceId:'codex',model:'neutral'},runtimeMode:'full-access'};
 test('A10 mode change after fresh HTTP snapshot must prevent message acceptance in changed mode',async()=>{
  let mode='approval-required',readCount=0,closed=0;const accepted=[];
  class Socket extends EventTarget {

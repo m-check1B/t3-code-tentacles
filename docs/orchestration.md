@@ -9,12 +9,45 @@ This document describes the read (`observe`, `report`) and write (`act` /
 script — can drive over the bridge's existing loopback-authenticated HTTP/RPC
 client. The public command is `tentacles`; `t3-agent-bridge` is an exact alias.
 
-Protocol selection reads the environment descriptor; an absent version selects
-V1, while unknown versions refuse. V2 turns require the
+## Protocol support and runtime proof
+
+Keep four facts separate:
+
+1. **Tentacles version and commit.** The `0.5.0-jack.2` source line contains a
+   V1/V2 adapter. A package version does not establish installed or running bytes.
+2. **Negotiated protocol.** Selection reads the T3 environment descriptor;
+   protocol 1 selects V1, protocol 2 selects V2, and an absent protocol field or
+   a missing (404) descriptor selects V1. Unknown versions and other descriptor
+   failures refuse. Tentacles 0.5 with protocol 1 is a supported pairing.
+3. **Patched T3 extensions.** V2 turns require the atomic mode/message RPC
+   below. Local Talk separately requires the patched `turn-result` endpoint:
+   its result must correlate the exact accepted command, message and run and
+   retain bounded output/restart-continuation semantics. Negotiating V2 does
+   not prove either extension exists. Unpatched upstream T3 is not a supported
+   substitute for these flows.
+4. **Staged runtime evidence.** Record exact installed and running T3/Tentacles
+   builds, negotiated protocol and extension proof, then verify originate,
+   continue, report, observe, doctor and the relevant Talk/Guardian consumers
+   per host under the authorized rollout gates. Source tests do not replace
+   these checks or authorize installations or service actions.
+
+The V2 T3 source of record is `m-check1B/t3code-hermes-private-archive`, branch
+`jack/upstream-0.1.0`, with stage-1 source audited at `e027af1a`. The 24 October
+2026 audit found all inspected live hosts using V1. The estate V2 cutover is
+incomplete; existing host pins, staged deployment and rollback gates still apply.
+
+The [canonical orchestration visual](orchestration-loop.svg) shows these
+boundaries. V2 turns require the
 `orchestration.dispatchMessageWithMode` extension: the requested runtime mode
 and message are accepted together. An older V2 server rejects the method; there
 is no fallback to an unguarded message. Retrying the same command/message IDs
 returns the original receipt and does not reapply an earlier mode change.
+
+Unsupported cases remain explicit: unknown protocol versions, V2 enum values,
+command fields and nested shapes refuse; V2 `thread.checkpoint.revert` is not
+supported. Optional fresh provider context requires its own advertised runtime
+capability; the stage-1 patch does not advertise it. None of these cases permits
+a silent fallback to another protocol, provider, model or unsafe dispatch.
 
 ## Read: observe
 
@@ -59,6 +92,15 @@ once-proof document:
 ```bash
 tentacles report --thread THREAD_ID
 ```
+
+`THREAD_ID` must be the full thread UUID. Short IDs shown in UI summaries are
+display-only: unique, ambiguous, unknown and unauthorized prefixes all receive
+the same actionable rejection before any thread lookup or enumeration. Use
+the `threadId` from `tentacles originate`, or the full `threads[].id` from
+`tentacles observe` within your existing authorized scope. A full UUID still
+uses T3's existing per-thread authorization; a denied or missing thread does
+not trigger a list lookup or prefix fallback. Library `report` and
+`client.thread` use the same full-UUID requirement.
 
 The HTTP equivalent is the existing per-thread read
 `GET /api/orchestration/threads/:id`, mapped by `report(client, threadId)`.

@@ -12,6 +12,11 @@
       "status": "unavailable",
       "count": null,
       "threads": []
+    },
+    "talk": {
+      "status": "unavailable",
+      "code": "t3_capability_unavailable",
+      "action": "Check the local T3 connection, then rerun doctor to verify Local Talk support."
     }
   },
   "pairing": {
@@ -411,6 +416,10 @@
     "enabled": false,
     "configEnabled": true,
     "disabled": false
+  },
+  "capabilities": {
+    "talkTurnResult": null,
+    "turnInterrupt": null
   },
   "skillInventory": {
     "version": 1,

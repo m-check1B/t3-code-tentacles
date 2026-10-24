@@ -21,7 +21,7 @@ import {
   requireContinueSelection,
   retainedSelectionPin,
 } from "./model-selection.mjs";
-import { readOrchestrationSnapshot, T3HttpError, T3AuthError } from "./t3-client.mjs";
+import { readOrchestrationSnapshot, requireFullThreadId, T3HttpError, T3AuthError } from "./t3-client.mjs";
 import { T3RpcRejectedError, T3V2UnsupportedError, V2_PROTOCOL } from "./t3-v2.mjs";
 
 const INTERACTION_MODES = new Set(["default", "plan"]);
@@ -540,7 +540,7 @@ function unwrapThreadDetail(detail) {
 }
 
 export async function report(client, threadId) {
-  const id = requireString(threadId, "threadId");
+  const id = requireFullThreadId(threadId);
   if (typeof client?.thread !== "function") {
     throw new Error("T3 client does not expose a per-thread read");
   }

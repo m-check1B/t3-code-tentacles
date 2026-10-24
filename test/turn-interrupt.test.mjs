@@ -36,7 +36,7 @@ class FakeT3 {
     return {
       request: async (url, options) => {
         assert.equal(url, "/api/orchestration/turn-result");
-        if (!options) return { talkTurnResult: "v1" };
+        if (!options || options.method !== "POST") return { talkTurnResult: "v1" };
         const turn = this.turns.get(this.key(options.body));
         if (!turn) throw new T3HttpError({ method: "POST", pathname: url, status: 404, body: null });
         const succeeded = turn.state === "succeeded";
