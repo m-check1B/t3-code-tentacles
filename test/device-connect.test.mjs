@@ -292,10 +292,12 @@ test("mac rpc is forwarded to the connector as host.rpc and relayed back; a sile
   const soon = new Date(Date.now() + 10_000).toISOString().replace(/\.\d+Z$/, "Z");
   socket.message({ type: "rpc.request", rpcId: "66666666-6666-4666-8666-666666666666", channel: "mac", method: "notify", params: { title: "hi" }, deadline: soon });
   const forwarded = await waitFor(() => run.channel.sent.find((message) => message.type === "host.rpc"), "host.rpc");
-  assert.deepEqual(forwarded, { version: 1, type: "host.rpc", id: "66666666-6666-4666-8666-666666666666", method: "notify", params: { title: "hi" }, deadline: soon });
+  assert.match(forwarded.id, /^[0-9a-f-]{36}$/);
+  assert.notEqual(forwarded.id, "66666666-6666-4666-8666-666666666666");
+  assert.deepEqual(forwarded, { version: 1, type: "host.rpc", id: forwarded.id, method: "notify", params: { title: "hi" }, deadline: soon });
   run.channel.deliver({ version: 1, type: "host.rpc.result", id: forwarded.id, result: { shown: true } });
-  const relayed = await waitFor(() => socket.sent.find((message) => message.rpcId === forwarded.id), "mac result");
-  assert.deepEqual(relayed, { type: "rpc.result", rpcId: forwarded.id, result: { shown: true } });
+  const relayed = await waitFor(() => socket.sent.find((message) => message.rpcId === "66666666-6666-4666-8666-666666666666"), "mac result");
+  assert.deepEqual(relayed, { type: "rpc.result", rpcId: "66666666-6666-4666-8666-666666666666", result: { shown: true } });
 
   socket.message({ type: "rpc.request", rpcId: "77777777-7777-4777-8777-777777777777", channel: "mac", method: "open-url", params: {}, deadline: soon });
   const unsupported = await waitFor(() => socket.sent.find((message) => message.rpcId === "77777777-7777-4777-8777-777777777777"), "unadvertised mac method");

@@ -121,9 +121,11 @@ test("every connector error code and runtime publicMessage uses static relay tex
     };
     for (const [code, message] of Object.entries(publicMessages)) {
       const rpcId = `synthetic-${code}`;
+      const previous = channel.messages.filter(request => request.type === "host.rpc").length;
       socket.message({ type: "rpc.request", rpcId, channel: "mac", method: "notify", params: {} });
-      await until(() => channel.messages.some(request => request.id === rpcId));
-      channel.deliver({ version: 1, type: "host.rpc.error", id: rpcId, code, message: `authorization: Bearer ${marker}` });
+      await until(() => channel.messages.filter(request => request.type === "host.rpc").length === previous + 1);
+      const forwarded = channel.messages.filter(request => request.type === "host.rpc").at(-1);
+      channel.deliver({ version: 1, type: "host.rpc.error", id: forwarded.id, code, message: `authorization: Bearer ${marker}` });
       await until(() => socket.sent.some(reply => reply.rpcId === rpcId));
       const reply = socket.sent.find(reply => reply.rpcId === rpcId);
       assert.equal(reply.message, message);
@@ -251,7 +253,8 @@ test('B3 privacy: host.rpc.error diagnostics never escape into relay rpc.error',
     socket.message({version:1,type:'device.bound',connectionId:'b3-connection'});
     socket.message({type:'rpc.request',rpcId:'b3-diagnostic',channel:'mac',method:'notify',params:{},deadline:new Date(Date.now()+1000).toISOString()});
     await until(()=>channel.messages.some(m=>m.type==='host.rpc'));
-    channel.deliver({version:1,type:'host.rpc.error',id:'b3-diagnostic',code:'computer.unavailable',message:'Synthetic failure authorization: Bearer SYNTHETIC_B3_DIAGNOSTIC_MARKER'});
+    const forwarded=channel.messages.find(m=>m.type==='host.rpc');
+    channel.deliver({version:1,type:'host.rpc.error',id:forwarded.id,code:'computer.unavailable',message:'Synthetic failure authorization: Bearer SYNTHETIC_B3_DIAGNOSTIC_MARKER'});
     await until(()=>socket.sent.some(m=>m.type==='rpc.error'));
     assert.equal(JSON.stringify(socket.sent).includes('SYNTHETIC_B3_DIAGNOSTIC_MARKER'),false);
   } finally {controller.abort();host.close();await running;}

@@ -323,8 +323,10 @@ export class HostLink {
     });
   }
 
-  rpc({ id, method, params, deadline, timeoutMs }) {
+  rpc({ method, params, deadline, timeoutMs }) {
     if (this.isClosed) return Promise.reject(rpcFailure("computer.unavailable"));
+    // Connector correlation belongs to this operation, never to a reusable relay ID.
+    const id = randomUUID();
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.#pendingRpcs.delete(id);
@@ -454,9 +456,10 @@ export class DeviceConnector {
       const endpoint = requireDeviceRelay(relay);
       const hello = await waitForHostHello(this.host, controller.signal, this.handshakeTimeoutMs);
       if (!hello) return { status: "stopped" };
+      const operations = { seenRpcIds: new Set(), rpcIdWindow: [], inFlight: new Set() };
       let attempt = 0;
       while (!controller.signal.aborted) {
-        const outcome = await this.connectOnce({ endpoint, hello, signal: controller.signal });
+        const outcome = await this.connectOnce({ endpoint, hello, signal: controller.signal, operations });
         if (controller.signal.aborted) break;
         if (outcome.bound) attempt = 0;
         // A superseded connection waits like 4100 whatever close code follows, unless that code is terminal or suspends.
@@ -492,7 +495,9 @@ export class DeviceConnector {
     }
   }
 
-  connectOnce({ endpoint, hello, signal }) {
+  connectOnce({ endpoint, hello, signal,
+    operations = { seenRpcIds: new Set(), rpcIdWindow: [], inFlight: new Set() },
+  }) {
     let socket;
     try { socket = new this.WebSocketImpl(endpoint.toString()); }
     catch { return Promise.resolve({ bound: false, reason: "relay_connection_error" }); }
@@ -503,9 +508,8 @@ export class DeviceConnector {
     let handshakeTimer;
     let idleTimer;
     let queue = Promise.resolve();
-    const seenRpcIds = new Set();
-    const rpcIdWindow = [];
-    const inFlight = new Set();
+    // Socket teardown cannot forget or release an unfinished local operation.
+    const { seenRpcIds, rpcIdWindow, inFlight } = operations;
     return new Promise((resolve) => {
       const finish = ({ code, reason }) => {
         if (settled) return;
@@ -540,13 +544,13 @@ export class DeviceConnector {
       const handleRpc = (message) => {
         const { rpcId, channel, method } = message;
         if (typeof rpcId !== "string" || !SAFE_ID.test(rpcId) || seenRpcIds.has(rpcId) || inFlight.has(rpcId)) return;
+        if (inFlight.size >= this.maxInFlight) {
+          send({ type: "rpc.error", rpcId, code: "computer.unavailable", message: RPC_ERROR_MESSAGES["computer.unavailable"] });
+          return;
+        }
         seenRpcIds.add(rpcId);
         rpcIdWindow.push(rpcId);
         if (rpcIdWindow.length > 1_000) seenRpcIds.delete(rpcIdWindow.shift());
-        if (inFlight.size >= this.maxInFlight) {
-          answer(rpcId, () => { throw rpcFailure("computer.unavailable"); });
-          return;
-        }
         const params = message.params === undefined ? {} : message.params;
         if (!isRecord(params)) {
           answer(rpcId, () => { throw rpcFailure("lab_error"); });
@@ -564,7 +568,7 @@ export class DeviceConnector {
             return;
           }
           const timeoutMs = Number.isNaN(deadlineMs) ? 30_000 : Math.min(30_000, Math.max(0, deadlineMs - this.now()));
-          answer(rpcId, () => this.host.rpc({ id: rpcId, method, params, deadline: message.deadline, timeoutMs }));
+          answer(rpcId, () => this.host.rpc({ method, params, deadline: message.deadline, timeoutMs }));
           return;
         }
         const runtimeMethod = Object.hasOwn(DEVICE_CHANNELS, channel) && DEVICE_CHANNELS[channel].includes(method)

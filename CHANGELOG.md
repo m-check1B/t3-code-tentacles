@@ -41,6 +41,10 @@ No live Mac reconnect or latency proof is claimed.
   `parentPort` listeners. An RPC whose deadline has passed is refused without
   running. `device.superseded` keeps the 60 s wait whatever close code follows.
   A `sign.result` with fields beyond A1 is refused.
+- Replay history and unfinished-operation capacity now survive device reconnects.
+  Connector calls use unique correlation IDs, so a late reply cannot resolve a
+  different operation. Overload refusals cannot evict accepted replay history.
+
 ### Fixed
 
 - Port release publishing to the private GitHub canonical repository, verify

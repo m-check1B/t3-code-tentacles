@@ -237,3 +237,12 @@ cancel this wait, and the owned connector channel closes whenever connect exits.
 Every complete signer line is checked against the 64 KiB UTF-8 byte bound before
 JSON parsing or delivery. Connector RPC failures publish only static public error
 messages to the relay; connector diagnostic text is never forwarded.
+
+Device reconnects retain the same 1,000 accepted-ID replay history and all
+unfinished-operation reservations across socket generations. A pending ID stays
+protected even after leaving that history. The 16-operation capacity is released
+only when the local operation settles; overload refusals do not enter the replay
+history. Replies belong to their original socket and are dropped if it has closed.
+Each `host.rpc` uses a fresh opaque connector correlation ID, echoed by the
+connector, while relay replies retain the original `rpcId`. Late connector replies
+after timeout are ignored and cannot satisfy a subsequent operation.
