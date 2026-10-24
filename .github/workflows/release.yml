@@ -14,9 +14,10 @@ concurrency:
 
 jobs:
   package:
-    runs-on: jack-ci-x64
+    runs-on: [self-hosted, jack-ci-x64]
+    timeout-minutes: 20
     steps:
-      # Same pins as ci.yml: the Forgejo actions mirror resolves these (v7 pins are absent there).
+      # Pinned actions shared with ci.yml.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
@@ -37,8 +38,8 @@ jobs:
           package_file=$(npm pack --silent)
           shasum -a 256 "$package_file" > "$package_file.sha256"
           echo "package_file=$package_file" >> "$GITHUB_OUTPUT"
-      - name: Publish canonical Forgejo release
+      - name: Publish canonical GitHub release
         env:
-          BRIDGE_RELEASE_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
           BRIDGE_PACKAGE_FILE: ${{ steps.pack.outputs.package_file }}
-        run: node scripts/publish-forgejo-release.mjs
+        run: node scripts/publish-github-release.mjs

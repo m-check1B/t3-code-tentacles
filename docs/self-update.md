@@ -133,11 +133,45 @@ node scripts/release/sign-manifest.mjs --draft draft.json --previous signed-curr
 - The protected branch `jack/0.4.1-maintenance` is reported as protected.
 - The commit is the merge commit of a merged PR into that branch, and an
   ancestor of the branch tip.
-- The PR has a `B3 APPROVE|CLEAR|PASS` comment that cites the PR head sha.
+- The signed commit equals the merged PR head (fast-forward merges only).
+- The GitHub PR has exactly one standalone `writer-thread=<id>` line in its
+  body. An unedited **PR conversation comment** from `m-check1B` (numeric id
+  `127414494` **and** exact login pinned in source) starts with:
+
+  ```text
+  APPROVE tentacles-private#<PR number> <full head SHA> P1=0 P2=0
+  writer-thread=<writer id> reviewer-thread=<reviewer id>
+  ```
+
+  Both thread ids must be present and different, and the writer must equal the
+  PR body's writer. Duplicate or malformed markers fail closed. Review API
+  submissions, quoted text and older Forgejo receipt formats do not count.
+- The receipt is created strictly after authenticated evidence that this exact
+  head was on GitHub, and no later than merge. GitHub's commit `pushedDate` is
+  nullable, so the signer uses a GitHub Actions check suite's server-generated
+  creation time for that exact SHA and canonical repository as a conservative
+  post-push bound (pinned app id `15368` and slug `github-actions`). A receipt
+  predating that suite is refused even if it followed the push. Commit dates
+  and PR-wide update times cannot substitute; absent evidence holds signing.
+  Associated PRs, check suites and comments are fully paginated.
+- **This is weaker than account independence.** All agents use the same GitHub
+  account; thread ids are self-attested and the shared account can misstate
+  them. The check cannot cryptographically establish two independent people or
+  agents. Independent review remains an operational gate. There is no CLI or
+  environment override for account, thread, head, freshness or merge checks.
+- **First real signing remains Founder-gated (KRA-8371 U6)** and requires
+  GUARDIAN to audit the exact signer/reader bytes and vault item setup. This
+  port authorizes no signing, keys, vault access or lifting of the Pro hold.
 - A clean rebuild (`git archive` + `npm pack --ignore-scripts`) and the
   published release asset both match the entry's sha256.
 - The commit's `package.json` version matches the entry, and so do its
   `REMOTE_RPC_METHODS` and its two pinned keys.
+
+The active signer uses `githubBackends`, with existing GitHub CLI authentication
+and a pinned host. The exported legacy `defaultBackends` always refuses. The
+obsolete Forgejo read-token item is unreachable from the active signer; only
+the current signing key is fetched after provenance and policy checks. The
+updater still refuses redirects, so unavailable assets hold without a fallback.
 
 **Policy.**
 
@@ -154,15 +188,71 @@ node scripts/release/sign-manifest.mjs --draft draft.json --previous signed-curr
 - any change of the pinned keys;
 - the first manifest.
 
-**Key custody.**
+**Key custody and human setup (U2).**
 
-- The private key is fetched only after every check has passed, from
-  `~/bin/tentacles-signer-key-source` by the exact item name
-  `tentacles-manifest-signing-key-current`.
-- It arrives on a pipe and is held in memory only. It never appears in argv,
-  env, on disk or on stdout.
-- `tentacles-manifest-signing-key-next` is never fetched by this script.
+Only the Founder may create these exact vault items (no prefix matching):
+
+| Item | Purpose |
+| --- | --- |
+| `tentacles-manifest-signing-key-current` | Current Ed25519 PKCS8 PEM signing key |
+| `tentacles-manifest-signing-key-next` | Separate next key; never read by this signer |
+
+The private key is fetched only after all checks pass. The reader is the
+repo-relative `scripts/release/signer-key-source.mjs`, pinned by SHA-256 in
+`sign-manifest.mjs`. The signer executes the verified bytes on stdin, preventing
+path replacement between hashing and execution. There is no home-directory
+helper, environment key, disk fallback, raw `bw` call or CI signing step.
+
+The helper uses only `~/bin/nasvault`: a metadata-only `list` must contain
+exactly one full matching name, then `to-file <exact-name> /dev/fd/3 --password`
+opens the inherited pipe. No disk file is created. Only the canonical Pro
+nasvault's exact non-secret success status is accepted and consumed internally;
+any extra helper stdout/stderr, nasvault error, missing/duplicate item, empty
+value or oversized output aborts. Scoped-host nasvault implementations that
+refuse an existing descriptor are unsupported and fail closed. The next-key
+item is never fetched.
+
+The signer kills the reader process group at 30 seconds, on failure and on
+handled termination. The reader watches its parent every 100 ms and kills its
+group if the parent dies, with its own 25-second deadline. JS-owned original
+pipe chunks, rejected chunks and the concatenated consumer copy are zeroed;
+this does not promise erasure of immutable strings, OS pipe buffers or native
+crypto allocations, or synchronous cleanup of a SIGKILLed process's memory.
+
+Human setup check, on the dedicated no-AI signer host **after GUARDIAN approves
+this reader, its nasvault implementation, host, parent and output fd in the
+reader manifest**:
+
+```
+node scripts/release/sign-manifest.mjs --check-key-source
+~/bin/nasvault list tentacles-manifest-signing-key-
+~/bin/nasvault list tentacles-signer-forgejo-read-token
+```
+
+The first command only checks pinned source bytes; it never runs the reader or
+opens a vault. The two metadata-only lists must show exactly the three full
+names above, once each. They do not prove key validity. Record only names,
+helper hash, host and approval receipt; never values. Stop on any nasvault error.
+Do not perform a first real signing until the separate GUARDIAN audit and
+Founder-owned setup are complete. Tests use synthetic bytes and stub readers.
+
+**Release floor.** `MIN_MANIFEST_SERIAL` in `src/updater/pinned.mjs` is a
+bootstrap value of 1. The release captain must raise it to the new serial in
+each reviewed release and refresh the separately installed updater copy.
+The release pin check is in `.github/workflows/release.yml`, not `.forgejo/`.
 
 **Outputs.** The script writes the signed envelope with `wx`, appends one
 hash-chained line to the log, and prints the Linear comment body for the
 captain to post.
+
+## GitHub release transition (KRA-8749)
+
+The compiled source is the private `m-check1B/t3-code-tentacles-private`
+GitHub repository. No Forgejo URL or alternative host is accepted by the
+updater. Private assets require access; a customer without access fails closed.
+Customer distribution is still unproven and needs a separately reviewed source
+decision. The legacy provenance backend refuses with
+`github_provenance_unavailable`; GitHub signing requires the separate B3
+provenance port. No vault lookup or network request is made by the disabled
+legacy backend. First real signing remains Founder-gated under KRA-8371 U6
+and requires the exact-byte GUARDIAN audit.

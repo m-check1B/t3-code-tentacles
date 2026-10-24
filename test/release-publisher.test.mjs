@@ -1,54 +1,88 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
-import { publishRelease } from "../scripts/publish-forgejo-release.mjs";
-const payload = Buffer.from("synthetic release package");
-const checksum = Buffer.from(`${createHash("sha256").update(payload).digest("hex")}  tentacles-0.4.1.tgz\n`);
-const environment = { FORGEJO_API_URL: "http://127.0.0.1:3000/api/v1", FORGEJO_SERVER_URL: "http://127.0.0.1:3000", FORGEJO_REPOSITORY: "matej/t3-code-tentacles", FORGEJO_REF_NAME: "v0.4.1", BRIDGE_PACKAGE_FILE: "tentacles-0.4.1.tgz", BRIDGE_RELEASE_TOKEN: "synthetic-ci-token" };
-const readFileImpl = name => name.endsWith(".sha256") ? checksum : payload;
+import { publishRelease } from "../scripts/publish-github-release.mjs";
 
-test("native publication creates a release and uploads both verified artifacts only to its own Forgejo", async () => {
+function fixture(t) {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles-publish-"));
+  t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
+  const filename = "tentacles-0.4.1-jack.2.tgz";
+  const payload = Buffer.from("synthetic release package");
+  const digest = createHash("sha256").update(payload).digest("hex");
+  fs.writeFileSync(path.join(cwd, filename), payload);
+  fs.writeFileSync(path.join(cwd, `${filename}.sha256`), `${digest}  ${filename}\n`);
+  fs.writeFileSync(path.join(cwd, "package.json"), JSON.stringify({ name: "tentacles", version: "0.4.1-jack.2" }));
+  fs.writeFileSync(path.join(cwd, "CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\n\nCandidate notes.\n\n## [0.4.1-jack.2] - 2026-10-24\n\nExact release notes.\n\n## [0.4.1]\n\nOlder notes.\n");
+  return { cwd, filename, digest, environment: { GITHUB_SERVER_URL: "https://github.com", GITHUB_API_URL: "https://api.github.com", GITHUB_REPOSITORY: "m-check1B/t3-code-tentacles-private", GITHUB_REF_NAME: "v0.4.1-jack.2", BRIDGE_PACKAGE_FILE: filename } };
+}
+
+test("publication uses existing gh auth, verifies the existing tag and uploads both checksummed assets with CHANGELOG notes", async (t) => {
+  const f = fixture(t);
   const calls = [];
-  const result = await publishRelease({ environment, readFileImpl, fetchImpl: async (url, options) => {
-    calls.push({ url, options });
-    if (calls.length === 1) return new Response(null, { status: 404 });
-    return Response.json({ id: 123 });
+  const result = await publishRelease({ ...f, runGh: async (args, options) => {
+    calls.push(args);
+    assert.equal(options.cwd, f.cwd);
+    const notes = fs.readFileSync(args[args.indexOf("--notes-file") + 1], "utf8");
+    assert.match(notes, /Exact release notes/);
+    assert.doesNotMatch(notes, /Candidate notes|Older notes/);
   } });
-  assert.equal(result.releaseId, 123); assert.equal(calls.length, 4);
-  assert.ok(calls.every(c => c.url.startsWith("http://127.0.0.1:3000/api/v1/repos/matej/t3-code-tentacles/") && c.options.redirect === "error"));
-  assert.equal(JSON.parse(calls[1].options.body).tag_name, "v0.4.1");
-  assert.equal((await calls[2].options.body.get("attachment").arrayBuffer()).byteLength, payload.byteLength);
+  assert.equal(result.sha256, f.digest);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].slice(0, 5), ["release", "create", "v0.4.1-jack.2", f.filename, `${f.filename}.sha256`]);
+  assert.equal(calls[0][calls[0].indexOf("--repo") + 1], "https://github.com/m-check1B/t3-code-tentacles-private");
+  assert.ok(calls[0].includes("--verify-tag"));
 });
 
-test("GitHub or mismatched origins, traversal and a wrong repository fail before any token-bearing call", async () => {
-  for (const overrides of [{ FORGEJO_API_URL: "https://api.github.com" }, { FORGEJO_SERVER_URL: "http://localhost:9999" }, { BRIDGE_PACKAGE_FILE: "../tentacles-0.4.1.tgz" }, { FORGEJO_REPOSITORY: "other/repo" }]) {
-    await assert.rejects(publishRelease({ environment: { ...environment, ...overrides }, readFileImpl, fetchImpl: async () => assert.fail("must not send a credential") }), /configuration/);
-  }
+test("wrong hosts, repos, tags and traversal fail before gh runs", async (t) => {
+  const f = fixture(t);
+  for (const overrides of [
+    { GITHUB_SERVER_URL: "http://192.168.0.21:3000" }, { GITHUB_SERVER_URL: "https://ocelotnas" },
+    { GITHUB_SERVER_URL: "https://github.com.evil.invalid" }, { GITHUB_API_URL: "https://api.github.com.evil.invalid" },
+    { GITHUB_REPOSITORY: "matej/t3-code-tentacles" }, { GITHUB_REPOSITORY: "m-check1B/t3-code-tentacles" },
+    { GITHUB_REF_NAME: "v0.4.1" }, { BRIDGE_PACKAGE_FILE: "../tentacles-0.4.1-jack.2.tgz" },
+    { GH_HOST: "ocelotnas" },
+  ]) await assert.rejects(publishRelease({ ...f, environment: { ...f.environment, ...overrides }, runGh: async () => assert.fail("must not publish") }), /configuration/);
 });
 
-test("checksum mismatch fails before publishing and existing assets are never overwritten", async () => {
-  await assert.rejects(publishRelease({ environment, readFileImpl: name => name.endsWith(".sha256") ? Buffer.from("bad checksum") : payload, fetchImpl: async () => assert.fail("must not publish") }), /checksum/);
-  let calls = 0;
-  await assert.rejects(publishRelease({ environment, readFileImpl, fetchImpl: async () => { calls++; return Response.json({ id: 1, assets: [{ name: "tentacles-0.4.1.tgz" }] }); } }), /already exists/);
-  assert.equal(calls, 1);
+test("checksum mismatch and missing CHANGELOG entry fail before publication", async (t) => {
+  const f = fixture(t);
+  const runGh = async () => assert.fail("must not publish");
+  fs.writeFileSync(path.join(f.cwd, "CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\nCandidate notes.\n");
+  await assert.rejects(publishRelease({ ...f, runGh }), /CHANGELOG/);
+  fs.writeFileSync(path.join(f.cwd, `${f.filename}.sha256`), "wrong");
+  await assert.rejects(publishRelease({ ...f, runGh }), /checksum/);
 });
 
-test("upstream error payloads are never copied into diagnostics", async () => {
-  await assert.rejects(publishRelease({ environment, readFileImpl, fetchImpl: async () => new Response("synthetic-ci-token", { status: 500 }) }), error => !error.message.includes(environment.BRIDGE_RELEASE_TOKEN) && error.message.includes("500"));
+test("gh errors are suppressed and temporary notes are removed", async (t) => {
+  const f = fixture(t);
+  let notesFile;
+  await assert.rejects(publishRelease({ ...f, runGh: async (args) => {
+    notesFile = args[args.indexOf("--notes-file") + 1];
+    throw new Error("synthetic upstream diagnostic");
+  } }), error => error.message === "GitHub release publication failed");
+  assert.equal(fs.existsSync(notesFile), false);
 });
 
-test("a Jack maintenance tag publishes its matching package; other suffixes are refused (KRA-6915)", async () => {
-  const jackChecksum = Buffer.from(`${createHash("sha256").update(payload).digest("hex")}  tentacles-0.4.1-jack.1.tgz\n`);
-  const jackRead = name => name.endsWith(".sha256") ? jackChecksum : payload;
-  const jack = { ...environment, FORGEJO_REF_NAME: "v0.4.1-jack.1", BRIDGE_PACKAGE_FILE: "tentacles-0.4.1-jack.1.tgz" };
-  const calls = [];
-  const result = await publishRelease({ environment: jack, readFileImpl: jackRead, fetchImpl: async (url, options) => {
-    calls.push({ url, options });
-    if (calls.length === 1) return new Response(null, { status: 404 });
-    return Response.json({ id: 7 });
-  } });
-  assert.equal(result.tag, "v0.4.1-jack.1"); assert.equal(JSON.parse(calls[1].options.body).tag_name, "v0.4.1-jack.1");
-  for (const tag of ["v0.4.1-rc.1", "v0.4.1-jack", "v0.4.1-jack.1.2", "v0.4.1-jack.x"]) {
-    await assert.rejects(publishRelease({ environment: { ...jack, FORGEJO_REF_NAME: tag, BRIDGE_PACKAGE_FILE: `tentacles-${tag.slice(1)}.tgz` }, readFileImpl: jackRead, fetchImpl: async () => assert.fail("must not send a credential") }), /configuration/);
-  }
+test("the workflow publish command runs end-to-end against a local fake gh only", async (t) => {
+  const f = fixture(t);
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const fake = path.join(f.cwd, "gh");
+  fs.writeFileSync(fake, `#!${process.execPath}\nconst fs = require('node:fs'); const args = process.argv.slice(2); fs.writeFileSync('gh-call.json', JSON.stringify({ args, notes: fs.readFileSync(args[args.indexOf('--notes-file') + 1], 'utf8') }));\n`, { mode: 0o700 });
+  const workflow = fs.readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+  const command = /run: (node scripts\/publish-github-release\.mjs)/.exec(workflow)?.[1];
+  assert.ok(command, "must exercise the workflow's actual publish script");
+  const script = new URL(`../${command.slice(5)}`, import.meta.url);
+  const { stdout } = await promisify(execFile)(process.execPath, [script.pathname], { cwd: f.cwd, env: { ...f.environment, PATH: f.cwd } });
+  const call = JSON.parse(fs.readFileSync(path.join(f.cwd, "gh-call.json"), "utf8"));
+  assert.equal(call.args[0], "release");
+  assert.equal(call.args[1], "create");
+  assert.ok(call.args.includes("--verify-tag"));
+  assert.ok(call.args.includes(f.filename));
+  assert.ok(call.args.includes(`${f.filename}.sha256`));
+  assert.match(call.notes, /Exact release notes/);
+  assert.equal(JSON.parse(stdout).sha256, f.digest);
 });

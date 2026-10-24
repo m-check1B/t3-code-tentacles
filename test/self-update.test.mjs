@@ -17,7 +17,7 @@ import {
   entryFor, ephemeralKey, manifestOf, packageTgz, releaseServer, RPC, signEnvelope, tgz,
 } from "./helpers/self-update-fixtures.mjs";
 
-const BASE = "http://update.invalid/releases/download";
+const BASE = "https://github.com/m-check1B/t3-code-tentacles-private/releases/download";
 const NOW = Date.parse("2026-10-22T08:00:00.000Z");
 const LATER = "2026-11-20T00:00:00.000Z";
 
@@ -456,4 +456,26 @@ test("launcher: Update now from another process restarts the child through the r
   launcher.startedAt = NOW - 120_000;
   children[1].emit("exit", 0, null);
   await running;
+});
+
+test("self-update refuses every noncanonical release origin before fetching", async () => {
+  for (const baseUrl of ["http://192.168.0.21:3000/matej/t3-code-tentacles/releases/download", "https://ocelotnas/releases/download", "https://github.com.evil.invalid/m-check1B/t3-code-tentacles-private/releases/download", "https://github.com/m-check1B/t3-code-tentacles/releases/download"]) {
+    assert.throws(() => new SelfUpdater({ baseUrl, fetchImpl: () => assert.fail("must not fetch") }), /release source/);
+  }
+});
+
+test("an isolated installed updater includes its compiled release source", async (t) => {
+  const { installUpdater } = await import("../src/updater/cli.mjs");
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const home = tempHome(t);
+  installUpdater({ home });
+  const modulePath = path.join(home, "updater", "updater.mjs");
+  const { stdout } = await promisify(execFile)(process.execPath, ["--input-type=module", "-e", `const { SelfUpdater } = await import(${JSON.stringify(modulePath)}); console.log(new SelfUpdater().baseUrl);`]);
+  assert.equal(stdout.trim(), BASE);
+});
+
+test("the maintenance signer is closed before any live credential or network operation", async () => {
+  const { defaultBackends } = await import("../scripts/release/sign-manifest.mjs");
+  assert.throws(() => defaultBackends({ spawnImpl: () => assert.fail("must not spawn"), fetchImpl: () => assert.fail("must not fetch") }), { code: "github_provenance_unavailable" });
 });

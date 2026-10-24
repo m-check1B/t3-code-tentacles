@@ -25,24 +25,25 @@ import os from "node:os";
 import path from "node:path";
 import { createHash, createPrivateKey, createPublicKey, sign, verify } from "node:crypto";
 import { spawn } from "node:child_process";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { B3_REVIEWERS } from "./b3-reviewers.mjs";
+import { createGithubBackends } from "./github-backend.mjs";
 import {
   compareVersions, ENVELOPE_SCHEMA, keyId, validateManifest,
 } from "../../src/updater/manifest.mjs";
 
-export const FORGEJO_API = "http://192.168.0.21:3000/api/v1";
-export const FORGEJO_GIT = "ssh://git@192.168.0.21:2222/matej/t3-code-tentacles.git";
-export const REPOSITORY = "matej/t3-code-tentacles";
+export { RELEASE_DOWNLOAD } from "../../src/updater/release-source.mjs";
+export const REPOSITORY = "m-check1B/t3-code-tentacles-private";
 export const PROTECTED_BRANCH = "jack/0.4.1-maintenance";
-export const RELEASE_DOWNLOAD = `http://192.168.0.21:3000/${REPOSITORY}/releases/download`;
 export const SIGNING_ITEM = "tentacles-manifest-signing-key-current";
 export const NEXT_SIGNING_ITEM = "tentacles-manifest-signing-key-next"; // never fetched here
-export const FORGEJO_READ_ITEM = "tentacles-signer-forgejo-read-token";
-// Audited helper: `<KEY_SOURCE> <exact item name>` writes the value to stdout
-// (a pipe into this process). It must match the exact name, never a prefix.
-export const KEY_SOURCE = path.join(os.homedir(), "bin", "tentacles-signer-key-source");
+// Execute verified source bytes on stdin, so replacing the path after hashing
+// cannot substitute a different program. Secrets use fd 3, never helper stdout.
+export const KEY_SOURCE = fileURLToPath(new URL("./signer-key-source.mjs", import.meta.url));
+export const KEY_SOURCE_SHA256 = "bacdb830730c868bd7a1cc5300844e8d4d799ea2d7f82f5ffe07704ac57ed1cf";
 export const MAX_EXPIRY_DAYS = 45;
-const B3_RECEIPT = /^B3 (?:APPROVE|CLEAR|PASS)\b/;
+const B3_RECEIPT = /^APPROVE tentacles-private#([1-9][0-9]*) ([0-9a-f]{40}) P1=0 P2=0$/;
+const THREAD = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/;
 const FOUNDER_REF = /^[A-Za-z0-9._:#/-]{3,160}$/;
 const HEX40 = /^[0-9a-f]{40}$/;
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
@@ -55,26 +56,139 @@ function refuse(code, detail) { throw new SignerRefusal(code, detail); }
 
 function sha256(bytes) { return createHash("sha256").update(bytes).digest("hex"); }
 
-/** Run a child with an explicit, minimal environment; collects stdout in memory. */
-export function runChild(spawnImpl, command, args, { cwd, input = null, maxBytes = 64 * 1024 * 1024 } = {}) {
+/** Clear JS-owned pipe Buffers, including rejected/late chunks. The returned
+ * copy belongs to the consumer (fetchSecret clears it in finally). This does
+ * not erase immutable JS strings, OS pipe buffers or native KeyObject memory.
+ */
+export function runChild(spawnImpl, command, args, {
+  cwd, input = null, maxBytes = 64 * 1024 * 1024, timeoutMs = 300_000, secret = false,
+} = {}) {
   return new Promise((resolve, reject) => {
     const env = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: os.homedir(), LANG: "C" };
-    const child = spawnImpl(command, args, { cwd, env, stdio: [input === null ? "ignore" : "pipe", "pipe", "ignore"] });
-    const chunks = [];
+    let child;
+    let done = false;
     let size = 0;
-    child.stdout.on("data", (chunk) => {
-      size += chunk.length;
-      if (size > maxBytes) { child.kill("SIGKILL"); return; }
-      chunks.push(chunk);
-    });
-    child.on("error", () => reject(new SignerRefusal("subprocess_failed", path.basename(command))));
-    child.on("close", (code) => {
-      const stdout = Buffer.concat(chunks);
-      if (code === 0 && size <= maxBytes) resolve(stdout);
-      else { stdout.fill(0); reject(new SignerRefusal("subprocess_failed", path.basename(command))); }
-    });
-    if (input !== null) child.stdin.end(input);
+    const chunks = [];
+    const wipe = () => { for (const chunk of chunks) chunk.fill(0); chunks.length = 0; };
+    const kill = () => {
+      if (secret && child?.pid) {
+        try { process.kill(-child.pid, "SIGKILL"); return; } catch { /* already exited */ }
+      }
+      child?.kill("SIGKILL");
+    };
+    const cleanup = () => {
+      clearTimeout(deadline);
+      process.removeListener("exit", onExit);
+      for (const [signal, handler] of signalHandlers) process.removeListener(signal, handler);
+    };
+    const fail = () => {
+      if (done) return;
+      done = true;
+      wipe();
+      kill();
+      cleanup();
+      reject(new SignerRefusal("subprocess_failed", path.basename(command)));
+    };
+    const onExit = () => { wipe(); kill(); };
+    const signalHandlers = ["SIGINT", "SIGTERM", "SIGHUP"].map((signal) => [signal, () => {
+      fail();
+      // Restore the normal signal disposition after clearing and killing.
+      process.kill(process.pid, signal);
+    }]);
+    const deadline = setTimeout(fail, timeoutMs);
+    process.once("exit", onExit);
+    for (const [signal, handler] of signalHandlers) process.once(signal, handler);
+    try {
+      child = spawnImpl(command, args, {
+        cwd, env, detached: secret,
+        stdio: [input === null ? "ignore" : "pipe", "pipe", secret ? "pipe" : "ignore", ...(secret ? ["pipe"] : [])],
+      });
+      const output = secret ? child.stdio[3] : child.stdout;
+      output.on("error", fail);
+      output.on("data", (chunk) => {
+        if (done || (size += chunk.length) > maxBytes) { chunk.fill(0); fail(); return; }
+        chunks.push(chunk);
+      });
+      if (secret) {
+        for (const stream of [child.stdout, child.stderr]) {
+          stream.on("error", fail);
+          stream.on("data", (chunk) => { chunk.fill(0); fail(); });
+        }
+      }
+      child.on("error", fail);
+      child.stdin?.on("error", fail);
+      child.on("close", (code, signal) => {
+        if (done) return;
+        if (code !== 0 || signal || (secret && size === 0)) { fail(); return; }
+        const stdout = Buffer.concat(chunks);
+        wipe();
+        done = true;
+        cleanup();
+        resolve(stdout);
+      });
+      if (input !== null) child.stdin.end(input);
+    } catch { fail(); }
   });
+}
+
+/** Thread ids are self-attestations under one pinned GitHub account. They
+ * provide weaker separation than independent authenticated accounts. */
+export function writerThread(body) {
+  if (typeof body !== "string") return null;
+  const lines = body.split("\n").filter((line) => line.startsWith("writer-thread="));
+  if (lines.length !== 1) return null;
+  const id = lines[0].slice("writer-thread=".length);
+  return THREAD.test(id) ? id : null;
+}
+
+export function approvedB3(receipt, { head, number, writerThread: writer, headAvailableAt, mergedAt, now }) {
+  const author = receipt?.user;
+  if (!B3_REVIEWERS.some((account) => account.id === author?.id && account.login === author?.login)) return false;
+  if (typeof receipt?.body !== "string" || !THREAD.test(writer ?? "")) return false;
+  const lines = receipt.body.split("\n");
+  const match = B3_RECEIPT.exec(lines[0]);
+  if (!match || Number(match[1]) !== number || match[2] !== head) return false;
+  const markers = lines.filter((line) => /(?:writer|reviewer)-thread=/.test(line));
+  if (markers.length !== 1) return false;
+  const threads = /^writer-thread=([^ ]+) reviewer-thread=([^ ]+)$/.exec(markers[0]);
+  if (!threads || threads[1] !== writer || !THREAD.test(threads[2]) || threads[1] === threads[2]) return false;
+  const at = Date.parse(receipt.created_at);
+  const updated = Date.parse(receipt.updated_at);
+  const available = Date.parse(headAvailableAt);
+  const merged = Date.parse(mergedAt);
+  return Number.isFinite(at) && Number.isFinite(available) && Number.isFinite(merged)
+    && updated === at && at > available && at <= merged && merged <= now;
+}
+
+/** GitHub exposes no reliable pushedDate for every commit. A GitHub Actions
+ * suite created for this exact head is authenticated evidence that the head
+ * already existed on GitHub; requiring the comment AFTER it is conservative.
+ * No client-authored commit date or PR-wide updated_at can substitute. */
+export function headAvailableAt(suites, head, now) {
+  const times = suites.filter((suite) => suite?.head_sha === head
+    && suite?.repository?.full_name === REPOSITORY
+    && suite?.app?.id === 15368 && suite?.app?.slug === "github-actions")
+    .map((suite) => Date.parse(suite.created_at)).filter((at) => Number.isFinite(at) && at <= now);
+  return times.length ? new Date(Math.min(...times)).toISOString() : null;
+}
+
+export async function verifyGithubProvenance(backend, entry, now) {
+  const candidates = await backend.list(`/commits/${entry.commit}/pulls?per_page=100`);
+  const merged = candidates.filter((pull) => pull?.base?.ref === PROTECTED_BRANCH
+    && pull?.base?.repo?.full_name === REPOSITORY && pull?.head?.sha === entry.commit);
+  // Ambiguity cannot select whichever PR happens to have an approval.
+  if (merged.length !== 1 || !Number.isSafeInteger(merged[0].number) || merged[0].number <= 0) refuse("pr_not_merged", entry.version);
+  const pull = await backend.api(`/pulls/${merged[0].number}`);
+  if (pull?.number !== merged[0].number || pull?.merged !== true || pull?.base?.ref !== PROTECTED_BRANCH
+    || pull?.base?.repo?.full_name !== REPOSITORY || pull?.head?.repo?.full_name !== REPOSITORY
+    || pull?.merge_commit_sha !== entry.commit || !HEX40.test(pull?.head?.sha ?? "")) refuse("pr_not_merged", entry.version);
+  if (pull.head.sha !== entry.commit) refuse("b3_head_not_signed_commit", entry.version);
+  const suites = await backend.list(`/commits/${entry.commit}/check-suites?per_page=100`, "check_suites");
+  const binding = { head: entry.commit, number: pull.number, writerThread: writerThread(pull.body),
+    headAvailableAt: headAvailableAt(suites, entry.commit, now), mergedAt: pull.merged_at, now };
+  const comments = await backend.list(`/issues/${pull.number}/comments?per_page=100`);
+  if (!comments.some((comment) => approvedB3(comment, binding))) refuse("b3_receipt_missing", entry.version);
+  return { pull, binding };
 }
 
 function parsePinnedKeys(source) {
@@ -89,54 +203,36 @@ function parseRemoteRpc(source) {
   return [...match[1].matchAll(/"([a-z-]+)"/g)].map((item) => item[1]);
 }
 
-/** Default provenance backends; tests replace them with fixtures. */
-export function defaultBackends({ spawnImpl = spawn, fetchImpl = globalThis.fetch, workDir }) {
-  const mirror = path.join(workDir, "mirror.git");
-  const git = (args) => runChild(spawnImpl, "git", ["--git-dir", mirror, ...args]);
-  let fetched = false;
-  return {
-    async syncMirror() {
-      if (!fs.existsSync(mirror)) await runChild(spawnImpl, "git", ["init", "--bare", "--quiet", mirror]);
-      await git(["fetch", "--quiet", "--prune", FORGEJO_GIT, `+refs/heads/${PROTECTED_BRANCH}:refs/heads/${PROTECTED_BRANCH}`]);
-      fetched = true;
-    },
-    async isAncestor(commit) {
-      if (!fetched) refuse("mirror_not_synced");
-      try { await git(["merge-base", "--is-ancestor", commit, `refs/heads/${PROTECTED_BRANCH}`]); return true; } catch { return false; }
-    },
-    async showFile(commit, file) { return (await git(["show", `${commit}:${file}`])).toString("utf8"); },
-    async rebuildSha256(commit) {
-      const build = fs.mkdtempSync(path.join(workDir, "rebuild-"));
-      try {
-        const archive = await git(["archive", "--format=tar", commit]);
-        await runChild(spawnImpl, "tar", ["-x", "-f", "-", "-C", build], { input: archive });
-        const name = (await runChild(spawnImpl, "npm", ["pack", "--ignore-scripts", "--silent"], { cwd: build })).toString("utf8").trim().split("\n").pop();
-        if (!/^tentacles-[0-9A-Za-z.-]+\.tgz$/.test(name)) refuse("rebuild_failed");
-        return sha256(fs.readFileSync(path.join(build, name)));
-      } finally { fs.rmSync(build, { recursive: true, force: true }); }
-    },
-    async api(token, suffix) {
-      const response = await fetchImpl(`${FORGEJO_API}/repos/${REPOSITORY}${suffix}`, {
-        redirect: "error", signal: AbortSignal.timeout(30_000), headers: { authorization: `token ${token}` },
-      });
-      if (!response.ok) { await response.body?.cancel?.(); refuse("forgejo_unavailable", `${response.status}`); }
-      return response.json();
-    },
-    async releaseAssetSha256(token, version) {
-      const response = await fetchImpl(`${RELEASE_DOWNLOAD}/v${version}/tentacles-${version}.tgz`, {
-        redirect: "error", signal: AbortSignal.timeout(120_000), headers: { authorization: `token ${token}` },
-      });
-      if (!response.ok) { await response.body?.cancel?.(); refuse("release_asset_unavailable", version); }
-      return sha256(Buffer.from(await response.arrayBuffer()));
-    },
-  };
+/** The legacy provenance backend always refuses; GitHub uses a separate port. */
+export function defaultBackends() {
+  refuse("github_provenance_unavailable");
 }
 
-/** Fetch one vault value by exact item name through the audited pipe helper. */
-export async function fetchSecret(spawnImpl, keySource, item) {
-  if (![SIGNING_ITEM, FORGEJO_READ_ITEM].includes(item)) refuse("vault_item_not_allowed");
-  if (!fs.existsSync(keySource)) refuse("key_source_missing");
-  return runChild(spawnImpl, keySource, [item], { maxBytes: 16 * 1024 });
+/** Read pinned bytes, not a mutable home-directory executable. */
+export function keySourceBytes(keySource = KEY_SOURCE) {
+  let fd;
+  try {
+    fd = fs.openSync(keySource, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o022) || stat.size > 32 * 1024) refuse("key_source_unsafe");
+    const source = fs.readFileSync(fd);
+    if (sha256(source) !== KEY_SOURCE_SHA256) refuse("key_source_hash_mismatch");
+    return source;
+  } catch (error) {
+    if (error instanceof SignerRefusal) throw error;
+    refuse("key_source_missing_or_unsafe");
+  } finally { if (fd !== undefined) fs.closeSync(fd); }
+}
+
+/** Fetch a value via fd only and clear its concatenated copy after consumption. */
+export async function fetchSecret(spawnImpl, keySource, item, consume) {
+  if (item !== SIGNING_ITEM) refuse("vault_item_not_allowed");
+  const source = keySourceBytes(keySource);
+  const bytes = await runChild(spawnImpl, process.execPath, ["--input-type=module", "-", item], {
+    input: source, maxBytes: 16 * 1024, timeoutMs: 30_000, secret: true,
+  });
+  try { return await consume(bytes); }
+  finally { bytes.fill(0); }
 }
 
 function rawPublicKey(privateKey) {
@@ -185,12 +281,10 @@ export async function signManifest({
   draftFile, previousFile = null, logFile, outFile, founderOk = null, now = Date.now(),
 }, {
   spawnImpl = spawn, fetchImpl = globalThis.fetch, keySource = KEY_SOURCE, backends = null,
-  workDir = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles-signer-")),
+  workDir = null,
 } = {}) {
   const ownsWorkDir = backends === null;
-  const backend = backends ?? defaultBackends({ spawnImpl, fetchImpl, workDir });
-  let token = null;
-  let keyBytes = null;
+  const backend = backends ?? githubBackends({ spawnImpl, workDir });
   try {
     if (founderOk !== null && !FOUNDER_REF.test(founderOk)) refuse("founder_ok_reference_invalid");
     if (fs.existsSync(outFile)) refuse("output_exists");
@@ -211,24 +305,14 @@ export async function signManifest({
       return !old;
     });
 
-    token = (await fetchSecret(spawnImpl, keySource, FORGEJO_READ_ITEM)).toString("utf8").trim();
-    if (!/^[A-Za-z0-9]{16,128}$/.test(token)) refuse("forgejo_read_token_invalid");
-    const branch = await backend.api(token, `/branches/${encodeURIComponent(PROTECTED_BRANCH)}`);
+    const branch = await backend.api(`/branches/${encodeURIComponent(PROTECTED_BRANCH)}`);
     if (branch?.protected !== true) refuse("branch_not_protected");
     await backend.syncMirror();
 
     const pinnedAt = new Map();
     for (const entry of fresh) {
       if (!HEX40.test(entry.commit) || !(await backend.isAncestor(entry.commit))) refuse("commit_not_on_protected_branch", entry.version);
-      const pull = await backend.api(token, `/commits/${entry.commit}/pull`);
-      if (pull?.merged !== true || pull?.base?.ref !== PROTECTED_BRANCH || pull?.merge_commit_sha !== entry.commit
-        || !Number.isSafeInteger(pull?.number) || !HEX40.test(pull?.head?.sha ?? "")) {
-        refuse("pr_not_merged", entry.version);
-      }
-      const comments = await backend.api(token, `/issues/${pull.number}/comments?limit=50`);
-      const receipt = Array.isArray(comments) && comments.some((comment) => typeof comment?.body === "string"
-        && B3_RECEIPT.test(comment.body.split("\n")[0]) && comment.body.includes(pull.head.sha));
-      if (!receipt) refuse("b3_receipt_missing", entry.version);
+      await verifyGithubProvenance(backend, entry, now);
       const packageJson = JSON.parse(await backend.showFile(entry.commit, "package.json"));
       if (packageJson.version !== entry.version) refuse("version_mismatch", entry.version);
       const rpc = parseRemoteRpc(await backend.showFile(entry.commit, "src/outbound-pairer.mjs"));
@@ -237,7 +321,7 @@ export async function signManifest({
       if (keys.length !== 2 || new Set(keys).size !== 2) refuse("pinned_keys_not_configured", entry.version);
       pinnedAt.set(entry.version, keys);
       if ((await backend.rebuildSha256(entry.commit)) !== entry.sha256) refuse("rebuild_sha_mismatch", entry.version);
-      if ((await backend.releaseAssetSha256(token, entry.version)) !== entry.sha256) refuse("release_asset_sha_mismatch", entry.version);
+      if ((await backend.releaseAssetSha256(entry.version)) !== entry.sha256) refuse("release_asset_sha_mismatch", entry.version);
     }
 
     let keysChanged = false;
@@ -253,10 +337,20 @@ export async function signManifest({
     if (rules.length && founderOk === null) refuse("founder_ok_required", rules.join(","));
 
     // Every check passed: only now is the private key fetched.
-    keyBytes = await fetchSecret(spawnImpl, keySource, SIGNING_ITEM);
-    let privateKey;
-    try { privateKey = createPrivateKey({ key: keyBytes, format: "pem" }); } catch { refuse("signing_key_invalid"); }
-    finally { keyBytes.fill(0); }
+    const privateKey = await fetchSecret(spawnImpl, keySource, SIGNING_ITEM, (bytes) => {
+      // A single PKCS8 PEM only: parsers may otherwise ignore appended output.
+      const begin = Buffer.from("-----BEGIN PRIVATE KEY-----\n");
+      const end = Buffer.from("\n-----END PRIVATE KEY-----");
+      // nasvault set-password strips trailing newlines. Permit exactly the
+      // standard optional final LF, without accepting appended diagnostics.
+      const pem = bytes.at(-1) === 10 ? bytes.subarray(0, -1) : bytes;
+      if (!pem.subarray(0, begin.length).equals(begin) || !pem.subarray(-end.length).equals(end)) refuse("signing_key_invalid");
+      for (const byte of pem.subarray(begin.length, -end.length)) {
+        if (!(byte >= 65 && byte <= 90) && !(byte >= 97 && byte <= 122) && !(byte >= 48 && byte <= 57)
+          && ![43, 47, 61, 10].includes(byte)) refuse("signing_key_invalid");
+      }
+      try { return createPrivateKey({ key: bytes, format: "pem" }); } catch { refuse("signing_key_invalid"); }
+    });
     const publicRaw = rawPublicKey(privateKey);
     const currentPinned = Buffer.from(publicRaw).toString("base64");
     for (const [version, keys] of pinnedAt) if (keys[0] !== currentPinned) refuse("signing_key_not_pinned_current", version);
@@ -284,9 +378,7 @@ export async function signManifest({
     fs.writeFileSync(logFile, `${JSON.stringify(record)}\n`, { flag: "a", mode: 0o600 });
     return { record, linearComment: linearComment(record) };
   } finally {
-    token = null;
-    keyBytes?.fill(0);
-    if (ownsWorkDir) fs.rmSync(workDir, { recursive: true, force: true });
+    if (ownsWorkDir) fs.rmSync(backend.workDir, { recursive: true, force: true });
   }
 }
 
@@ -314,10 +406,19 @@ function parseCli(argv) {
   return { draftFile: options.draft, previousFile: options.previous ?? null, logFile: options.log, outFile: options.out, founderOk: options["founder-ok"] ?? null };
 }
 
+export function githubBackends(options) {
+  return createGithubBackends({ ...options, runChild, refuse, protectedBranch: PROTECTED_BRANCH });
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
   try {
-    const { linearComment: body } = await signManifest(parseCli(process.argv.slice(2)));
-    console.log(body);
+    if (process.argv.length === 3 && process.argv[2] === "--check-key-source") {
+      keySourceBytes();
+      console.log(`key-source pinned sha256=${KEY_SOURCE_SHA256}; custody audit still required`);
+    } else {
+      const { linearComment: body } = await signManifest(parseCli(process.argv.slice(2)));
+      console.log(body);
+    }
   } catch (error) {
     console.error(error instanceof SignerRefusal ? `sign-manifest: ${error.message}` : "sign-manifest: failed (no secret or response body is logged)");
     process.exitCode = 1;

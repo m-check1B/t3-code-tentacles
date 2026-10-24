@@ -60,4 +60,5 @@ machine-specific paths.
 
 Version tags use `v<package-version>`. Pushing a matching tag runs checks and
 tests, packs the npm-compatible tarball, writes its SHA-256 checksum, and creates
-the canonical Forgejo release. The workflow does not publish to npm.
+a GitHub Release in `m-check1B/t3-code-tentacles-private` using existing `gh` authentication or the workflow token. The workflow does not publish to npm. It requires an existing matching tag and
+a version entry in `CHANGELOG.md`; assets are never overwritten.

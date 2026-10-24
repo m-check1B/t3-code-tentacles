@@ -11,6 +11,7 @@
 // Never touched: T3 itself (`t3 update` is never run), ~/.claude, ~/.codex, ~/.t3.
 // Node builtins only, so a broken version tree cannot break rollback.
 import fs from "node:fs";
+import { requireReleaseBase, releaseAssetUrl } from "./release-source.mjs";
 import os from "node:os";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -79,7 +80,7 @@ export class SelfUpdater {
     this.home = path.resolve(home);
     this.publicKeys = publicKeys;
     this.minSerial = minSerial;
-    this.baseUrl = baseUrl.replace(/\/+$/, "");
+    this.baseUrl = requireReleaseBase(baseUrl);
     this.fetchImpl = fetchImpl;
     this.now = now;
     this.nodePath = nodePath;
@@ -186,7 +187,7 @@ export class SelfUpdater {
 
   async verifiedManifest() {
     if (!Array.isArray(this.publicKeys) || this.publicKeys.length === 0) throw new UpdateError("updater_unconfigured");
-    const bytes = await this.fetchBytes(`${this.baseUrl}/${MANIFEST_TAG}/${MANIFEST_ASSET}`, 256 * 1024, "manifest_unavailable");
+    const bytes = await this.fetchBytes(releaseAssetUrl(MANIFEST_TAG, MANIFEST_ASSET), 256 * 1024, "manifest_unavailable");
     const state = this.readState();
     const { manifest, digest } = verifyManifest(bytes, {
       publicKeys: this.publicKeys, now: this.now(), minSerial: this.minSerial,
@@ -202,7 +203,7 @@ export class SelfUpdater {
   // --- install -----------------------------------------------------------
 
   async install(entry) {
-    const url = `${this.baseUrl}/v${entry.version}/${artifactName(entry.version)}`;
+    const url = releaseAssetUrl(`v${entry.version}`, artifactName(entry.version));
     const bytes = await this.fetchBytes(url, MAX_ARTIFACT_BYTES, "artifact_unavailable");
     // U4: the signed sha256 is checked before a single entry is parsed.
     if (createHash("sha256").update(bytes).digest("hex") !== entry.sha256) throw new UpdateError("artifact_sha_mismatch");
