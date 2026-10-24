@@ -1273,7 +1273,7 @@ export async function probeTalkCapabilities(client, { signal = AbortSignal.timeo
     else if (error instanceof T3HttpError && error.status === 401) code = "t3_reauth_required";
     else if (!(error instanceof T3HttpError && [404, 405].includes(error.status))) code = "t3_capability_unavailable";
   }
-  const supported = isPlainObject(payload) && payload.talkTurnResult === "v1";
+  const supported = isPlainObject(payload) && Object.keys(payload).length === 1 && payload.talkTurnResult === "v1";
   const freshProviders = supported ? freshContextProviders(payload) : [];
   return {
     capabilities: {
@@ -1354,7 +1354,7 @@ async function doctorReport(client, {
     const row = labRow({ instanceId: labId, advertised: true, settings, configById: new Map(matches.map((entry) => [labId, entry])), modelsMode });
     // T3's ready snapshot must never be refreshed, including a row refused by
     // a separate model/auth/runtime gate. Claim before awaiting for concurrency.
-    if (!row.enabled || !row.installed || matches[0]?.status === "ready"
+    if (!row.enabled || matches[0]?.installed !== true || matches[0]?.status === "ready"
       || typeof client.refreshProvider !== "function" || signal.aborted) return false;
     try {
       if (!claimDoctorRefresh(client, labId, clock(), refreshDirectory)) return false;
