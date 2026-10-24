@@ -13,9 +13,11 @@ function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles-noweb-identity-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.writeFileSync(path.join(root, "config.toml"), 'web_search="disabled"\n');
+  const token = path.join(root, "synthetic.token");
+  fs.writeFileSync(token, "synthetic-test-only", { mode: 0o600 });
   const instance = { driver: "codex", enabled: true, config: { homePath: root, launchArgs: '--config \'web_search="disabled"\'' }, environment: [{ name: "T3CODE_CODEX_LAUNCH_ARGS", value: "", sensitive: false }] };
   const observed = { instanceId: "codex-noweb", driver: "codex", installed: true, status: "ready", models: [{ slug: "gpt-5.6-luna", isDefault: true }] };
-  const options = { hermesHome: path.join(root, "absent-hermes"), openrouterTokenFile: path.join(root, "absent-token"), pairStateFile: path.join(root, "absent-pair"), fetchImpl: async () => { throw new Error("Synthetic health absent"); } };
+  const options = { hermesHome: path.join(root, "absent-hermes"), openrouterTokenFile: token, pairStateFile: path.join(root, "absent-pair"), fetchImpl: async () => { throw new Error("Synthetic health absent"); } };
   const read = async (settings, providers) => (await doctor({ snapshot: async () => ({ projects: [], threads: [] }), getSettings: async () => settings, rpc: async () => ({ providers }) }, options)).labs.find(row => row.instanceId === "codex-noweb");
   return { root, instance, observed, options, read };
 }

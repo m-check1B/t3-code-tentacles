@@ -372,6 +372,30 @@
         "state": "unknown",
         "tools": []
       }
+    },
+    {
+      "instanceId": "antigravity",
+      "name": "Antigravity (Gemini)",
+      "advertised": true,
+      "kind": "native",
+      "enabled": false,
+      "installed": false,
+      "ready": false,
+      "status": "absent",
+      "code": "absent",
+      "modelCount": 0,
+      "models": [],
+      "modelsTruncated": false,
+      "defaultModel": null,
+      "defaultAvailable": false,
+      "webTools": {
+        "v": 1,
+        "state": "unknown",
+        "tools": []
+      },
+      "signedIn": null,
+      "setupUrl": "t3code://app/settings/providers?instanceId=antigravity",
+      "action": "Enable Antigravity in T3 Code: t3code://app/settings/providers?instanceId=antigravity"
     }
   ],
   "adapterCredential": {
