@@ -4,9 +4,7 @@
 
 export const ANTIGRAVITY_INSTANCE_ID = "antigravity";
 
-// T3 has shipped the Antigravity driver (macOS arm64, Linux, Windows) since
-// 0.0.39; 0.0.43 is the first desktop that opens ANTIGRAVITY_SETUP_URL. Intel
-// Macs need the 1.3.0 ACP agent, first shipped in T3 0.0.46.
+// Minimum desktop setup-link contract; a version alone never proves readiness.
 export const ANTIGRAVITY_MIN_T3_VERSION = "0.0.43";
 
 // T3's own provider settings page, where "Install Antigravity" and
