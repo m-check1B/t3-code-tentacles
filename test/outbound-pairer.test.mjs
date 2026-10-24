@@ -885,16 +885,16 @@ test("turn-result validates exact correlation, terminal text, bounds and negotia
   let result = { ...params, freshProviderContext: true, nativeContextGeneration: params.turnCommandId, turnId: "turn", assistantMessageId: "assistant-message", instanceId: "codex", model: "model", effort: "high", state: "succeeded", outputText: "actual reply", internal: "must not escape" };
   const adapter = new LoopbackRuntimeAdapter({ client: { request: async (url, options) => {
     assert.equal(url, "/api/orchestration/turn-result");
-    if (!options) return capabilities;
+    if (!options || options.method !== "POST") return capabilities;
     assert.deepEqual(options.body, params);
     return result;
   } }, doctorImpl: async () => ({ ready: true }) });
   await adapter.refreshModels();
-  assert.deepEqual((await adapter.doctorStatus()).capabilities, capabilities);
+  assert.deepEqual((await adapter.doctorStatus()).capabilities, { talkTurnResult: null });
   for (const providers of [[], ["codex", "codex"], ["../bad"], Array(33).fill("codex"), "codex"]) {
     capabilities = { ...capabilities, talkFreshProviderContextProviders: providers };
     await adapter.refreshModels();
-    assert.deepEqual((await adapter.doctorStatus()).capabilities, { talkTurnResult: "v1" });
+    assert.deepEqual((await adapter.doctorStatus()).capabilities, { talkTurnResult: null });
   }
   capabilities = { talkTurnResult: "v1" };
   await adapter.refreshModels();
