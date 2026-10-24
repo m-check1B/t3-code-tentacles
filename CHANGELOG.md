@@ -13,6 +13,15 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- `doctor-status` adds a versioned, read-only `pluginInventory` block
+  (KRA-6203): installed native Codex plugins (`pluginId`, `name`,
+  `marketplace`, `version`, `enabled`) read with `codex plugin list --json`
+  from the exact configured binary and `CODEX_HOME`; labs with launch
+  arguments are not attributed. The listing can take seconds, so the
+  long-running pairer refreshes it in the background (10 minute TTL) and
+  doctor only serves a fresh cached observation; the CLI `doctor` never
+  spawns it. Paths, sources and policies stay on the computer. Other labs
+  report `no_native_plugin_source`.
 - `doctor` (and paired `doctor-status`) adds a versioned, read-only
   `skillInventory` block (KRA-6203): per originate lab, the native skills T3
   already reports (`name`, `scope`, `enabled`), with `count`, `dropped`,

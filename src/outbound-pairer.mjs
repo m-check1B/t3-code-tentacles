@@ -5,6 +5,7 @@ import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { randomUUID } from "node:crypto";
 import { continueThread, doctor, originate } from "./bridge.mjs";
 import { observe, REPORT_MODEL_LABEL, threadReportStatus } from "./orchestrate.mjs";
+import { PluginInventoryCache } from "./plugin-inventory.mjs";
 import { requireContinueSelection } from "./model-selection.mjs";
 import { readBoundedWebSocketData } from "./t3-client.mjs";
 import {
@@ -240,6 +241,7 @@ export class LoopbackRuntimeAdapter {
     prepareTalkWorkspaceImpl = ensureLocalTalkWorkspace,
     continueImpl = continueThread,
     doctorImpl = doctor,
+    pluginInventory = new PluginInventoryCache(),
     threadEventsImpl = threadEvents,
     threadEventsDirectory,
     interruptOptions = {},
@@ -254,6 +256,7 @@ export class LoopbackRuntimeAdapter {
     this.prepareTalkWorkspaceImpl = prepareTalkWorkspaceImpl;
     this.continueImpl = continueImpl;
     this.doctorImpl = doctorImpl;
+    this.pluginInventory = pluginInventory;
     this.threadEventsImpl = threadEventsImpl;
     this.threadEventsDirectory = threadEventsDirectory;
     this.capabilityCache = capabilityCache;
@@ -302,6 +305,7 @@ export class LoopbackRuntimeAdapter {
       this.modelRefresh = Promise.resolve().then(() => this.doctorImpl(this.client, {
         pairStateFile: this.pairStateFile,
         models: "full",
+        pluginInventory: this.pluginInventory,
       })).finally(() => { this.modelRefresh = null; });
     }
     return this.modelRefresh;

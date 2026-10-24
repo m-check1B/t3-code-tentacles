@@ -35,6 +35,7 @@ import {
 import { DEFAULT_PAIR_STATE_FILE, publishLockFile, readPairPresence } from "./pair-state.mjs";
 import { inspectHermesOpenaiCodexAuth } from "./hermes-acp-launch.mjs";
 import { readBoundedResponseText, readOrchestrationSnapshot, T3HttpError, T3_REAUTH_ACTION } from "./t3-client.mjs";
+import { pluginInventoryBlock } from "./plugin-inventory.mjs";
 import { LAB_NAMES, labName } from "./lab-names.mjs";
 
 const HERMES_MENTION = /(^|\s)@hermes\b/i;
@@ -1265,6 +1266,7 @@ export async function doctor(client, {
   openrouterTokenFile,
   pairStateFile = DEFAULT_PAIR_STATE_FILE,
   models: modelsMode = "summary",
+  pluginInventory = null,
 } = {}) {
   if (!["summary", "full"].includes(modelsMode)) throw new Error("Doctor models must be summary or full");
   let shell, settings, config;
@@ -1386,6 +1388,12 @@ export async function doctor(client, {
       version: SKILL_INVENTORY_VERSION,
       labs: ORIGINATE_LABS.map((labId) => skillInventoryRow(labId, configById.get(labId))),
     },
+    pluginInventory: pluginInventoryBlock(
+      ORIGINATE_LABS,
+      pluginInventory
+        ? pluginInventory.read(settings)
+        : { instanceId: "codex", state: "unavailable", code: "not_refreshed", count: null, dropped: 0, truncated: false, digest: null, observedAt: null, plugins: [] },
+    ),
   };
 }
 
