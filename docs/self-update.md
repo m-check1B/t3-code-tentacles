@@ -13,6 +13,13 @@ untrusted manifests are still refused. Empty-key configurations remain
 authorize signing: the first signed release still needs the final Opus audit
 and the KRA-8810 signing gate.
 
+The U6 keyId-to-vault-item mapping is:
+
+| Role | keyId | Vault item |
+| --- | --- | --- |
+| current | `106d3ab825e5e6b7` | `tentacles-manifest-signing-key-current` |
+| next | `9e6656980133bd7a` | `tentacles-manifest-signing-key-next` |
+
 ## Trust model
 
 - **Compiled in:** the base URL (`UPDATE_BASE_URL`), the two Ed25519 public keys
