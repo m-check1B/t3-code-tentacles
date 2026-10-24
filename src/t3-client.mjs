@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { requireFreshProviderContext } from "./fresh-provider-context.mjs";
 import { DEFAULT_T3_URL, DEFAULT_TOKEN_FILE, readToken, requireLoopbackUrl } from "./config.mjs";
 import { archivedShellToV1, shellToV1, T3RpcRejectedError, threadDetailToV1, translateCommand, T3V2UnsupportedError, V2_PROTOCOL, V2_PROTOCOL_HEADER } from "./t3-v2.mjs";
 
@@ -184,6 +185,10 @@ export class T3Client {
   }
 
   async dispatch(command) {
+    if (command?.type === "thread.turn.start" && Object.hasOwn(command, "freshProviderContext")) {
+      if (command.freshProviderContext !== true) throw new T3V2UnsupportedError("freshProviderContext must be true when dispatched");
+      await requireFreshProviderContext(this, { freshProviderContext: true, instanceId: command.modelSelection?.instanceId });
+    }
     if (await this.protocol() !== V2_PROTOCOL) {
       return this.request("/api/orchestration/dispatch", { method: "POST", body: command });
     }
