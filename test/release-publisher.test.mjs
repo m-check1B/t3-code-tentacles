@@ -68,12 +68,21 @@ test("gh errors are suppressed and temporary notes are removed", async (t) => {
   assert.equal(fs.existsSync(notesFile), false);
 });
 
-test("tgz plus sha256 with shipped empty keys publishes and reports the gate skipped", async (t) => {
+test("tgz plus sha256 with shipped pins publishes and reports the gate skipped", async (t) => {
   const f = fixture(t);
   const messages = [];
   let calls = 0;
-  assert.equal(PINNED_PUBLIC_KEYS.length, 0);
+  assert.equal(PINNED_PUBLIC_KEYS.length, 2);
   await publishRelease({ ...f, log: message => messages.push(message), runGh: async () => { calls += 1; } });
+  assert.equal(calls, 1);
+  assert.deepEqual(messages, ["pinned-keys gate: skipped, release publishes no signed manifest, feed or signature (KRA-8371)"]);
+});
+
+test("tgz plus sha256 with explicit empty keys still skips the gate", async (t) => {
+  const f = fixture(t);
+  const messages = [];
+  let calls = 0;
+  await publishRelease({ ...f, publicKeys: [], log: message => messages.push(message), runGh: async () => { calls += 1; } });
   assert.equal(calls, 1);
   assert.deepEqual(messages, ["pinned-keys gate: skipped, release publishes no signed manifest, feed or signature (KRA-8371)"]);
 });
@@ -84,7 +93,7 @@ test("every extra manifest, feed, signature or unknown asset with empty keys is 
     await t.test(extra, async () => {
       fs.writeFileSync(path.join(f.cwd, extra), "synthetic extra asset");
       let calls = 0;
-      await assert.rejects(publishRelease({ ...f, assets: [f.filename, `${f.filename}.sha256`, extra],
+      await assert.rejects(publishRelease({ ...f, publicKeys: [], assets: [f.filename, `${f.filename}.sha256`, extra],
         log: () => {}, runGh: async () => { calls += 1; } }), /two pinned Ed25519 public keys/);
       assert.equal(calls, 0);
     });
@@ -93,8 +102,23 @@ test("every extra manifest, feed, signature or unknown asset with empty keys is 
 
 test("the manifest tag with empty keys is refused even with only tgz plus sha256", async (t) => {
   const f = fixture(t);
-  await assert.rejects(publishRelease({ ...f, environment: { ...f.environment, GITHUB_REF_NAME: MANIFEST_TAG },
+  await assert.rejects(publishRelease({ ...f, publicKeys: [], environment: { ...f.environment, GITHUB_REF_NAME: MANIFEST_TAG },
     log: () => {}, runGh: async () => assert.fail("must refuse before gh") }), /two pinned Ed25519 public keys/);
+});
+
+test("shipped pins allow the publisher's manifest gate using only a fake gh", async (t) => {
+  const f = fixture(t);
+  fs.writeFileSync(path.join(f.cwd, MANIFEST_ASSET), "synthetic manifest");
+  const assets = [f.filename, `${f.filename}.sha256`, MANIFEST_ASSET];
+  const messages = [];
+  let calls = 0;
+  await publishRelease({ ...f, environment: { ...f.environment, GITHUB_REF_NAME: MANIFEST_TAG }, assets,
+    log: message => messages.push(message), runGh: async args => {
+      calls += 1;
+      assert.deepEqual(args.slice(0, 6), ["release", "create", MANIFEST_TAG, ...assets]);
+    } });
+  assert.equal(calls, 1);
+  assert.deepEqual(messages, ["pinned-keys gate: required, 2 configured (KRA-8371)"]);
 });
 
 test("two valid distinct keys allow manifest publication with exactly the checked assets", async (t) => {
@@ -151,7 +175,22 @@ test("the workflow gate checks the publisher's packed asset plan and reports ski
   const script = new URL("../scripts/publish-github-release.mjs", import.meta.url).pathname;
   const stdout = execFileSync(process.execPath, [script, "--check-pinned-keys"], { cwd: f.cwd, env: f.environment, encoding: "utf8" });
   assert.equal(stdout.trim(), "pinned-keys gate: skipped, release publishes no signed manifest, feed or signature (KRA-8371)");
-  assert.throws(() => execFileSync(process.execPath, [script, "--check-pinned-keys"], {
+  const required = execFileSync(process.execPath, [script, "--check-pinned-keys"], {
+    cwd: f.cwd, env: { ...f.environment, GITHUB_REF_NAME: MANIFEST_TAG }, encoding: "utf8",
+  });
+  assert.equal(required.trim(), "pinned-keys gate: required, 2 configured (KRA-8371)");
+  // Keep the old unconfigured CLI refusal on an isolated empty-pins fixture.
+  for (const name of ["scripts/publish-github-release.mjs", "scripts/release/assert-pinned-keys.mjs", "src/updater/manifest.mjs", "src/updater/release-source.mjs"]) {
+    fs.mkdirSync(path.dirname(path.join(f.cwd, name)), { recursive: true });
+    fs.copyFileSync(new URL(`../${name}`, import.meta.url), path.join(f.cwd, name));
+  }
+  fs.writeFileSync(path.join(f.cwd, "src/updater/pinned.mjs"), [
+    "export const PINNED_PUBLIC_KEYS = Object.freeze([]);",
+    `export const MANIFEST_TAG = ${JSON.stringify(MANIFEST_TAG)};`,
+    'export const MANIFEST_SCHEMA = "tentacles-manifest/v1";',
+  ].join("\n"));
+  const emptyPinsScript = fs.realpathSync(path.join(f.cwd, "scripts/publish-github-release.mjs"));
+  assert.throws(() => execFileSync(process.execPath, [emptyPinsScript, "--check-pinned-keys"], {
     cwd: f.cwd, env: { ...f.environment, GITHUB_REF_NAME: MANIFEST_TAG }, stdio: "pipe",
   }));
 });

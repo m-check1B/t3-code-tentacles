@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.4.1-jack.3]
+
+- Pin the two audited U6 Ed25519 public keys for standalone self-update; missing or untrusted manifests still install nothing (KRA-8371).
+
 ## [0.4.1-jack.2] - 2026-10-24
 
 - Scope the pinned-key release gate to signed-update publication; package-only releases skip it while manifests, feeds and signatures still require two pinned keys (KRA-8371).

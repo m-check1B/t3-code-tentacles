@@ -12,7 +12,6 @@ import {
   KEY_SOURCE, NEXT_SIGNING_ITEM, PROTECTED_BRANCH, signManifest, SIGNING_ITEM,
 } from "../scripts/release/sign-manifest.mjs";
 import { verifyManifest } from "../src/updater/manifest.mjs";
-import { PINNED_PUBLIC_KEYS } from "../src/updater/pinned.mjs";
 import { entryFor, ephemeralKey, manifestOf, packageTgz, RPC, signEnvelope } from "./helpers/self-update-fixtures.mjs";
 
 const NOW = Date.parse("2026-10-22T08:00:00.000Z");
@@ -122,9 +121,8 @@ async function refusal(promise) {
 
 const fetchedItems = (recorder) => recorder.calls.map((call) => call.args.at(-1));
 
-test("the signer still refuses shipped empty pins before requesting any key", async (t) => {
-  assert.equal(PINNED_PUBLIC_KEYS.length, 0);
-  const s = scenario(t, { overrides: { pinned: PINNED_PUBLIC_KEYS } });
+test("the signer still refuses explicit empty pins before requesting any key", async (t) => {
+  const s = scenario(t, { overrides: { pinned: [] } });
   assert.equal(await refusal(s.run()), "pinned_keys_not_configured");
   assert.equal(s.recorder.calls.length, 0);
   assert.equal(fs.readdirSync(s.dir).some(name => name.startsWith("signed-") || name === "signing.log"), false);
