@@ -36,6 +36,8 @@ import {
 import { DEFAULT_PAIR_STATE_FILE, publishLockFile, readPairPresence } from "./pair-state.mjs";
 import { inspectHermesOpenaiCodexAuth } from "./hermes-acp-launch.mjs";
 import { readBoundedResponseText, readOrchestrationSnapshot, T3HttpError, T3_REAUTH_ACTION } from "./t3-client.mjs";
+import { looksSecret } from "./capabilities.mjs";
+import { boundDoctorInventories } from "./inventory-budget.mjs";
 import { pluginInventoryBlock } from "./plugin-inventory.mjs";
 import { LAB_NAMES, labName } from "./lab-names.mjs";
 
@@ -1026,8 +1028,8 @@ export function skillInventoryRow(instanceId, configProvider) {
     const scope = entry?.scope ?? null;
     const enabled = entry?.enabled ?? null;
     if (
-      typeof name !== "string" || !name || name.length > SKILL_NAME_MAX || name !== name.trim() || SKILL_NAME_UNSAFE.test(name)
-      || (scope !== null && (typeof scope !== "string" || !SKILL_SCOPE.test(scope)))
+      typeof name !== "string" || !name || name.length > SKILL_NAME_MAX || name !== name.trim() || SKILL_NAME_UNSAFE.test(name) || looksSecret(name)
+      || (scope !== null && (typeof scope !== "string" || !SKILL_SCOPE.test(scope) || looksSecret(scope)))
       || (enabled !== null && typeof enabled !== "boolean")
     ) {
       dropped += 1;
@@ -1385,7 +1387,7 @@ export async function doctor(client, {
   };
   const projects = Array.isArray(shell?.projects) ? shell.projects.filter((entry) => entry?.deletedAt == null) : [];
   const threads = Array.isArray(shell?.threads) ? shell.threads.filter((entry) => entry?.deletedAt == null && entry?.archivedAt == null) : [];
-  return {
+  return boundDoctorInventories({
     product: "Tentacles",
     t3: { reachable: true, auth: { status: "valid" }, version: serverVersion, projects: projects.length, threads: threads.length, leakedSessions: await inspectLeakedSessions(client) },
     pairing: readPairPresence(pairStateFile),
@@ -1403,7 +1405,7 @@ export async function doctor(client, {
         ? pluginInventory.read(settings)
         : { instanceId: "codex", state: "unavailable", code: "not_refreshed", count: null, dropped: 0, truncated: false, digest: null, observedAt: null, plugins: [] },
     ),
-  };
+  });
 }
 
 function yesNo(value) {

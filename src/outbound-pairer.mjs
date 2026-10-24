@@ -15,6 +15,7 @@ import {
   writePairPresence,
 } from "./pair-state.mjs";
 import { createThreadLock, TURN_INTERRUPT_CONTRACT, TurnInterrupter } from "./turn-interrupt.mjs";
+import { boundDoctorInventories, withoutDoctorInventories } from "./inventory-budget.mjs";
 import { boundForPublish, MAX_PUBLISH_BYTES } from "./capabilities.mjs";
 
 export const PAIR_PROTOCOL_VERSION = 1;
@@ -348,7 +349,7 @@ export class LoopbackRuntimeAdapter {
         ? boundForPublish(this.capabilityCache.current, inventoryRoom(result, this.frameBytes))
         : null;
     }
-    return result;
+    return boundDoctorInventories(result, this.frameBytes);
   }
 
   interrupt(params) {
@@ -434,8 +435,9 @@ export function inventoryRoom(reply, frameBytes = DEFAULT_MAX_FRAME_BYTES) {
 
 /** An oversized reply that carries an inventory is resent without it, never as unavailable. */
 export function withoutInventory(message) {
-  if (message?.type !== "rpc.result" || !isRecord(message.result) || !message.result.capabilityInventory) return null;
-  return { ...message, result: { ...message.result, capabilityInventory: null } };
+  if (message?.type !== "rpc.result" || !isRecord(message.result)) return null;
+  const result = withoutDoctorInventories(message.result);
+  return result ? { ...message, result } : null;
 }
 
 function encodeBounded(message, maxBytes) {

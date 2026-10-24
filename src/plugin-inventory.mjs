@@ -7,6 +7,7 @@
 // reports an unobserved or stale list as current.
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import { looksSecret } from "./capabilities.mjs";
 
 export const PLUGIN_INVENTORY_VERSION = 1;
 export const PLUGIN_INVENTORY_TTL_MS = 10 * 60 * 1000;
@@ -30,7 +31,7 @@ function unavailable(instanceId, code) {
 
 function exactText(value) {
   return typeof value === "string" && value.length > 0 && value.length <= TEXT_MAX
-    && value === value.trim() && !UNSAFE_TEXT.test(value);
+    && value === value.trim() && !UNSAFE_TEXT.test(value) && !looksSecret(value);
 }
 
 const CONTEXT_ENV = new Set(["CODEX_HOME", "HOME", "PATH"]);
@@ -39,9 +40,8 @@ function plainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function setting(config, legacy, key) {
-  const value = typeof config[key] === "string" && config[key].trim() ? config[key] : legacy[key];
-  return typeof value === "string" && value.trim() ? value.trim() : null;
+function setting(config, key) {
+  return typeof config[key] === "string" && config[key].trim() ? config[key].trim() : null;
 }
 
 // The plugin context of T3's `codex` instance, resolved like the doctor lab
@@ -55,17 +55,23 @@ export function codexPluginContext(settings, env = process.env) {
   const legacy = plainObject(settings?.providers?.codex) ? settings.providers.codex : {};
   if (instance === undefined && !plainObject(settings?.providers?.codex)) return { error: "disabled" };
   if (instance !== undefined && !plainObject(instance)) return { error: "disabled" };
-  const enabled = plainObject(instance) && Object.hasOwn(instance, "enabled")
-    ? instance.enabled === true
-    : legacy.enabled !== false;
-  if (!enabled) return { error: "disabled" };
-  const config = plainObject(instance?.config) ? instance.config : {};
+  // T3 hydrates an explicit envelope verbatim; the legacy mirror is not a
+  // field-level fallback. Missing fields use defaults inside the chosen source.
+  const config = instance === undefined ? legacy : instance.config === undefined ? {} : instance.config;
+  if (!plainObject(config)) return { error: "config_unverified" };
+  const enabled = (value) => value === undefined || value === true;
+  if (!enabled(instance?.enabled) || !enabled(config.enabled)) return { error: "disabled" };
+  if (instance !== undefined && instance.driver !== "codex") return { error: "driver_unverified" };
+  for (const key of ["launchArgs", "binaryPath", "homePath"]) {
+    if (config[key] !== undefined && typeof config[key] !== "string") return { error: "config_unverified" };
+  }
+  if (instance?.environment !== undefined && !Array.isArray(instance.environment)) return { error: "environment_unverified" };
   if (Array.isArray(instance?.environment) && instance.environment.some((variable) => CONTEXT_ENV.has(variable?.name))) {
     return { error: "environment_unverified" };
   }
-  if (setting(config, legacy, "launchArgs")) return { error: "launch_args_unverified" };
-  const binary = setting(config, legacy, "binaryPath") ?? "codex";
-  const home = setting(config, legacy, "homePath");
+  if (setting(config, "launchArgs")) return { error: "launch_args_unverified" };
+  const binary = setting(config, "binaryPath") ?? "codex";
+  const home = setting(config, "homePath");
   if (!home && typeof env.CODEX_HOME === "string" && env.CODEX_HOME) return { error: "default_context_unverified" };
   return { binary, home, key: digest(JSON.stringify([binary, home])) };
 }
@@ -81,7 +87,7 @@ export function projectCodexPluginList(payload, observedAt) {
     if (entry?.installed !== true) continue;
     if (
       !exactText(entry.pluginId) || !exactText(entry.name) || !exactText(entry.marketplaceName)
-      || typeof entry.version !== "string" || !VERSION_TEXT.test(entry.version)
+      || typeof entry.version !== "string" || !VERSION_TEXT.test(entry.version) || looksSecret(entry.version)
       || typeof entry.enabled !== "boolean"
     ) {
       dropped += 1;

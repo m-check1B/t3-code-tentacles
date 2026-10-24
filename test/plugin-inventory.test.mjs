@@ -66,16 +66,16 @@ test("plugin context is the configured binary and CODEX_HOME; launch args are no
     providers: { codex: { enabled: true } }, providerInstances: { codex: { enabled: false } },
   }, env).error, "disabled");
   assert.equal(codexPluginContext({
-    providerInstances: { codex: { config: { launchArgs: "-c a=b" } } },
+    providerInstances: { codex: { driver: "codex", config: { launchArgs: "-c a=b" } } },
   }, env).error, "launch_args_unverified");
   for (const name of ["CODEX_HOME", "HOME", "PATH"]) {
     assert.equal(codexPluginContext({
-      providerInstances: { codex: { environment: [{ name, value: "/x" }] } },
+      providerInstances: { codex: { driver: "codex", environment: [{ name, value: "/x" }] } },
     }, env).error, "environment_unverified", name);
   }
   // Unrelated instance environment (e.g. harness markers) does not block attribution.
   assert.equal(codexPluginContext({
-    providerInstances: { codex: { environment: [{ name: "OTHER", value: "1" }] } },
+    providerInstances: { codex: { driver: "codex", environment: [{ name: "OTHER", value: "1" }] } },
   }, env).binary, "codex");
   // No configured home while this process has its own CODEX_HOME: cannot match T3.
   assert.equal(codexPluginContext(settings, { CODEX_HOME: "/elsewhere" }).error, "default_context_unverified");

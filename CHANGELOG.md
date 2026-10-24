@@ -6,6 +6,13 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- Doctor skill/plugin metadata shares capability secret-shape rejection before
+  hashing (KRA-6203). Codex plugin probes require a verified, enabled Codex
+  driver and one complete explicit or legacy configuration. All optional
+  inventories share a 128 KiB UTF-8 budget and the room left by core doctor
+  diagnostics; omitted entries retain truthful counts/digests and truncation,
+  and an oversized relay fallback marks inventories unavailable with null.
+
 - Observe counts active turn IDs and starting/running work rather than idle
   ready or interrupted sessions (KRA-8227, 0.5.0-jack.2 candidate). Separate
   ready/interrupted session counters preserve both V1 and V2 classifications.
