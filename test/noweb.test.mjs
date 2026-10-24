@@ -29,7 +29,7 @@ function codexFixture(t, content = 'web_search = "disabled"\n') {
   f.instance = { driver: "codex", enabled: true, environment: [{ name: "T3CODE_CODEX_LAUNCH_ARGS", value: "", sensitive: false }], config: { homePath: f.root, launchArgs: "--config 'web_search=\"disabled\"'" } };
   return f;
 }
-const provider = (instanceId, status = "ready") => ({ instanceId, status, installed: true, models: [{ slug: defaultModelForLab(instanceId) || "synthetic-model", isDefault: true }] });
+const provider = (instanceId, status = "ready") => ({ instanceId, driver: instanceId.startsWith("deepseek") ? "grok" : instanceId.replace(/-noweb$/, ""), status, installed: true, models: [{ slug: defaultModelForLab(instanceId) || "synthetic-model", isDefault: true }] });
 
 test("doctor adds all exact twin rows without borrowing a ready base provider", async (t) => {
   const f = fixture(t);

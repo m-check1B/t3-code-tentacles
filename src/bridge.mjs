@@ -1175,7 +1175,7 @@ function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
     const binaryPath = instanceConfig?.binaryPath || (instanceId === "codex" ? legacyConfig?.binaryPath : null);
     const appBundled = isCodexAppBundleExecutablePath(binaryPath);
     const expectedAppBundle = instanceId === DEFAULT_CODEX_APP_INSTANCE_ID;
-    const driver = instance?.driver || configProvider?.driver || "codex";
+    const driver = configProvider?.driver ?? null;
     row.runtime = {
       id: expectedAppBundle ? "codex-app" : "codex-cli",
       label: expectedAppBundle ? LAB_NAMES["codex-app"] : LAB_NAMES.codex,
@@ -1185,7 +1185,7 @@ function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
       binarySource: expectedAppBundle ? "app-bundled" : "standalone-cli",
       configuredBinarySource: installed ? (appBundled ? "app-bundled" : "standalone-cli") : null,
     };
-    if (installed && (driver !== "codex" || appBundled !== expectedAppBundle)) {
+    if (installed && ((driver !== null && driver !== "codex") || appBundled !== expectedAppBundle)) {
       row.ready = false;
       row.code = "runtime_misconfigured";
     }
@@ -1293,9 +1293,13 @@ export async function doctor(client, {
   for (const [labId, driver] of Object.entries(NOWEB_LAB_DRIVERS)) {
     const lab = labs.find(entry => entry.instanceId === labId);
     const instance = settings.providerInstances?.[labId];
-    if (lab.installed && instance?.driver !== driver) {
+    const provider = configById.get(labId);
+    // Settings and the provider registry are separate snapshots. Certify only
+    // the exact twin whose observed driver agrees with the inspected settings.
+    if (!isPlainObject(instance) || instance.driver !== driver || provider?.driver !== driver) {
       lab.ready = false;
-      lab.code = "runtime_misconfigured";
+      if (lab.installed) lab.code = "runtime_misconfigured";
+      lab.webTools = { v: 1, state: "unknown", tools: [] };
     }
   }
 

@@ -67,7 +67,7 @@
         "id": "codex-cli",
         "label": "Codex CLI",
         "integration": "t3-native",
-        "driver": "codex",
+        "driver": null,
         "transport": "app-server",
         "binarySource": "standalone-cli",
         "configuredBinarySource": null
@@ -97,7 +97,7 @@
         "id": "codex-app",
         "label": "Codex App",
         "integration": "t3-native",
-        "driver": "codex",
+        "driver": null,
         "transport": "app-server",
         "binarySource": "app-bundled",
         "configuredBinarySource": null
