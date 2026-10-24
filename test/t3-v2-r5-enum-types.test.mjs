@@ -4,7 +4,7 @@ import {T3Client} from '../src/t3-client.mjs';
 import {applyIntent} from '../src/orchestrate.mjs';
 import {shellThreadToV1, threadDetailToV1, translateCommand, T3V2UnsupportedError} from '../src/t3-v2.mjs';
 
-const thread = {id:'neutral-thread', title:'Neutral', archivedAt:null, runtimeMode:'full-access', interactionMode:'default',
+const thread = {id:'12345678-1111-4111-8111-111111111111', title:'Neutral', archivedAt:null, runtimeMode:'full-access', interactionMode:'default',
   modelSelection:{instanceId:'codex', model:'neutral', options:[]}};
 const stop = {type:'thread.session.stop', threadId:thread.id, commandId:'neutral-raw-stop'};
 const projection = extra => ({thread, runs:[{id:'done', ordinal:2, status:'completed'}], ...extra});

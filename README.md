@@ -116,6 +116,10 @@ arrows and two different proof claims.
                        originate + continue
                         without the T3 GUI
                                 |
+              [Tentacles adapter: protocol V1 / V2]
+               V2: patched atomic mode + message RPC
+               Talk: patched turn-result contract
+                                |
                             [T3 Code]
                                 |
                  +--------------+--------------+
@@ -129,8 +133,9 @@ arrows and two different proof claims.
   [t3 pair / app.t3.codes]
 ```
 
-The poster is the canonical visual. The mermaid below is a short text map of
-the same chairs, native labs, and additive labs.
+The [orchestration loop](docs/orchestration-loop.svg) is the canonical control-plane
+visual. The map below shows the adapter boundary; the poster catalogs chairs
+and labs, without certifying their installed versions or runtime readiness.
 
 ```mermaid
 flowchart TB
@@ -141,12 +146,32 @@ flowchart TB
         Remote["Remote client"]
     end
     Chairs --> ChairCLI["Tentacles chair CLI"]
-    ChairCLI --> T3["T3 Code"]
+    ChairCLI --> Adapter["Tentacles adapter: negotiated V1 / V2"]
+    Adapter --> V1["V1 orchestration API"]
+    Adapter --> V2["V2: patched atomic mode + message RPC"]
+    V1 --> T3["T3 Code"]
+    V2 --> T3
+    T3 --> Result["Talk requires patched turn-result correlation"]
     T3 --> Native["T3 native: Codex CLI, Claude Code CLI, Grok Code CLI, OpenCode CLI, Cursor CLI, t3 pair / app.t3.codes"]
     T3 --> Additive["Tentacles additive: Kimi CLI, DeepSeek CLI, Hermes, Pi CLI"]
 ```
 
 ![T3-native capabilities and Tentacles-additive chair and lab paths](docs/tentacles-vertical.png)
+
+### Version, protocol, extensions, and runtime proof
+
+| Evidence | Meaning |
+| --- | --- |
+| Tentacles version | This source line is `0.5.0-jack.2`; identify the exact commit as well as the package version. It does not identify the installed or running build. |
+| Negotiated protocol | The T3 environment descriptor selects V1 or V2. An absent protocol field or descriptor selects V1; an unknown protocol refuses. Tentacles 0.5 can still use V1. |
+| Required patched T3 extensions | V2 turns require `orchestration.dispatchMessageWithMode` to accept mode and message atomically. Local Talk also requires the patched `turn-result` contract with exact command/message/run correlation. A V2 descriptor alone proves neither extension. |
+| Staged runtime proof | Verify exact installed/running T3 and Tentacles builds, selected protocol, extensions, and real flows on each host through the authorized rollout gates. Source tests and a ready lab row do not prove a cutover. |
+
+The V2 T3 source of record is `m-check1B/t3code-hermes-private-archive`, branch
+`jack/upstream-0.1.0` (audited stage-1 commit `e027af1a`). The 24 October 2026
+audit found every inspected live host still using V1; the staged estate V2
+cutover remains incomplete. This documentation changes no runtime or host pin.
+See [protocol support and limits](docs/orchestration.md#protocol-support-and-runtime-proof).
 
 Remote clients use Tentacles only after the optional outbound pairing path has
 been installed and configured. Tentacles does not define or version those
@@ -442,8 +467,11 @@ explicitly requested; normal 401 handling never issues a new privileged session.
 
 Stock v0.0.42 and the exact V2 nightly v0.0.46-nightly.20261003.2610 expose the
 same session-issue flags and no local refresh grant (source comparison). This is
-not a claim that Tentacles' V1 orchestration endpoints support V2. Broader V2
-integration is tracked separately in KRA-6435.
+an authentication-CLI comparison only. Tentacles' V1/V2 adapter and required
+patched T3 extensions are described in
+[protocol support and limits](docs/orchestration.md#protocol-support-and-runtime-proof);
+neither that source support nor this flag comparison proves an installed V2
+runtime or the estate cutover.
 
 
 ### 3. Read your lab matrix

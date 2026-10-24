@@ -5,6 +5,13 @@ import { archivedShellToV1, shellToV1, T3RpcRejectedError, threadDetailToV1, tra
 
 const isPlainRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 
+export function requireFullThreadId(threadId) {
+  if (typeof threadId !== "string" || threadId.length !== 36 || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(threadId)) {
+    throw new Error("A full thread UUID is required; short IDs are display-only. Use threadId from tentacles originate or threads[].id from tentacles observe.");
+  }
+  return threadId;
+}
+
 function safeErrorBody(body) {
   // T3 error payloads are not a trusted logging surface: they can echo bearer
   // material or the prompt that caused a rejected command. Keep diagnostics to
@@ -169,6 +176,7 @@ export class T3Client {
   }
 
   async thread(threadId) {
+    requireFullThreadId(threadId);
     const pathname = `/api/orchestration/threads/${encodeURIComponent(threadId)}`;
     if (await this.protocol() === V2_PROTOCOL) return threadDetailToV1(await this.request(pathname), threadId);
     return this.request(pathname);

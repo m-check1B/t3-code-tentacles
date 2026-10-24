@@ -14,6 +14,8 @@ import {
   THREAD_REPORT_STATUSES,
 } from "../src/orchestrate.mjs";
 
+const THREAD_ID = "12345678-1111-4111-8111-111111111111";
+
 test("thread report status enum is the closed parent-check set", () => {
   assert.deepEqual([...THREAD_REPORT_STATUSES], ["Done", "generating", "ready/idle", "blocked"]);
 });
@@ -70,7 +72,7 @@ test("CLI and real relay projection share the status truth table, including unpr
     const status = mapThreadReportStatus(entry.input);
     assert.equal(status, entry.status, entry.name);
     const { sessionStatus, lastError, ...flags } = entry.input;
-    const thread = { id: "synthetic", ...flags, session: { status: sessionStatus, lastError } };
+    const thread = { id: THREAD_ID, ...flags, session: { status: sessionStatus, lastError } };
     const adapter = new LoopbackRuntimeAdapter({
       client: {
         snapshot: async () => ({ threads: [thread] }),
@@ -102,7 +104,7 @@ test("CLI and relay agree on pending activities and malformed sessions", async (
     { thread: { session: "ready" }, status: null },
   ];
   for (const fixture of cases) {
-    const thread = { id: "synthetic", ...fixture.thread };
+    const thread = { id: THREAD_ID, ...fixture.thread };
     const client = {
       thread: async () => ({ thread }),
       snapshot: async () => ({ threads: [thread] }),
@@ -125,23 +127,23 @@ test("report rejects empty and mismatched projections rather than relabeling the
     { thread: { id: "other", session: { status: "ready" } } },
     { session: { status: "ready" } },
   ]) {
-    await assert.rejects(report({ thread: async () => detail }, "requested"), /projection identity mismatch/);
+    await assert.rejects(report({ thread: async () => detail }, THREAD_ID), /projection identity mismatch/);
   }
-  const rawThread = { id: "requested", session: { status: "ready" } };
-  assert.equal((await report({ thread: async () => rawThread }, "requested")).status, "ready/idle");
+  const rawThread = { id: THREAD_ID, session: { status: "ready" } };
+  assert.equal((await report({ thread: async () => rawThread }, THREAD_ID)).status, "ready/idle");
 });
 
 test("projectThreadReport maps modelSelection and pending activities without dumping the thread", () => {
   const reportDocument = projectThreadReport({
-    id: "t1",
+    id: THREAD_ID,
     title: "must not escape report",
     messages: [{ role: "user", text: "secret prompt" }],
     activities: [{ kind: "approval.requested", payload: { requestId: "approval-1", detail: "secret" } }],
     modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
     session: { status: "ready", lastError: null, activeTurnId: "turn-1" },
-  }, "t1");
+  }, THREAD_ID);
   assert.deepEqual(reportDocument, {
-    threadId: "t1",
+    threadId: THREAD_ID,
     status: "blocked",
     lastError: null,
     model: "gpt-5.6-sol",
@@ -154,10 +156,10 @@ test("projectThreadReport maps modelSelection and pending activities without dum
 test("report reads one thread over HTTP and never scrapes observe", async () => {
   const client = {
     thread: async (threadId) => {
-      assert.equal(threadId, "hire-1");
+      assert.equal(threadId, THREAD_ID);
       return {
         thread: {
-          id: "hire-1",
+          id: THREAD_ID,
           settledAt: "2026-09-07T12:00:00.000Z",
           modelSelection: { instanceId: "grok", model: "grok-4.6" },
           session: { status: "ready", lastError: null },
@@ -168,35 +170,37 @@ test("report reads one thread over HTTP and never scrapes observe", async () => 
     shell: async () => { throw new Error("observe shell must not be called"); },
     archivedShell: async () => { throw new Error("observe archived shell must not be called"); },
   };
-  assert.deepEqual(await report(client, "hire-1"), {
-    threadId: "hire-1",
+  assert.deepEqual(await report(client, THREAD_ID), {
+    threadId: THREAD_ID,
     status: "Done",
     lastError: null,
     model: "grok-4.6",
   });
 
   await assert.rejects(
-    report({ snapshot: async () => ({ threads: [] }) }, "hire-1"),
+    report({ snapshot: async () => ({ threads: [] }) }, THREAD_ID),
     /does not expose a per-thread read/,
   );
   await assert.rejects(
     report({
-      thread: async () => { throw new T3HttpError({ method: "GET", pathname: "/api/orchestration/threads/missing", status: 404, body: null }); },
-    }, "missing"),
-    /T3 GET \/api\/orchestration\/threads\/missing failed \(404\)/,
+      thread: async () => { throw new T3HttpError({ method: "GET", pathname: `/api/orchestration/threads/${THREAD_ID}`, status: 404, body: null }); },
+    }, THREAD_ID),
+    /T3 GET \/api\/orchestration\/threads\/12345678-1111-4111-8111-111111111111 failed \(404\)/,
   );
-  await assert.rejects(report({ thread: async () => ({}) }, "empty"), /is not projected/);
+  await assert.rejects(report({ thread: async () => ({}) }, THREAD_ID), /is not projected/);
 });
 
 test("CLI usage and parseArgs document report --thread", () => {
-  const parsed = parseArgs(["report", "--thread", "hire-1"]);
+  const parsed = parseArgs(["report", "--thread", THREAD_ID]);
   assert.equal(parsed.command, "report");
-  assert.equal(parsed.options.thread, "hire-1");
+  assert.equal(parsed.options.thread, THREAD_ID);
 
   const help = usage();
   assert.match(help, /tentacles report --thread THREAD_ID/);
   assert.match(help, /Done \| generating \|\s+ready\/idle \| blocked/);
   assert.match(help, /does not scrape the observe snapshot/);
+  assert.match(help, /full thread UUID; short IDs are display-only/);
+  assert.match(help, /threadId from tentacles originate or threads\[\]\.id from tentacles observe/);
 
   const spawned = spawnSync(process.execPath, [path.resolve("src/cli.mjs"), "help"], { encoding: "utf8" });
   assert.equal(spawned.status, 0);
@@ -230,35 +234,35 @@ test("report never reflects provider error payloads, but keeps error presence an
   ];
   for (const { name, lastError } of payloads) {
     for (const [sessionStatus, expected] of [["error", "blocked"], ["running", "generating"], ["idle", typeof lastError === "string" ? "blocked" : null]]) {
-      const thread = { id: "t1", modelSelection: { instanceId: "grok", model: "grok-4.7" }, session: { status: sessionStatus, lastError } };
+      const thread = { id: THREAD_ID, modelSelection: { instanceId: "grok", model: "grok-4.7" }, session: { status: sessionStatus, lastError } };
       const label = `${name} / ${sessionStatus}`;
       if (expected === null) {
         // A malformed payload without stronger evidence stays unproven, and the
         // refusal itself does not echo the payload.
-        await assert.rejects(report({ thread: async () => ({ thread }) }, "t1"), (error) => {
+        await assert.rejects(report({ thread: async () => ({ thread }) }, THREAD_ID), (error) => {
           assert.match(error.message, /report is unproven/);
           assert.equal(error.message.includes(PROMPT_CANARY), false, label);
           return true;
         });
         continue;
       }
-      const document = await report({ thread: async () => ({ thread }) }, "t1");
+      const document = await report({ thread: async () => ({ thread }) }, THREAD_ID);
       assert.equal(document.status, expected, label);
       assert.equal(document.lastError, REPORT_ERROR_MARKER, label);
       assertNoLeak(document, label);
     }
   }
 
-  const settled = projectThreadReport({ id: "t1", settledAt: "2026-09-07T00:00:00.000Z", session: { status: "error", lastError: { secret: PROMPT_CANARY } } }, "t1");
+  const settled = projectThreadReport({ id: THREAD_ID, settledAt: "2026-09-07T00:00:00.000Z", session: { status: "error", lastError: { secret: PROMPT_CANARY } } }, THREAD_ID);
   assert.equal(settled.status, "Done");
   assert.equal(settled.lastError, REPORT_ERROR_MARKER);
   assertNoLeak(settled, "settled with object error");
 
   // An error session without a payload still reports error presence.
-  assert.equal(projectThreadReport({ id: "t1", session: { status: "error" } }, "t1").lastError, REPORT_ERROR_MARKER);
+  assert.equal(projectThreadReport({ id: THREAD_ID, session: { status: "error" } }, THREAD_ID).lastError, REPORT_ERROR_MARKER);
   // No error evidence stays null.
   for (const lastError of [null, undefined, ""]) {
-    const document = projectThreadReport({ id: "t1", session: { status: "idle", lastError } }, "t1");
+    const document = projectThreadReport({ id: THREAD_ID, session: { status: "idle", lastError } }, THREAD_ID);
     assert.equal(document.status, "ready/idle");
     assert.equal(document.lastError, null);
   }
@@ -267,7 +271,7 @@ test("report never reflects provider error payloads, but keeps error presence an
 test("report model labels are bounded, printable IDs", () => {
   const accepted = ["gpt-5.6-sol", "grok-4.7", "claude-opus-5-5", "deepseek:deepseek-v4-flash", "moonshotai/kimi-k3".replace("/", ":"), "x".repeat(80)];
   for (const model of accepted) {
-    assert.equal(projectThreadReport({ id: "t1", modelSelection: { model }, session: { status: "idle" } }, "t1").model, model);
+    assert.equal(projectThreadReport({ id: THREAD_ID, modelSelection: { model }, session: { status: "idle" } }, THREAD_ID).model, model);
   }
   const refused = [
     "x".repeat(81),
@@ -280,7 +284,7 @@ test("report model labels are bounded, printable IDs", () => {
     ["gpt-5.6-sol"],
   ];
   for (const model of refused) {
-    const document = projectThreadReport({ id: "t1", modelSelection: { model }, session: { status: "idle" } }, "t1");
+    const document = projectThreadReport({ id: THREAD_ID, modelSelection: { model }, session: { status: "idle" } }, THREAD_ID);
     assert.equal(document.status, "ready/idle");
     assert.equal(document.model, null, JSON.stringify(model));
     assertNoLeak(document, `model ${JSON.stringify(model).slice(0, 40)}`);
@@ -289,8 +293,8 @@ test("report model labels are bounded, printable IDs", () => {
 
 test("relay and CLI share the same model-label bound", async () => {
   for (const model of ["gpt-5.6-sol", "x".repeat(81), `gpt\u0007${PROMPT_CANARY}`]) {
-    const thread = { id: "t1", modelSelection: { instanceId: "codex", model, options: [{ id: "reasoningEffort", value: "high" }] }, session: { status: "idle" } };
-    const cli = projectThreadReport(thread, "t1");
+    const thread = { id: THREAD_ID, modelSelection: { instanceId: "codex", model, options: [{ id: "reasoningEffort", value: "high" }] }, session: { status: "idle" } };
+    const cli = projectThreadReport(thread, THREAD_ID);
     const relay = (await new LoopbackRuntimeAdapter({
       client: { snapshot: async () => ({ threads: [thread] }), archivedShell: async () => ({ threads: [] }) },
     }).seats()).threads[0];

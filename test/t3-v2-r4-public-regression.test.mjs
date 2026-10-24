@@ -4,7 +4,7 @@ import {T3Client} from '../src/t3-client.mjs';
 import {applyIntent} from '../src/orchestrate.mjs';
 import {T3RpcRejectedError} from '../src/t3-v2.mjs';
 
-const thread={id:'neutral-thread',title:'Neutral',archivedAt:null,modelSelection:{instanceId:'codex',model:'gpt-6-sol',options:[]},runtimeMode:'full-access'};
+const thread={id:'12345678-1111-4111-8111-111111111111',title:'Neutral',archivedAt:null,modelSelection:{instanceId:'codex',model:'gpt-6-sol',options:[]},runtimeMode:'full-access'};
 const clientFor=detail=>new T3Client({token:'',orchestrationProtocol:2,fetchImpl:async()=>new Response(JSON.stringify(detail),{headers:{'content-type':'application/json'}})});
 
 test('E01 public lifecycle must refuse unknown provider-thread status before dispatch',async()=>{

@@ -7,7 +7,7 @@ export const freshCapability = { talkTurnResult: "v1", talkFreshProviderContext:
 // Exercise the real client/bridge/adapter boundary with an isolated T3 transport.
 export async function captureWire(protocol, { fresh = false, instanceId = "codex", capabilities = { talkTurnResult: "v1", talkFreshProviderContext: 0 } } = {}) {
   const wire = [], threads = new Map();
-  const result = { threadId: "thread", messageId: "next-message", turnCommandId: "next-command", turnId: "turn", assistantMessageId: "assistant", instanceId, model: "gpt-5.6-sol", effort: "high", state: "succeeded", outputText: "synthetic reply", ...(fresh ? { freshProviderContext: true, nativeContextGeneration: "next-command" } : {}) };
+  const result = { threadId: "12345678-1111-4111-8111-111111111111", messageId: "next-message", turnCommandId: "next-command", turnId: "turn", assistantMessageId: "assistant", instanceId, model: "gpt-5.6-sol", effort: "high", state: "succeeded", outputText: "synthetic reply", ...(fresh ? { freshProviderContext: true, nativeContextGeneration: "next-command" } : {}) };
   const apply = (command) => {
     if (command.type === "thread.create") threads.set(command.threadId, { id: command.threadId, projectId: command.projectId, title: command.title, modelSelection: command.modelSelection, runtimeMode: command.runtimeMode, messages: [] });
     if (command.type === "thread.turn.start" || command.type === "message.dispatch") {
@@ -22,7 +22,7 @@ export async function captureWire(protocol, { fresh = false, instanceId = "codex
     if (pathname === "/api/orchestration/turn-result") value = init.method === "POST" ? result : capabilities;
     else if (pathname === "/api/orchestration/dispatch") { apply(body); value = { sequence: wire.length }; }
     else {
-      const thread = threads.get("thread");
+      const thread = threads.get("12345678-1111-4111-8111-111111111111");
       if (!thread) return new Response("{}", { status: 404 });
       value = protocol === 2 ? { projection: { thread, runs: [], messages: thread.messages } } : { thread };
     }
@@ -35,11 +35,11 @@ export async function captureWire(protocol, { fresh = false, instanceId = "codex
     return { sequence: wire.length };
   };
   const selection = { instanceId, model: "gpt-5.6-sol", runtimeMode: "full-access" };
-  await startThread(client, { ...selection, projectId: "project", threadId: "thread", threadCommandId: "thread-command", turnCommandId: "first-command", messageId: "first-message", title: "Synthetic", message: "first", ...(fresh ? { freshProviderContext: true, fixedTitle: true } : {}) });
+  await startThread(client, { ...selection, projectId: "project", threadId: "12345678-1111-4111-8111-111111111111", threadCommandId: "thread-command", turnCommandId: "first-command", messageId: "first-message", title: "Synthetic", message: "first", ...(fresh ? { freshProviderContext: true, fixedTitle: true } : {}) });
   const adapter = new LoopbackRuntimeAdapter({ client, doctorImpl: async () => ({ ready: true }) });
-  await adapter.continue({ ...selection, threadId: "thread", turnCommandId: "next-command", messageId: "next-message", message: "next", ...(fresh ? { freshProviderContext: true } : {}) });
+  await adapter.continue({ ...selection, threadId: "12345678-1111-4111-8111-111111111111", turnCommandId: "next-command", messageId: "next-message", message: "next", ...(fresh ? { freshProviderContext: true } : {}) });
   const doctor = await adapter.doctorStatus();
-  const receipt = await adapter.turnResult({ threadId: "thread", messageId: "next-message", turnCommandId: "next-command" });
+  const receipt = await adapter.turnResult({ threadId: "12345678-1111-4111-8111-111111111111", messageId: "next-message", turnCommandId: "next-command" });
   const normalized = wire.map((entry) => {
     const value = structuredClone(entry);
     if (value.body?.createdAt) value.body.createdAt = "<timestamp>";
