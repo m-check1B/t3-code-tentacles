@@ -10,7 +10,10 @@ import { createHash } from "node:crypto";
 
 export const PLUGIN_INVENTORY_VERSION = 1;
 export const PLUGIN_INVENTORY_TTL_MS = 10 * 60 * 1000;
+// A failed listing (often a marketplace network blip) is retried sooner.
+export const PLUGIN_INVENTORY_FAILURE_TTL_MS = 60 * 1000;
 const PLUGIN_LIST_TIMEOUT_MS = 60_000;
+const PLUGIN_LIST_SETTLE_MS = 5_000;
 const PLUGIN_LIST_MAX_BYTES = 1024 * 1024;
 const PLUGIN_LIMIT = 256;
 const TEXT_MAX = 128;
@@ -30,15 +33,40 @@ function exactText(value) {
     && value === value.trim() && !UNSAFE_TEXT.test(value);
 }
 
-// The plugin context of T3's `codex` instance: its binary and CODEX_HOME.
-// Launch arguments may override config for app-server sessions, so a lab with
-// launch arguments is not attributed an inventory read without them.
-export function codexPluginContext(settings) {
-  const codex = settings?.providers?.codex;
-  if (!codex || codex.enabled === false) return { error: "disabled" };
-  if (typeof codex.launchArgs === "string" && codex.launchArgs.trim()) return { error: "launch_args_unverified" };
-  const binary = typeof codex.binaryPath === "string" && codex.binaryPath.trim() ? codex.binaryPath.trim() : "codex";
-  const home = typeof codex.homePath === "string" && codex.homePath.trim() ? codex.homePath.trim() : null;
+const CONTEXT_ENV = new Set(["CODEX_HOME", "HOME", "PATH"]);
+
+function plainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function setting(config, legacy, key) {
+  const value = typeof config[key] === "string" && config[key].trim() ? config[key] : legacy[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+// The plugin context of T3's `codex` instance, resolved like the doctor lab
+// row: an explicit providerInstances entry wins over legacy provider settings.
+// Anything that could make T3's Codex read a different home than this listing
+// (launch arguments, instance environment for CODEX_HOME/HOME/PATH, or a
+// CODEX_HOME in this process with no configured homePath) is not attributed.
+// The shadow home only separates auth.json; plugins live in CODEX_HOME.
+export function codexPluginContext(settings, env = process.env) {
+  const instance = settings?.providerInstances?.codex;
+  const legacy = plainObject(settings?.providers?.codex) ? settings.providers.codex : {};
+  if (instance === undefined && !plainObject(settings?.providers?.codex)) return { error: "disabled" };
+  if (instance !== undefined && !plainObject(instance)) return { error: "disabled" };
+  const enabled = plainObject(instance) && Object.hasOwn(instance, "enabled")
+    ? instance.enabled === true
+    : legacy.enabled !== false;
+  if (!enabled) return { error: "disabled" };
+  const config = plainObject(instance?.config) ? instance.config : {};
+  if (Array.isArray(instance?.environment) && instance.environment.some((variable) => CONTEXT_ENV.has(variable?.name))) {
+    return { error: "environment_unverified" };
+  }
+  if (setting(config, legacy, "launchArgs")) return { error: "launch_args_unverified" };
+  const binary = setting(config, legacy, "binaryPath") ?? "codex";
+  const home = setting(config, legacy, "homePath");
+  if (!home && typeof env.CODEX_HOME === "string" && env.CODEX_HOME) return { error: "default_context_unverified" };
   return { binary, home, key: digest(JSON.stringify([binary, home])) };
 }
 
@@ -81,33 +109,57 @@ function runPluginList({ binary, home }, execFileImpl) {
     const env = { ...process.env };
     if (home) env.CODEX_HOME = home;
     else delete env.CODEX_HOME;
-    execFileImpl(binary, ["plugin", "list", "--json"], {
+    // execFile only settles once the pipes close; a grandchild holding them
+    // open must not pin the refresh forever, so a guard settles it anyway.
+    let settled = false;
+    const settle = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(guard);
+      fn(value);
+    };
+    const guard = setTimeout(() => {
+      child?.kill?.("SIGKILL");
+      settle(reject, new Error("plugin list timed out"));
+    }, PLUGIN_LIST_TIMEOUT_MS + PLUGIN_LIST_SETTLE_MS);
+    guard.unref?.();
+    const child = execFileImpl(binary, ["plugin", "list", "--json"], {
       env,
       timeout: PLUGIN_LIST_TIMEOUT_MS,
+      killSignal: "SIGKILL",
       maxBuffer: PLUGIN_LIST_MAX_BYTES,
       windowsHide: true,
     }, (error, stdout) => {
-      if (error) reject(error);
-      else resolve(stdout);
+      if (error) settle(reject, error);
+      else settle(resolve, stdout);
     });
   });
 }
 
 export class PluginInventoryCache {
-  constructor({ execFileImpl = execFile, now = () => Date.now(), ttlMs = PLUGIN_INVENTORY_TTL_MS } = {}) {
+  constructor({
+    execFileImpl = execFile,
+    now = () => Date.now(),
+    ttlMs = PLUGIN_INVENTORY_TTL_MS,
+    failureTtlMs = PLUGIN_INVENTORY_FAILURE_TTL_MS,
+    env = process.env,
+  } = {}) {
     this.execFileImpl = execFileImpl;
     this.now = now;
     this.ttlMs = ttlMs;
+    this.failureTtlMs = failureTtlMs;
+    this.env = env;
     this.entries = new Map();
     this.inflight = new Map();
   }
 
   // Returns immediately. Starts at most one background refresh per context.
   read(settings, { refresh = true } = {}) {
-    const context = codexPluginContext(settings);
+    const context = codexPluginContext(settings, this.env);
     if (context.error) return unavailable("codex", context.error);
     const cached = this.entries.get(context.key);
-    const fresh = cached && this.now() - cached.at < this.ttlMs;
+    const ttl = cached?.row.state === "observed" ? this.ttlMs : this.failureTtlMs;
+    const fresh = cached && this.now() - cached.at < ttl;
     if (!fresh && refresh && !this.inflight.has(context.key)) {
       const pending = this.refresh(context).finally(() => this.inflight.delete(context.key));
       this.inflight.set(context.key, pending);

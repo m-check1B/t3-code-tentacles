@@ -45,16 +45,40 @@ test("projection drops entries it cannot represent exactly", () => {
 });
 
 test("plugin context is the configured binary and CODEX_HOME; launch args are not guessed", () => {
+  const env = {};
   assert.deepEqual(
-    [codexPluginContext(settings).binary, codexPluginContext(settings).home],
+    [codexPluginContext(settings, env).binary, codexPluginContext(settings, env).home],
     ["/opt/codex/bin/codex", null],
   );
-  const homed = codexPluginContext({ providers: { codex: { enabled: true, homePath: "/h" } } });
+  const homed = codexPluginContext({ providers: { codex: { enabled: true, homePath: "/h" } } }, env);
   assert.deepEqual([homed.binary, homed.home], ["codex", "/h"]);
-  assert.notEqual(homed.key, codexPluginContext(settings).key);
-  assert.equal(codexPluginContext({ providers: { codex: { launchArgs: "-c x=1" } } }).error, "launch_args_unverified");
-  assert.equal(codexPluginContext({ providers: { codex: { enabled: false } } }).error, "disabled");
-  assert.equal(codexPluginContext({}).error, "disabled");
+  assert.notEqual(homed.key, codexPluginContext(settings, env).key);
+  assert.equal(codexPluginContext({ providers: { codex: { launchArgs: "-c x=1" } } }, env).error, "launch_args_unverified");
+  assert.equal(codexPluginContext({ providers: { codex: { enabled: false } } }, env).error, "disabled");
+  assert.equal(codexPluginContext({}, env).error, "disabled");
+  // An explicit T3 instance wins over legacy settings, like the doctor lab row.
+  const instance = codexPluginContext({
+    providers: { codex: { enabled: true, binaryPath: "/legacy/codex" } },
+    providerInstances: { codex: { driver: "codex", config: { binaryPath: "/inst/codex", homePath: "/ih" } } },
+  }, env);
+  assert.deepEqual([instance.binary, instance.home], ["/inst/codex", "/ih"]);
+  assert.equal(codexPluginContext({
+    providers: { codex: { enabled: true } }, providerInstances: { codex: { enabled: false } },
+  }, env).error, "disabled");
+  assert.equal(codexPluginContext({
+    providerInstances: { codex: { config: { launchArgs: "-c a=b" } } },
+  }, env).error, "launch_args_unverified");
+  for (const name of ["CODEX_HOME", "HOME", "PATH"]) {
+    assert.equal(codexPluginContext({
+      providerInstances: { codex: { environment: [{ name, value: "/x" }] } },
+    }, env).error, "environment_unverified", name);
+  }
+  // Unrelated instance environment (e.g. harness markers) does not block attribution.
+  assert.equal(codexPluginContext({
+    providerInstances: { codex: { environment: [{ name: "OTHER", value: "1" }] } },
+  }, env).binary, "codex");
+  // No configured home while this process has its own CODEX_HOME: cannot match T3.
+  assert.equal(codexPluginContext(settings, { CODEX_HOME: "/elsewhere" }).error, "default_context_unverified");
 });
 
 test("cache never blocks, refreshes once in the background and expires", async () => {
@@ -64,6 +88,7 @@ test("cache never blocks, refreshes once in the background and expires", async (
   const cache = new PluginInventoryCache({
     now: () => clock,
     ttlMs: 1000,
+    env: {},
     execFileImpl: (file, args, options, callback) => {
       calls.push({ file, args, home: options.env.CODEX_HOME });
       finish = () => callback(null, JSON.stringify(listing));
@@ -82,9 +107,16 @@ test("cache never blocks, refreshes once in the background and expires", async (
 });
 
 test("cache passes CODEX_HOME and hides CLI failures", async () => {
+  let clock = 0;
+  let calls = 0;
   const cache = new PluginInventoryCache({
+    env: {},
+    now: () => clock,
+    failureTtlMs: 100,
     execFileImpl: (_file, _args, options, callback) => {
+      calls += 1;
       assert.equal(options.env.CODEX_HOME, "/h");
+      assert.equal(options.killSignal, "SIGKILL");
       callback(new Error("PRIVATE stderr"), "");
     },
   });
@@ -94,6 +126,11 @@ test("cache passes CODEX_HOME and hides CLI failures", async () => {
   const row = cache.read(homed);
   assert.deepEqual([row.state, row.code, row.count], ["unavailable", "plugin_list_failed", null]);
   assert.doesNotMatch(JSON.stringify(row), /PRIVATE/);
+  // Failures are retried after the short failure TTL, not the full TTL.
+  clock = 200;
+  cache.read(homed);
+  await Promise.all(cache.inflight.values());
+  assert.equal(calls, 2);
 });
 
 test("CLI doctor without a cache never spawns and reports plugins unavailable", async () => {
@@ -107,4 +144,19 @@ test("CLI doctor without a cache never spawns and reports plugins unavailable", 
   const codex = result.pluginInventory.labs.find((lab) => lab.instanceId === "codex");
   assert.deepEqual([codex.state, codex.code, codex.count], ["unavailable", "not_refreshed", null]);
   assert.ok(result.pluginInventory.labs.filter((lab) => lab.instanceId !== "codex").every((lab) => lab.code === "no_native_plugin_source"));
+});
+
+test("a listing that never settles is killed and reported, not left refreshing", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const killed = [];
+  const cache = new PluginInventoryCache({
+    env: {},
+    execFileImpl: () => ({ kill: (signal) => killed.push(signal) }),
+  });
+  assert.equal(cache.read(settings).code, "refreshing");
+  t.mock.timers.tick(65_000);
+  await Promise.all(cache.inflight.values());
+  assert.deepEqual(killed, ["SIGKILL"]);
+  assert.equal(cache.inflight.size, 0);
+  assert.equal(cache.read(settings, { refresh: false }).code, "plugin_list_failed");
 });
