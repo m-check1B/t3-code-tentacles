@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.5.0-jack.2] - 2026-10-24
+
 ### Fixed
 
 - Codex plugin inventory quarantines relative executable paths and bare command
