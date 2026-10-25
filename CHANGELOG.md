@@ -4,6 +4,17 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- `observe` reports `counts.staleTurns` and `staleTurnThreadIds` (ids only):
+  in-progress turns with no activity for over 6 h (KRA-8952). They stay in
+  `activeTurns`, so the seat cap is unchanged.
+
+### Fixed
+
+- `observe` no longer counts a ready/idle session with an explicit active turn
+  id in `readySessions`; it counts only in `activeTurns` (KRA-8952).
+
 ## [0.5.0-jack.2] - 2026-10-24
 
 ### Fixed
