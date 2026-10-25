@@ -26,6 +26,15 @@ Keep changes source-independent: do not require a fork of T3 Code or an agent
 harness. Add focused tests for concurrency, replay, authentication, provider-map,
 ACP relay, and ambiguous-dispatch behavior when those surfaces change.
 
+### Capabilities probe test scope (KRA-8862)
+
+The capabilities scanner and `test/capabilities.test.mjs` exist on the `main`
+development line, but are absent from `jack/0.4.1-maintenance`. No capabilities
+probe timing fix applies to this maintenance line. If that feature is backported,
+carry its controlled-clock tests too: let real synthetic probes become ready
+before advancing timeout/deadline assertions, and preserve process-tree cleanup.
+Increasing a wall-clock probe budget does not make the tests deterministic.
+
 ## Compatibility reports
 
 Include:
