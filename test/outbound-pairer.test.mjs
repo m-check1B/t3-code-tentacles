@@ -19,6 +19,7 @@ import {
   readPairPresence,
   writePairPresence,
 } from "../src/pair-state.mjs";
+import { FAILURE_MESSAGES } from "../src/failure-codes.mjs";
 
 const PAIR_TOKEN = "pair-secret-never-print-123456";
 
@@ -228,6 +229,8 @@ test("loopback adapter keeps the relay surface honest about full-access", async 
           lastActivity: null,
           summary: "blocked. model unset, effort unset.",
           effort: null,
+          code: "approval_required",
+          message: FAILURE_MESSAGES.approval_required,
         },
       },
       {

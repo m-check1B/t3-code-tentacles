@@ -9,6 +9,16 @@ All notable changes to this project are documented here.
 - `observe` reports `counts.staleTurns` and `staleTurnThreadIds` (ids only):
   in-progress turns with no activity for over 6 h (KRA-8952). They stay in
   `activeTurns`, so the seat cap is unchanged.
+- Typed failure codes (KRA-8958): a blocked `report` or seats report, a failed
+  or cancelled `turn-result` and a failed `act`/`orchestrate` receipt add a
+  stable `code` (`session_busy`, `lab_not_ready`, `timeout`, `cancelled`,
+  `provider_error`, `usage_limit`, `approval_required`) and a static, redacted
+  `message`. Existing fields are unchanged.
+- `thread-events` journals exactly one `turn_end` event per turn and exports
+  `findSequenceGap` so a resuming reader detects a missing sequence
+  (KRA-8958). Readers receive `turn_end` only with `includeTurnEnd: true`;
+  without it, pages keep the base kinds and contiguous base-view sequences,
+  so strict importers such as Jack's are unaffected.
 
 ### Fixed
 

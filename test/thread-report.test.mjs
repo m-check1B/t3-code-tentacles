@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { parseArgs, usage } from "../src/cli.mjs";
 import { T3HttpError } from "../src/t3-client.mjs";
+import { FAILURE_MESSAGES } from "../src/failure-codes.mjs";
 import { LoopbackRuntimeAdapter } from "../src/outbound-pairer.mjs";
 import {
   mapThreadReportStatus,
@@ -147,6 +148,8 @@ test("projectThreadReport maps modelSelection and pending activities without dum
     status: "blocked",
     lastError: null,
     model: "gpt-5.6-sol",
+    code: "approval_required",
+    message: FAILURE_MESSAGES.approval_required,
   });
   assert.equal(Object.hasOwn(reportDocument, "messages"), false);
   assert.equal(Object.hasOwn(reportDocument, "activities"), false);
@@ -217,7 +220,10 @@ function assertNoLeak(document, label) {
   for (const canary of [PROMPT_CANARY, "AUTH-CANARY-91c2", "\u0007", "\u001b", "\n\t"]) {
     assert.equal(printed.includes(canary), false, `${label}: ${JSON.stringify(canary)} escaped`);
   }
-  assert.deepEqual(Object.keys(document).sort(), ["lastError", "model", "status", "threadId"], label);
+  // KRA-8958: only a blocked report adds the typed code and its static message.
+  const typed = document.status === "blocked" ? ["code", "message"] : [];
+  assert.deepEqual(Object.keys(document).sort(), [...typed, "lastError", "model", "status", "threadId"].sort(), label);
+  if (typed.length) assert.equal(document.message, FAILURE_MESSAGES[document.code], label);
   assert.ok(document.lastError === null || document.lastError === REPORT_ERROR_MARKER, label);
   assert.ok(document.model === null || REPORT_MODEL_LABEL.test(document.model), label);
   assert.ok(printed.length < 400, `${label}: report stays compact`);

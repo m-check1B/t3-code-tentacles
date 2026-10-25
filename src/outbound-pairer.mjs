@@ -5,7 +5,8 @@ import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { randomUUID } from "node:crypto";
 import { continueThread, doctor, originate, probeTalkCapabilities } from "./bridge.mjs";
 import { requireFreshFlags, requireFreshProviderContext } from "./fresh-provider-context.mjs";
-import { observe, REPORT_MODEL_LABEL, threadReportStatus } from "./orchestrate.mjs";
+import { observe, REPORT_MODEL_LABEL, threadReportFailure, threadReportStatus } from "./orchestrate.mjs";
+import { classifyFailure } from "./failure-codes.mjs";
 import { PluginInventoryCache } from "./plugin-inventory.mjs";
 import { requireContinueSelection } from "./model-selection.mjs";
 import { readBoundedWebSocketData } from "./t3-client.mjs";
@@ -206,6 +207,7 @@ function pairedThreadReport(thread) {
     lastActivity: pairedThreadLastActivity(thread),
     summary: pairedThreadSummary(status, pairedThreadModel(thread), effort),
     effort,
+    ...(threadReportFailure(thread) ?? {}),
   };
 }
 
@@ -375,7 +377,12 @@ export class LoopbackRuntimeAdapter {
     }
     if (fresh) await requireFreshProviderContext(this.client, { freshProviderContext: true, instanceId: result.instanceId });
     // Closed projection excludes all upstream additions and internal diagnostics.
-    return { ...Object.fromEntries([...keys, "turnId", "assistantMessageId", "instanceId", "model", "effort", "state", "outputText"].map((key) => [key, result[key]])), ...(fresh ? { freshProviderContext: true, nativeContextGeneration: result.nativeContextGeneration } : {}) };
+    // KRA-8958: failed/cancelled results add a typed code and static message;
+    // an upstream error string is pattern-matched only, never projected.
+    const typed = result.state === "failed" || result.state === "cancelled"
+      ? classifyFailure({ state: result.state, error: typeof result.error === "string" || isRecord(result.error) ? result.error : null })
+      : null;
+    return { ...Object.fromEntries([...keys, "turnId", "assistantMessageId", "instanceId", "model", "effort", "state", "outputText"].map((key) => [key, result[key]])), ...(fresh ? { freshProviderContext: true, nativeContextGeneration: result.nativeContextGeneration } : {}), ...(typed ?? {}) };
   }
 }
 

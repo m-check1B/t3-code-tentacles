@@ -23,6 +23,7 @@ import {
 } from "./model-selection.mjs";
 import { readOrchestrationSnapshot, requireFullThreadId, T3HttpError, T3AuthError } from "./t3-client.mjs";
 import { T3RpcRejectedError, T3V2UnsupportedError, V2_PROTOCOL } from "./t3-v2.mjs";
+import { classifyFailure } from "./failure-codes.mjs";
 
 const INTERACTION_MODES = new Set(["default", "plan"]);
 const APPROVAL_DECISIONS = new Set(["accept", "acceptForSession", "decline", "cancel"]);
@@ -506,6 +507,21 @@ export function threadReportStatus(thread) {
   });
 }
 
+/**
+ * KRA-8958: a `blocked` report gains a typed `{code, message}`. The code is
+ * derived from pending flags and session state; provider text is only
+ * pattern-matched (usage limit, timeout, ...) and never copied.
+ */
+export function threadReportFailure(thread) {
+  if (!isRecord(thread) || threadReportStatus(thread) !== "blocked") return null;
+  const session = isRecord(thread.session) ? thread.session : {};
+  return classifyFailure({
+    ...threadPendingFlags(thread),
+    sessionStatus: session.status ?? null,
+    error: typeof session.lastError === "string" ? session.lastError : null,
+  });
+}
+
 export function projectThreadReport(thread, threadId) {
   if (!isRecord(thread)) throw new Error(`T3 thread ${threadId} is not projected`);
   if (thread.id !== threadId) throw new Error(`T3 thread ${threadId} projection identity mismatch`);
@@ -519,6 +535,7 @@ export function projectThreadReport(thread, threadId) {
     status,
     lastError: reportError(isRecord(thread.session) ? thread.session : {}),
     model: reportModel(thread.modelSelection),
+    ...(threadReportFailure(thread) ?? {}),
   };
 }
 
@@ -762,7 +779,10 @@ export async function waitForTurnOutcome(client, threadId, messageId, {
     if (messageIndex >= 0) {
       const session = isRecord(thread?.session) ? thread.session : null;
       if (session?.status === "error") {
-        throw new Error(`T3 thread ${threadId} entered error: ${session.lastError ?? "Unknown provider session error"}`);
+        const error = new Error(`T3 thread ${threadId} entered error: ${session.lastError ?? "Unknown provider session error"}`);
+        // Typed before the text leaves: receipts carry the code, never this message.
+        error.failure = classifyFailure({ sessionStatus: "error", error: typeof session.lastError === "string" ? session.lastError : null });
+        throw error;
       }
       const assistantProjected = messages
         .slice(messageIndex + 1)
@@ -800,7 +820,8 @@ export class IntentDispatchError extends Error {
     if (authError instanceof T3AuthError) this.message = authError.message;
     // The adapter's own refusal is safe to show; T3 reply bodies are not.
     if (authError instanceof T3V2UnsupportedError) this.message = authError.message;
-    this.receipt = { accepted: false, commandId, status, projected: false, ...(authError instanceof T3AuthError ? { code: authError.code, action: authError.action } : {}) };
+    // KRA-8958: non-auth receipts carry a typed code; the auth code is kept as is.
+    this.receipt = { accepted: false, commandId, status, projected: false, ...(authError instanceof T3AuthError ? { code: authError.code, action: authError.action } : classifyFailure({ error: authError })) };
   }
 }
 
@@ -948,6 +969,7 @@ export async function applyIntent(client, intent, options = {}) {
       receiptError.receipt = {
         accepted: false, commandId: receiptState.lastCommandId ?? callerCommandId,
         status: receiptState.attempted ? "unconfirmed" : "rejected", projected: false,
+        ...classifyFailure({ error: receiptError }),
       };
     }
     if (receiptError.receipt.status === "rejected" && receiptState.accepted.has(callerCommandId)) {
