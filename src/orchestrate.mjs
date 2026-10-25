@@ -23,7 +23,7 @@ import {
 } from "./model-selection.mjs";
 import { readOrchestrationSnapshot, requireFullThreadId, T3HttpError, T3AuthError } from "./t3-client.mjs";
 import { T3RpcRejectedError, T3V2UnsupportedError, V2_PROTOCOL } from "./t3-v2.mjs";
-import { classifyFailure, failure } from "./failure-codes.mjs";
+import { classifyFailure } from "./failure-codes.mjs";
 
 const INTERACTION_MODES = new Set(["default", "plan"]);
 const APPROVAL_DECISIONS = new Set(["accept", "acceptForSession", "decline", "cancel"]);
@@ -799,9 +799,7 @@ export async function waitForTurnOutcome(client, threadId, messageId, {
     }
     await delay(intervalMs);
   }
-  const timedOut = new Error(`Timed out waiting for T3 turn outcome: message ${messageId} in thread ${threadId} never reached a live session or assistant response`);
-  timedOut.failure = failure("timeout");
-  throw timedOut;
+  throw new Error(`Timed out waiting for T3 turn outcome: message ${messageId} in thread ${threadId} never reached a live session or assistant response`);
 }
 
 export async function waitForProjectProjection(client, projectId, { timeoutMs = 15_000, intervalMs = 100 } = {}) {

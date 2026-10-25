@@ -238,11 +238,16 @@ test("each turn ends with exactly one terminal event across polls and turn chang
     [["turn-1", "unknown"], ["turn-2", "unknown"], ["turn-3", "unknown"], ["turn-4", "cancelled"]]);
 });
 
-test("without latestTurn the newest turn ends from session state, never while live", (t) => {
+test("the newest turn ends from session state, never while live", (t) => {
   const { thread } = setup(t);
   thread.messages.push({ id: "a1", role: "assistant", text: "Hi", turnId: "turn-1", createdAt: WHEN });
   thread.session = { status: "running" };
   assert.equal(turnEnds(projectThreadEvents(thread).events).length, 0, "running without activeTurnId may be live");
+  // A stale terminal latestTurn never ends the turn the session still runs.
+  thread.session = { status: "running", activeTurnId: "turn-1" };
+  thread.latestTurn = { turnId: "turn-1", state: "completed", completedAt: LATER };
+  assert.equal(turnEnds(projectThreadEvents(thread).events).length, 0, "live turn wins over a stale latestTurn");
+  delete thread.latestTurn;
   thread.session = { status: "ready" };
   assert.deepEqual(turnEnds(projectThreadEvents(thread).events)[0].payload, { turnId: "turn-1", outcome: "succeeded" });
   thread.session = { status: "error", lastError: "Provider instance 'grok' is not ready" };
