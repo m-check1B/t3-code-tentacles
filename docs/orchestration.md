@@ -70,10 +70,22 @@ Returns one JSON document:
   V2's validated `preparing`/`queued`/`starting` and `running`/`waiting` statuses
   map to `starting` and `running`, respectively, and conservatively count even
   if the turn id is absent.
-- `counts` — existing totals plus `readySessions` (V1 `ready`, V2 `idle`) and
-  `interruptedSessions` (V1/V2 `interrupted`), restricted to active, non-deleted
-  threads. These status counters can overlap `activeTurns` when an explicit
-  active turn id is present. The V2 adapter retains validated `sourceStatus`
+- `staleTurnThreadIds` — ids (never titles) of the `activeTurns` threads whose
+  `lastActivity` is more than 6 h old (`STALE_TURN_MS`).
+- `counts` — existing totals plus four session counters, restricted to active,
+  non-deleted threads:
+  - `activeTurns` — the length of `activeTurns`. This is the seat-cap number;
+    stale turns stay in it.
+  - `staleTurns` — the length of `staleTurnThreadIds`: in-progress turns, by the
+    same rule as `activeTurns`, with no activity for over 6 h. They are listed
+    so a stuck turn is visible; they are never dropped from `activeTurns` and
+    never counted as ready. A turn with no activity stamp is not stale.
+  - `readySessions` — V1 `ready` / V2 `idle` sessions with no active turn. A
+    ready status with an explicit turn id counts in `activeTurns` only.
+  - `interruptedSessions` — V1/V2 `interrupted` sessions. This can overlap
+    `activeTurns` when an explicit active turn id is present.
+
+  The V2 adapter retains validated `sourceStatus`
   internally because both idle and interrupted map to V1 stopped; observe's
   public session summary is unchanged. Unknown V2 statuses still refuse the
   observation. V1 summaries remain permissive; an explicit active turn id

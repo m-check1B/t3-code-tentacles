@@ -98,3 +98,29 @@ test("V1 observe retains permissive summaries but never discards an explicit act
   assert.equal(state.counts.readySessions, 0);
   assert.equal(state.counts.interruptedSessions, 0);
 });
+
+// KRA-8952: fixed clock; stale turns stay counted as active and are listed by id only.
+for (const protocol of [1, 2]) {
+  const thread = protocol === 1 ? v1Thread : v2Thread;
+  const [ready, stopped] = protocol === 1 ? ["ready", "stopped"] : ["idle", "completed"];
+  const now = Date.parse("2026-10-25T06:00:00.000Z");
+  const fresh = "2026-10-25T05:59:00.000Z";
+  const old = "2026-10-24T23:59:00.000Z";
+  test(`V${protocol} observe: staleTurns lists in-progress turns idle longer than 6 h`, async () => {
+    const state = await observe(clientFor(protocol, [
+      { ...thread("neutral-settled", stopped), settledAt: old, updatedAt: old },
+      { ...thread("neutral-archived", "running", "archived-turn"), archivedAt: old, updatedAt: old },
+      { ...thread("neutral-interrupted", "interrupted"), updatedAt: old },
+      { ...thread("neutral-ready", ready), updatedAt: old },
+      { ...thread("neutral-ready-turn", ready, "turn-ready"), updatedAt: fresh },
+      { ...thread("neutral-fresh", "running", "turn-fresh"), updatedAt: fresh },
+      { ...thread("neutral-stale", "running", "turn-stale"), title: "secret title", updatedAt: old },
+    ]), { now });
+    assert.equal(state.counts.activeTurns, 3);
+    assert.deepEqual(state.activeTurns.map((turn) => turn.threadId).sort(), ["neutral-fresh", "neutral-ready-turn", "neutral-stale"]);
+    assert.equal(state.counts.staleTurns, 1);
+    assert.deepEqual(state.staleTurnThreadIds, ["neutral-stale"]);
+    assert.equal(state.counts.readySessions, 1);
+    assert.equal(state.counts.interruptedSessions, 1);
+  });
+}

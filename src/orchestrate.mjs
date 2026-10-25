@@ -550,7 +550,10 @@ export async function report(client, threadId) {
   return projectThreadReport(thread, id);
 }
 
-export async function observe(client) {
+// An in-progress turn with no activity for this long is listed as stale (KRA-8952).
+export const STALE_TURN_MS = 6 * 60 * 60 * 1000;
+
+export async function observe(client, { now = Date.now(), staleTurnMs = STALE_TURN_MS } = {}) {
   const [snapshot, archived] = await Promise.all([readOrchestrationSnapshot(client), client.archivedShell()]);
   const readModel = isRecord(snapshot) ? snapshot : {};
   const projects = recordArray(readModel.projects).filter((project) => project.deletedAt == null);
@@ -573,8 +576,14 @@ export async function observe(client) {
       });
     }
   }
-  const activeTurns = threads
-    .filter((thread) => thread.session && (thread.session.activeTurnId != null || ["starting", "running"].includes(thread.session.status)))
+  const inProgress = threads
+    .filter((thread) => thread.session && (thread.session.activeTurnId != null || ["starting", "running"].includes(thread.session.status)));
+  const inProgressSet = new Set(inProgress);
+  // Stale turns stay in activeTurns (the seat cap is unchanged); they are only listed separately.
+  const staleTurnThreadIds = inProgress
+    .filter((thread) => thread.lastActivity != null && now - Date.parse(thread.lastActivity) > staleTurnMs)
+    .map((thread) => thread.id);
+  const activeTurns = inProgress
     .map((thread) => ({
       threadId: thread.id,
       title: thread.title,
@@ -593,6 +602,7 @@ export async function observe(client) {
     archivedThreads,
     pendingWork,
     activeTurns,
+    staleTurnThreadIds,
     counts: {
       projects: projects.length,
       threads: threads.length,
@@ -600,8 +610,10 @@ export async function observe(client) {
       pendingApprovals: pendingWork.filter((entry) => entry.approvals).length,
       pendingUserInput: pendingWork.filter((entry) => entry.userInput).length,
       activeTurns: activeTurns.length,
-      readySessions: liveThreads.filter((thread) => thread.orchestrationProtocol === V2_PROTOCOL
-        ? thread.session?.sourceStatus === "idle" : thread.session?.status === "ready").length,
+      staleTurns: staleTurnThreadIds.length,
+      // A ready status with an explicit turn id is an active turn, not a free session.
+      readySessions: liveThreads.filter((thread, index) => !inProgressSet.has(threads[index]) && (thread.orchestrationProtocol === V2_PROTOCOL
+        ? thread.session?.sourceStatus === "idle" : thread.session?.status === "ready")).length,
       interruptedSessions: liveThreads.filter((thread) => thread.orchestrationProtocol === V2_PROTOCOL
         ? thread.session?.sourceStatus === "interrupted" : thread.session?.status === "interrupted").length,
     },
