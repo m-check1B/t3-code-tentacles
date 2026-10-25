@@ -123,4 +123,23 @@ for (const protocol of [1, 2]) {
     assert.equal(state.counts.readySessions, 1);
     assert.equal(state.counts.interruptedSessions, 1);
   });
+
+  test(`V${protocol} observe: a turn idle exactly 6 h is not yet stale`, async () => {
+    const boundary = "2026-10-25T00:00:00.000Z";
+    const state = await observe(clientFor(protocol, [
+      { ...thread("neutral-boundary", "running", "turn-boundary"), updatedAt: boundary },
+    ]), { now });
+    assert.equal(now - Date.parse(boundary), 6 * 60 * 60 * 1000);
+    assert.equal(state.counts.activeTurns, 1);
+    assert.equal(state.counts.staleTurns, 0);
+    assert.deepEqual(state.staleTurnThreadIds, []);
+  });
+
+  test(`V${protocol} observe: an in-progress turn without an activity stamp is active but not stale`, async () => {
+    const state = await observe(clientFor(protocol, [thread("neutral-unstamped", "running", "turn-unstamped")]), { now });
+    assert.deepEqual(state.activeTurns.map((turn) => turn.threadId), ["neutral-unstamped"]);
+    assert.equal(state.counts.activeTurns, 1);
+    assert.equal(state.counts.staleTurns, 0);
+    assert.deepEqual(state.staleTurnThreadIds, []);
+  });
 }
