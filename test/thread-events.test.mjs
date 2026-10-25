@@ -356,3 +356,29 @@ test("B3 MISATTRIBUTION: without latestTurn, a failure after a newer user messag
   assert.deepEqual(turnEnds(projectThreadEvents(thread).events).map((event) => [event.payload.turnId, event.payload.outcome]),
     [["t1", "failed"]]);
 });
+
+test("KRA-8998: a ready session never ends a message turn newer than latestTurn as unknown", async (t) => {
+  const { directory, thread, client } = setup(t);
+  thread.messages = [
+    { id: "a1", role: "assistant", text: "done", turnId: "t1", createdAt: WHEN },
+    { id: "u2", role: "user", text: "go", createdAt: "2026-09-30T10:10:00.000Z" },
+    { id: "a2", role: "assistant", text: "also done", turnId: "t2", createdAt: "2026-09-30T10:11:00.000Z" }];
+  thread.session = { status: "ready" };
+  thread.latestTurn = { turnId: "t1", state: "completed", completedAt: WHEN };
+  const outcomes = (events) => turnEnds(events).map((event) => [event.payload.turnId, event.payload.outcome]);
+  assert.deepEqual(outcomes(projectThreadEvents(thread).events), [["t1", "succeeded"]]);
+  await threadEvents(client, { threadId: THREAD, includeTurnEnd: true }, { directory });
+  // T3 publishes t2 as latestTurn on a later poll: its real outcome is journaled.
+  thread.latestTurn = { turnId: "t2", state: "error", completedAt: "2026-09-30T10:12:00.000Z" };
+  const page = await threadEvents(client, { threadId: THREAD, includeTurnEnd: true }, { directory });
+  assert.deepEqual(outcomes(page.events), [["t1", "succeeded"], ["t2", "failed"]]);
+});
+
+test("KRA-8998: the sequence-gap finder refuses a cursor that is not a safe integer", () => {
+  const page = { afterSequence: 0, events: [], nextSequence: 0 };
+  assert.equal(findSequenceGap(page), null);
+  for (const cursor of [Number.NaN, 1.5, -1, "0", Number.MAX_SAFE_INTEGER, 2 ** 60, Infinity]) {
+    assert.throws(() => findSequenceGap({ ...page, afterSequence: cursor }), /Invalid thread-events cursor/, String(cursor));
+  }
+  assert.equal(findSequenceGap(null, 4), 5, "a malformed page at a valid cursor still reports the next sequence");
+});

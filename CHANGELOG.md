@@ -22,8 +22,20 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- `thread-events` no longer journals a message turn that is newer than T3's
+  `latestTurn` as `unknown` when the session is not running (KRA-8998); first
+  write wins, so that outcome was permanent. Its real end is journaled on a
+  later poll. `findSequenceGap` now throws on a cursor that is not a
+  non-negative safe integer.
 - `observe` no longer counts a ready/idle session with an explicit active turn
   id in `readySessions`; it counts only in `activeTurns` (KRA-8952).
+
+### Rollback
+
+- Do not downgrade the pairer past the KRA-8958 release after any `turn_end`
+  has been journaled: older code serves `turn_end` with stored sequences, and
+  Jack's importer stalls on validation. Prune `turn_end` from the journals
+  first; this release ships no prune tool (KRA-8998).
 
 ## [0.5.0-jack.2] - 2026-10-24
 

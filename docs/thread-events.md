@@ -73,8 +73,10 @@ never skips a number. A page from cursor `afterSequence` holds
 `afterSequence+1 .. nextSequence` with no holes. A reader detects loss with
 `findSequenceGap(page)` from `src/thread-events.mjs`: it returns the first
 missing sequence (a dropped, reordered or truncated page, or a `nextSequence`
-that does not match the last event), or `null`. On a gap, refetch from the
-last committed cursor; never advance past it.
+that does not match the last event), or `null`. It throws `Invalid
+thread-events cursor` for a cursor that is not a non-negative safe integer
+below `Number.MAX_SAFE_INTEGER` (KRA-8998). On a gap, refetch from the last
+committed cursor; never advance past it.
 
 Each turn ends with exactly one `turn_end` event, ID `turn:<turnId>`. The
 exporter journals the first end it sees for a turn and drops every later
@@ -94,7 +96,10 @@ newest first:
   otherwise the failure may belong to a turn that never replied, and no end is
   journaled.
 - An older turn with a final assistant message whose own end was never
-  observed as latest: `unknown`, at its last assistant message time.
+  observed as latest: `unknown`, at its last assistant message time. The
+  newest message turn is not older when it is newer than `latestTurn`
+  (whatever the session status): it gets no end until a later poll observes
+  its real outcome (KRA-8998).
 
 A live turn never gets an end. On a running session it is the session's
 `activeTurnId`. Without one, it is the newest turn with an assistant message
@@ -132,6 +137,14 @@ A chunk is at most 384 KiB before base64; pages are below 750,000 bytes and carr
 at most 25 MiB aggregate artifact content. Individual artifacts are bounded to
 25 MiB. Both fit the existing relay's 1 MiB frame limit. Jack validates identity,
 offsets, content hash and exact page cursor before committing an import.
+
+## Rollback (KRA-8998)
+
+Do not downgrade the pairer past the KRA-8958 release once any `turn_end` has
+been journaled. Older code has no base view: it serves `turn_end` events with
+their stored sequences to every reader, and Jack's strict importer stalls on
+validation. Before such a rollback, prune `turn_end` events from the journals
+and renumber them `1..n`. No prune tool ships yet.
 
 ## Release coordination
 

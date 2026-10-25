@@ -146,8 +146,11 @@ function turnEndEvents(thread) {
   }
   // An older turn with a final reply has ended because a later turn exists;
   // its own terminal state was not observed, so the outcome is `unknown`.
+  // KRA-8998: a message turn newer than latestTurn is not older, whatever the
+  // session status; a later poll journals its real outcome.
+  const pending = messageTurnIsNewer ? newestMessageTurn[0] : undefined;
   for (const [turnId, occurredAt] of ordered) {
-    if (turnId !== newest && turnId !== live) ends.push(end(turnId, occurredAt, "unknown"));
+    if (turnId !== newest && turnId !== live && turnId !== pending) ends.push(end(turnId, occurredAt, "unknown"));
   }
   return ends;
 }
@@ -167,7 +170,11 @@ function newestUserAt(thread) {
  * contiguous sequence numbers. Returns the first missing sequence, or null.
  */
 export function findSequenceGap(page, afterSequence = page?.afterSequence ?? 0) {
-  if (!record(page) || !Array.isArray(page.events) || !Number.isSafeInteger(afterSequence)) return afterSequence + 1;
+  // KRA-8998: a cursor with no safe next sequence has no meaningful gap.
+  if (!Number.isSafeInteger(afterSequence) || afterSequence < 0 || afterSequence >= Number.MAX_SAFE_INTEGER) {
+    throw new TypeError("Invalid thread-events cursor");
+  }
+  if (!record(page) || !Array.isArray(page.events)) return afterSequence + 1;
   let expected = afterSequence + 1;
   for (const event of page.events) {
     if (!record(event) || event.sequence !== expected) return expected;
