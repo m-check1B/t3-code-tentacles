@@ -25,7 +25,9 @@ import {
   requireLoopbackUrl,
 } from "./config.mjs";
 import {
+  baseLabId,
   defaultModelForLab,
+  LAB_DEFAULT_MODEL_ENV,
   labInstallHint,
   labKind,
   ORIGINATE_LABS,
@@ -1175,6 +1177,15 @@ async function probeHermesHealth(hermesUrl, fetchImpl, signal) {
   return { reachable: true, status, version };
 }
 
+// KRA-8860: T3's provider message is classified by shape and never echoed,
+// so each known upstream failure points to its own fix.
+function providerErrorCode(message) {
+  if (typeof message !== "string") return "provider_error";
+  if (/\btimed out while running `[^`]*--version`/i.test(message)) return "provider_probe_timeout";
+  if (/^Could not start\b[\s\S]*\bBinary path\b/i.test(message)) return "provider_binary_unavailable";
+  return "provider_error";
+}
+
 function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
   const configProvider = configById.get(instanceId);
   const instance = settings?.providerInstances?.[instanceId];
@@ -1196,7 +1207,7 @@ function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
   if (!enabled && !installed && !configProvider) code = "absent";
   else if (!enabled) code = "disabled";
   else if (!installed) code = "not_installed";
-  else if (!upstreamReady) code = configProvider?.status === "error" ? "provider_error" : "provider_not_ready";
+  else if (!upstreamReady) code = configProvider?.status === "error" ? providerErrorCode(configProvider.message) : "provider_not_ready";
   else if (kind === "explicit" && allModels.length === 0) code = "model_unavailable";
   else if (kind !== "explicit" && !defaultAvailable) code = "default_model_unavailable";
   const row = {
@@ -1207,7 +1218,8 @@ function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
     enabled,
     installed,
     ready,
-    status: normalizedDoctorStatus(configProvider?.status, { installed, configured }),
+    // A lab switched off on this host is disabled even over a stale T3 error.
+    status: code === "disabled" ? "disabled" : normalizedDoctorStatus(configProvider?.status, { installed, configured }),
     code,
     modelCount: allModels.length,
     models,
@@ -1255,7 +1267,19 @@ function doctorAction(lab) {
   if (lab.code === "disabled") return lab.instanceId === "cursor"
     ? "Enable Cursor in T3, then choose a model shown by doctor"
     : `Enable the ${lab.instanceId} instance in T3`;
-  if (lab.code === "default_model_unavailable") return "Refresh the provider and install the documented default model";
+  if (lab.code === "default_model_unavailable") {
+    const variable = LAB_DEFAULT_MODEL_ENV[baseLabId(lab.instanceId)];
+    return variable && lab.defaultModel
+      ? `${lab.instanceId} no longer offers default ${lab.defaultModel}; set ${variable} to a model doctor lists, then rerun doctor`
+      : "Refresh the provider and install the documented default model";
+  }
+  if (lab.code === "provider_probe_timeout") return lab.instanceId === "hermes"
+    ? "T3's `hermes --version` check timed out (Hermes can pause for its update check); run `hermes --version` until it answers quickly, then rerun doctor"
+    : `T3's \`--version\` check of the ${lab.instanceId} runtime timed out; make it answer quickly, then rerun doctor`;
+  if (lab.code === "provider_binary_unavailable") return labInstallHint(lab.instanceId)?.startsWith("tentacles ")
+    ? `T3 cannot start the ${lab.instanceId} binary; run \`${labInstallHint(lab.instanceId)}\`, then rerun doctor`
+    : `T3 cannot start the ${lab.instanceId} binary; fix its binary path in T3 Settings → Providers, then rerun doctor`;
+  if (lab.code === "hermes_adapter_error") return "Hermes health is ok, so T3's Hermes adapter is failing; run `tentacles install-provider --instance hermes`, then rerun doctor";
   if (lab.code === "model_unavailable") return "Refresh the provider and choose a model shown by doctor";
   if (lab.code === "provider_error" || lab.code === "provider_not_ready") return "Inspect the upstream runtime locally, then rerun doctor";
   if (lab.code === "runtime_misconfigured") return lab.instanceId === DEFAULT_CODEX_APP_INSTANCE_ID
@@ -1523,12 +1547,16 @@ async function doctorReport(client, {
       hermes.openaiCodex = openaiCodex;
       hermesLab.openaiCodex = openaiCodex;
     }
-    if (hermesLab.installed && openaiCodex && !openaiCodex.constructable) {
+    if (!hermesLab.enabled) {
+      // Disabled wins: health and auth findings must not turn it into an error.
+    } else if (hermesLab.installed && openaiCodex && !openaiCodex.constructable) {
       hermesLab.ready = false;
       hermesLab.code = "codex_auth_missing";
     } else if (hermesLab.installed && !hermes.reachable) {
       hermesLab.ready = false;
       hermesLab.code = "hermes_unreachable";
+    } else if (hermesLab.code === "provider_error" && ["healthy", "ok", "ready"].includes(hermes.status)) {
+      hermesLab.code = "hermes_adapter_error";
     }
     if (hermesLab.ready) {
       hermesLab.ready = false;

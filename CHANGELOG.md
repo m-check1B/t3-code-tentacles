@@ -29,6 +29,14 @@ All notable changes to this project are documented here.
   non-negative safe integer.
 - `observe` no longer counts a ready/idle session with an explicit active turn
   id in `readySessions`; it counts only in `activeTurns` (KRA-8952).
+- `doctor` no longer reports a lab `provider_error` with the generic action
+  while Hermes health is ok (KRA-8860). T3's provider message is classified,
+  never echoed: a timed-out `--version` check is `provider_probe_timeout`, an
+  unstartable binary is `provider_binary_unavailable`, and any other Hermes
+  adapter error with healthy Hermes is `hermes_adapter_error`, each with one
+  fix. A lab switched off on the host reports `status=disabled code=disabled`
+  even over a stale T3 error, Hermes health or auth finding. An unavailable
+  default model names the `T3_*_MODEL` override to change.
 
 ### Rollback
 
