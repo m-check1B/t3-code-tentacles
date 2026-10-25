@@ -118,7 +118,8 @@ The HTTP equivalent is the existing per-thread read
 `GET /api/orchestration/threads/:id`, mapped by `report(client, threadId)`.
 That path never loads the shell snapshot, archived shell, or `observe`.
 
-The document is `{ threadId, status, lastError, model }`. `status` is one of
+The document is `{ threadId, status, lastError, model }`, plus `code` and
+`message` when `blocked` (see [typed failure codes](#typed-failure-codes-kra-8958)). `status` is one of
 `Done`, `generating`, `ready/idle`, `blocked`.
 
 | Input | Result |
@@ -145,6 +146,38 @@ thread through its owner surface when details are needed. `model` is
 `modelSelection.model` only when it is a printable ID of at most 80 characters
 (`[A-Za-z0-9._:+-]`), otherwise `null`; the relay uses the same bound.
 `observe` stays additive and unchanged.
+
+### Typed failure codes (KRA-8958)
+
+A `blocked` report, a `failed` or `cancelled` `turn-result`, and a failed
+`act`/`orchestrate` receipt add a stable `code` and a static `message`. Every
+existing field stays, so the change is additive; `lastError` keeps its
+`"provider-error"` marker. Route on `code`, never on text. Successful,
+generating, ready/idle and `Done` entries carry neither field.
+
+| `code` | Derived from | `message` |
+| --- | --- | --- |
+| `approval_required` | pending approvals or pending user input | The turn is waiting for an approval or user input. |
+| `cancelled` | turn-result `cancelled`; session/turn `interrupted`; an `AbortError`; cancel/interrupt text | The turn was cancelled. |
+| `usage_limit` | HTTP 429; usage-limit, rate-limit, quota or credit text | The provider usage limit was reached; route to a fallback lab or retry later. |
+| `timeout` | Tentacles' own projection/turn-outcome timeouts; HTTP 408/504; a `TimeoutError`; timed-out/deadline text | The operation timed out before T3 confirmed an outcome. |
+| `session_busy` | HTTP 409; busy session/state, or another turn already running | The session is busy with another turn; retry after it finishes. |
+| `lab_not_ready` | lab, provider, harness, adapter or model text saying not ready, not found, not installed, not configured, unavailable or missing; `harness_not_found` | The lab or provider is not ready; check tentacles doctor. |
+| `provider_error` | any other failure | The provider reported an error; details stay on the owner surface. |
+
+Structured signals win over text, in this order: pending requests, cancelled
+state, a code already attached by Tentacles, error class, HTTP status, then
+text patterns in the order usage limit, timeout, busy, not ready, cancelled.
+Provider text (`session.lastError`, an optional upstream turn-result `error`
+string or `{message}`, an error message) is matched against those patterns
+only, bounded to 4 KiB, and never copied: `message` is always the static
+string above, so no provider body, prompt or credential reaches it. T3's
+turn-result does not define an error field today; without one, a failed turn
+is `provider_error`. A T3 401 receipt keeps its existing
+`code: "t3_reauth_required"` and `action`. The local CLI error text for a
+session that entered `error` is unchanged (below); the receipt carries the
+code. Codes are in `src/failure-codes.mjs` (`FAILURE_CODES`,
+`FAILURE_MESSAGES`, `classifyFailure`).
 
 ## Write: act / orchestrate
 

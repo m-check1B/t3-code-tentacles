@@ -8,6 +8,7 @@ import { LoopbackRuntimeAdapter } from "../src/outbound-pairer.mjs";
 import { T3Client, T3HttpError } from "../src/t3-client.mjs";
 import { captureWire, freshCapability } from "./helpers/fresh-context-wire.mjs";
 import { translateCommand } from "../src/t3-v2.mjs";
+import { failure } from "../src/failure-codes.mjs";
 const capability = { talkTurnResult: "v1", talkFreshProviderContext: "v1", talkFreshProviderContextProviders: ["codex"] };
 const selection = { instanceId: "codex", model: "gpt-5.6-sol", runtimeMode: "full-access" };
 function fake(caps = capability) {
@@ -83,7 +84,7 @@ test("exact result forwards only actual applied context receipt and rejects the 
   const result = { ...input, turnId: "turn", assistantMessageId: null, instanceId: "codex", model: "gpt-5.6-sol", effort: "high", state: "failed", outputText: null };
   for (const receipt of [{}, { freshProviderContext: true, nativeContextGeneration: "command" }]) {
     const runtime = new LoopbackRuntimeAdapter({ client: { request: async (_path, options) => options ? ({ ...result, ...receipt, secretInternal: "not forwarded" }) : capability } });
-    assert.deepEqual(await runtime.turnResult(input), { ...result, ...receipt });
+    assert.deepEqual(await runtime.turnResult(input), { ...result, ...receipt, ...failure("provider_error") });
   }
   for (const receipt of [{ freshProviderContext: true, nativeContextGeneration: "other" }, { freshProviderContext: true }, { nativeContextGeneration: "command" }, { freshProviderContext: false, nativeContextGeneration: "command" }]) {
     const runtime = new LoopbackRuntimeAdapter({ client: { request: async () => ({ ...result, ...receipt }) } });
@@ -251,7 +252,7 @@ test("fresh terminal receipts require an applied turn for every terminal state",
   for (const state of ["succeeded", "failed", "cancelled"]) {
     const receipt = { ...input, turnId: "turn", assistantMessageId: state === "succeeded" ? "assistant" : null, instanceId: "codex", model: "gpt-5.6-sol", effort: "high", state, outputText: state === "succeeded" ? "synthetic" : null, freshProviderContext: true, nativeContextGeneration: "command" };
     const adapter = new LoopbackRuntimeAdapter({ client: { request: async (_path, options) => options ? receipt : capability } });
-    assert.deepEqual(await adapter.turnResult(input), receipt);
+    assert.deepEqual(await adapter.turnResult(input), { ...receipt, ...(state === "succeeded" ? {} : failure(state === "failed" ? "provider_error" : "cancelled")) });
     if (state !== "succeeded") {
       receipt.turnId = null;
       await assert.rejects(adapter.turnResult(input), /Invalid applied/);

@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { DEFAULT_STATE_DIR } from "./config.mjs";
 import { acquirePairStateLock } from "./pair-state.mjs";
 import { privateModeOk } from "./platform.mjs";
+import { classifyFailure } from "./failure-codes.mjs";
 
 export const DEFAULT_THREAD_EVENTS_DIRECTORY = path.join(DEFAULT_STATE_DIR, "thread-events");
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -83,12 +84,76 @@ export function projectThreadEvents(thread) {
     projected.push({ eventId: `tool:${activity.id}`, kind: "tool_summary",
       occurredAt: iso(activity.createdAt), payload: { summary } });
   }
+  projected.push(...turnEndEvents(thread));
   projected.sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
   const status = thread.hasPendingApprovals || thread.hasPendingUserInput ? "blocked"
     : ["starting", "running"].includes(thread.session?.status) ? "generating"
       : thread.session?.status === "error" ? "failed" : "ready";
   // State transition IDs are assigned by the journal, not snapshot timestamps.
   return { events: projected, state: status };
+}
+
+// KRA-8958: T3 turn states that end a turn, mapped to the public outcome.
+const TURN_END_OUTCOMES = Object.freeze({ completed: "succeeded", error: "failed", failed: "failed",
+  interrupted: "cancelled", cancelled: "cancelled" });
+
+const validTime = (value) => typeof value === "string" && Number.isFinite(Date.parse(value));
+
+/**
+ * One `turn_end` candidate per ended turn, keyed `turn:<turnId>`. The latest
+ * turn uses T3's own terminal state; an older turn that has a final assistant
+ * message has ended because a later turn exists, but its outcome was not
+ * observed, so it is `unknown`. Failed ends carry a typed code, never text.
+ */
+function turnEndEvents(thread) {
+  const session = record(thread.session) ? thread.session : {};
+  const running = ["starting", "running"].includes(session.status);
+  const lastError = typeof session.lastError === "string" ? session.lastError : null;
+  const end = (turnId, occurredAt, outcome) => ({ eventId: `turn:${turnId}`, kind: "turn_end", occurredAt,
+    payload: { turnId, outcome, ...(["failed", "cancelled"].includes(outcome)
+      ? classifyFailure({ state: outcome, error: lastError }) : {}) } });
+  const lastMessageAt = new Map();
+  for (const message of Array.isArray(thread.messages) ? thread.messages : []) {
+    if (!record(message) || message.role !== "assistant" || !safeText(message.turnId, 200)) continue;
+    if (message.streaming === true || message.isStreaming === true || !validTime(message.createdAt)) continue;
+    const at = iso(message.createdAt);
+    if (!(lastMessageAt.get(message.turnId) >= at)) lastMessageAt.set(message.turnId, at);
+  }
+  const ordered = [...lastMessageAt].sort((a, b) => a[1].localeCompare(b[1]));
+  const latest = record(thread.latestTurn) && safeText(thread.latestTurn.turnId, 200) ? thread.latestTurn : null;
+  // The turn whose outcome is still open: never ended here. Without an
+  // activeTurnId on a running session, the newest turn may be live.
+  const live = running ? (safeText(session.activeTurnId, 200) ? session.activeTurnId : latest?.turnId ?? ordered.at(-1)?.[0]) : undefined;
+  const newest = latest?.turnId ?? ordered.at(-1)?.[0];
+  const ends = [];
+  if (newest !== undefined && newest !== live) {
+    const outcome = latest ? TURN_END_OUTCOMES[latest.state]
+      : session.status === "error" ? "failed" : session.status === "interrupted" ? "cancelled"
+        : ["ready", "idle", "stopped"].includes(session.status) ? "succeeded" : undefined;
+    const occurredAt = latest && validTime(latest.completedAt) ? iso(latest.completedAt) : lastMessageAt.get(newest);
+    if (outcome && occurredAt) ends.push(end(newest, occurredAt, outcome));
+  }
+  // An older turn with a final reply has ended because a later turn exists;
+  // its own terminal state was not observed, so the outcome is `unknown`.
+  for (const [turnId, occurredAt] of ordered) {
+    if (turnId !== newest && turnId !== live) ends.push(end(turnId, occurredAt, "unknown"));
+  }
+  return ends;
+}
+
+/**
+ * Reader-side resume check: a page continues exactly from its cursor with
+ * contiguous sequence numbers. Returns the first missing sequence, or null.
+ */
+export function findSequenceGap(page, afterSequence = page?.afterSequence ?? 0) {
+  if (!record(page) || !Array.isArray(page.events) || !Number.isSafeInteger(afterSequence)) return afterSequence + 1;
+  let expected = afterSequence + 1;
+  for (const event of page.events) {
+    if (!record(event) || event.sequence !== expected) return expected;
+    expected += 1;
+  }
+  if (page.nextSequence !== expected - 1) return expected;
+  return null;
 }
 
 /** Append-only durable source journal. No secrets/payloads are logged. */
@@ -104,7 +169,7 @@ export function recordThreadEvents(threadId, candidates, { directory = DEFAULT_T
     const existing = new Map(journal.map((event) => [event.eventId, event]));
     for (const candidate of candidates) {
       if (!record(candidate) || !safeText(candidate.eventId, 200)
-        || !["message", "tool_summary", "artifact", "state", "memory"].includes(candidate.kind)
+        || !["message", "tool_summary", "artifact", "state", "memory", "turn_end"].includes(candidate.kind)
         || !record(candidate.payload)) throw new Error("Invalid journal candidate");
       const old = existing.get(candidate.eventId);
       if (old) {
@@ -161,6 +226,10 @@ export async function threadEvents(client, params, { directory = DEFAULT_THREAD_
   const projected = projectThreadEvents(response.thread);
   privateDirectory(directory);
   const previous = readJournal(path.join(directory, `${threadId}.json`));
+  // A turn ends once: the first journaled turn_end is immutable and later
+  // observations of the same turn (for example as an older turn) are dropped.
+  const journaledTurnEnds = new Set(previous.filter((event) => event.kind === "turn_end").map((event) => event.eventId));
+  projected.events = projected.events.filter((event) => event.kind !== "turn_end" || !journaledTurnEnds.has(event.eventId));
   projected.events.push(...await attachmentEvents(client, response.thread, previous));
   projected.events.sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
   const journal = recordThreadEvents(threadId, projected.events, { directory, state: projected.state });

@@ -48,10 +48,55 @@ projected again. Text or timestamp equality is never an origin match.
 - Page: `{threadId, afterSequence, events, nextSequence, hasMore}`.
 - Event: `{threadId,eventId,sequence,occurredAt,kind,payload}`; sequences start at
   one and are contiguous. Kinds: `message`, `tool_summary`, `artifact`, `state`,
-  `memory`. No raw tool input/output is projected.
+  `memory`, `turn_end`. No raw tool input/output is projected.
 - Artifact manifest payload: `{name,mediaType,artifactId,sizeBytes,sha256}`.
+- Turn end payload (`turn_end`, KRA-8958): `{turnId,outcome}` plus `code` and
+  `message` from the [failure-code table](orchestration.md#typed-failure-codes-kra-8958)
+  when `outcome` is `failed` or `cancelled`. Outcomes: `succeeded`, `failed`,
+  `cancelled`, `unknown`.
 - `thread-artifact` params: `{threadId,eventId,offset:0,limit:393216}`.
 - Chunk: `{threadId,eventId,offset,nextOffset,totalBytes,sha256,contentBase64}`.
+
+## Sequence contract (KRA-8958)
+
+`sequence` is per thread, starts at 1, increases by exactly one per journaled
+event and is never reused or renumbered. The exporter assigns it inside the
+per-thread lock and refuses to read or serve a journal whose stored sequences
+are not exactly `1..n` (`Invalid thread journal sequence`), so a served page
+never skips a number. A page from cursor `afterSequence` holds
+`afterSequence+1 .. nextSequence` with no holes. A reader detects loss with
+`findSequenceGap(page)` from `src/thread-events.mjs`: it returns the first
+missing sequence (a dropped, reordered or truncated page, or a `nextSequence`
+that does not match the last event), or `null`. On a gap, refetch from the
+last committed cursor; never advance past it.
+
+Each turn ends with exactly one `turn_end` event, ID `turn:<turnId>`. The
+exporter journals the first end it sees for a turn and drops every later
+observation of that turn, so a terminal event is never duplicated or
+rewritten. Sources, newest first:
+
+- T3 `latestTurn` in a terminal state (`completed` → `succeeded`, `error` or
+  `failed` → `failed`, `interrupted` or `cancelled` → `cancelled`), at
+  `completedAt`. Failure codes come from the session's `lastError`.
+- Without `latestTurn`: the newest turn with a final assistant message, once
+  the session is `ready`/`idle`/`stopped` (`succeeded`), `error` (`failed`) or
+  `interrupted` (`cancelled`).
+- An older turn with a final assistant message whose own end was never
+  observed as latest: `unknown`, at its last assistant message time.
+
+A live turn (the session's `activeTurnId`, or the newest turn of a running
+session without one) never gets an end. Sequence is journal order, not causal
+order: an older turn's end can follow events of the next turn.
+
+How far back the guarantee goes: contiguous sequences hold for every journal
+entry, because the exporter has always assigned `length + 1` and validated it
+on read. `turn_end` exists only from this release. Turns that ended before an
+upgraded exporter first polls the thread get an end only if they have a final
+assistant message, and then with outcome `unknown` unless the turn is still
+T3's `latestTurn`. Turns without a `turnId` on their assistant messages, and
+earlier turns that produced no assistant message, have no `turn_end`.
+Consumers must ignore unknown kinds; an importer that rejects them must be
+updated before it reads a journal written by this release.
 
 A chunk is at most 384 KiB before base64; pages are below 750,000 bytes and carry
 at most 25 MiB aggregate artifact content. Individual artifacts are bounded to

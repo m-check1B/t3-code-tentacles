@@ -14,6 +14,7 @@ import {
   threadSnooze,
   threadTurnStart,
 } from "../src/orchestrate.mjs";
+import { failure as typedFailure } from "../src/failure-codes.mjs";
 
 const SAMPLE_MODEL = { instanceId: "codex", model: "gpt-5.6-sol" };
 // T3 always projects a thread's retained selection; omitted-selection continues validate it.
@@ -392,7 +393,7 @@ test("rejection and uncertain transport preserve command identity and completed 
     const client = { dispatch: async () => { throw failure; } };
     await assert.rejects(applyIntent(client, { action: "thread.pin", threadId: "t" }, { wait: false, commandId: "stable" }), (error) => {
       assert(error instanceof IntentDispatchError);
-      assert.deepEqual(error.receipt, { accepted: false, commandId: "stable", status, projected: false });
+      assert.deepEqual(error.receipt, { accepted: false, commandId: "stable", status, projected: false, ...typedFailure("provider_error") });
       assert(!error.message.includes("PRIVATE"));
       return true;
     });
