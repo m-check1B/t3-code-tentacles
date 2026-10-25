@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
+import { signalProcessTree } from "../src/platform.mjs";
 import {
   authFromProbe,
   boundForPublish,
@@ -37,12 +39,27 @@ const SECRETS = [
 
 function sandbox(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles-capabilities-test-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const probes = [];
+  t.after(async () => {
+    box.closing = true;
+    for (const { child, closed } of probes) if (!closed) signalProcessTree(child, "SIGKILL");
+    await Promise.all(probes.map((probe) => probe.done));
+    fs.rmSync(root, { recursive: true, force: true });
+  });
   const home = path.join(root, "home");
   const bin = path.join(root, "bin");
   fs.mkdirSync(home, { recursive: true });
   fs.mkdirSync(bin, { recursive: true });
-  return { root, home, bin };
+  const box = { root, home, bin, probes, closing: false };
+  return box;
+}
+
+async function waitFor(predicate, message) {
+  const deadline = Date.now() + 10_000;
+  while (!predicate()) {
+    assert.ok(Date.now() < deadline, message);
+    await delay(10);
+  }
 }
 
 // Containers without an init leave killed orphans as unreaped zombies, which
@@ -66,7 +83,10 @@ function entry(bin, { auth = null, signIn = "fake login", services = ["fake"], i
 
 const exitAuth = { args: ["auth", "status"], mode: "exit", verified: true };
 
-function scan(box, registry, extra = {}) {
+function scan(t, box, registry, extra = {}) {
+  // Real shells and I/O; only the probe/deadline clock is controlled. Host
+  // scheduling cannot expire a healthy probe before it has answered.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   return scanCapabilities({
     env: { PATH: `${box.bin}:/bin:/usr/bin`, HOME: box.home },
     home: box.home,
@@ -74,17 +94,36 @@ function scan(box, registry, extra = {}) {
     readers: {},
     timeoutMs: 400,
     deadlineMs: 10_000,
+    spawnImpl: (file, args, options) => {
+      if (box.closing) throw new Error("probe sandbox is closing");
+      const child = spawn(file, args, options);
+      const probe = { child, file, args, closed: false };
+      probe.done = new Promise((resolve) => child.once("close", () => { probe.closed = true; resolve(); }));
+      box.probes.push(probe);
+      return child;
+    },
     ...extra,
   });
 }
 
-test("present, signed-out, missing and unverified CLIs report state, version and one fix", { skip: !posix }, async (t) => {
+test("a healthy probe can answer after host scheduling exceeds the test's probe budget", { skip: !posix, timeout: 15_000 }, async (t) => {
+  const box = sandbox(t);
+  const release = path.join(box.root, "release");
+  fakeCli(box.bin, "fakedelayed", `while [ ! -f "${release}" ]; do sleep 0.01; done; echo "1.2.3"`);
+  const scanning = scan(t, box, [entry("fakedelayed")]);
+  await delay(450);
+  fs.writeFileSync(release, "ready");
+  const document = await scanning;
+  assert.deepEqual([document.complete, document.clis[0].state, document.clis[0].version], [true, "installed", "1.2.3"]);
+});
+
+test("present, signed-out, missing and unverified CLIs report state, version and one fix", { skip: !posix, timeout: 15_000 }, async (t) => {
   const box = sandbox(t);
   fakeCli(box.bin, "fakegh", `case "$1" in --version) echo "fakegh version 2.61.0 (2026-10-01)";; auth) echo "Logged in as ${SECRETS[5]} token ${SECRETS[0]}"; exit 0;; esac`);
   fakeCli(box.bin, "fakeout", `case "$1" in --version) echo "1.4.2";; auth) echo "not logged in" >&2; exit 1;; esac`);
   fakeCli(box.bin, "fakeunverified", `case "$1" in --version) echo "0.9.0";; auth) exit 1;; esac`);
   fakeCli(box.bin, "fakeusage", `case "$1" in --version) echo "3.0.0";; auth) exit 2;; esac`);
-  const document = await scan(box, [
+  const document = await scan(t, box, [
     entry("fakegh", { auth: exitAuth }),
     entry("fakeout", { auth: exitAuth, signIn: "fakeout auth login" }),
     entry("fakeunverified", { auth: { ...exitAuth, verified: false } }),
@@ -113,52 +152,72 @@ test("present, signed-out, missing and unverified CLIs report state, version and
   for (const secret of SECRETS) assert.equal(text.includes(secret), false, `auth output leaked: ${secret}`);
 });
 
-test("a hanging probe is killed at its timeout and the scan still completes", { skip: !posix }, async (t) => {
+test("a hanging probe is killed at its timeout and the scan still completes", { skip: !posix, timeout: 15_000 }, async (t) => {
   const box = sandbox(t);
   const pidFile = path.join(box.root, "hang.pid");
+  const slowReady = path.join(box.root, "slow.ready");
   fakeCli(box.bin, "fakehang", `case "$1" in --version) echo "1.0.0";; auth) sleep 30 & echo $! > "${pidFile}"; wait;; esac`);
-  fakeCli(box.bin, "fakeslowversion", "sleep 30");
+  fakeCli(box.bin, "fakeslowversion", `sleep 30 & echo ready > "${slowReady}"; wait`);
   fakeCli(box.bin, "fakeok", `case "$1" in --version) echo "2.0.0";; auth) exit 0;; esac`);
-  const started = Date.now();
-  const document = await scan(box, [
+  let finished = false;
+  const scanning = scan(t, box, [
     entry("fakehang", { auth: exitAuth }),
     entry("fakeslowversion", { auth: exitAuth }),
     entry("fakeok", { auth: exitAuth }),
-  ]);
-  assert.ok(Date.now() - started < 5_000, "probes are time-boxed");
+  ]).then((document) => { finished = true; return document; });
+  await waitFor(() => fs.existsSync(pidFile) && fs.existsSync(slowReady)
+    && box.probes.some((probe) => path.basename(probe.file) === "fakeok" && probe.args[0] === "auth" && probe.closed), "all probes reached their intended state");
+  const pid = Number(fs.readFileSync(pidFile, "utf8"));
+  assert.equal(processRunning(pid), true, "the descendant is running before the timeout");
+  t.mock.timers.tick(399);
+  await delay(0);
+  assert.equal(finished, false, "the probe cannot time out before 400 ms");
+  assert.equal(processRunning(pid), true);
+  t.mock.timers.tick(1);
+  const document = await scanning;
+  assert.equal(document.complete, true);
   const rows = Object.fromEntries(document.clis.map((row) => [row.id, row]));
   assert.deepEqual([rows.fakehang.state, rows.fakehang.auth, rows.fakehang.version], ["probe_timeout", "timeout", "1.0.0"]);
   assert.deepEqual([rows.fakeslowversion.state, rows.fakeslowversion.auth], ["probe_timeout", "unknown"]);
   assert.equal(rows.fakeok.state, "signed_in");
-  const pid = Number(fs.readFileSync(pidFile, "utf8"));
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  await waitFor(() => !processRunning(pid), "the descendant exits after the timeout");
   assert.equal(processRunning(pid), false, "the whole probe process group is killed");
 });
 
-test("the scan deadline bounds total time and marks the document incomplete", { skip: !posix }, async (t) => {
+test("the scan deadline bounds total time and marks the document incomplete", { skip: !posix, timeout: 15_000 }, async (t) => {
   const box = sandbox(t);
-  fakeCli(box.bin, "fakeslow", "sleep 30");
-  const document = await scan(box, [entry("fakeslow", { auth: exitAuth })], { timeoutMs: 5_000, deadlineMs: 300 });
+  const ready = path.join(box.root, "slow.ready");
+  fakeCli(box.bin, "fakeslow", `sleep 30 & echo ready > "${ready}"; wait`);
+  let finished = false;
+  const scanning = scan(t, box, [entry("fakeslow", { auth: exitAuth })], { timeoutMs: 5_000, deadlineMs: 300 })
+    .then((document) => { finished = true; return document; });
+  await waitFor(() => fs.existsSync(ready), "the slow probe is ready");
+  t.mock.timers.tick(299);
+  await delay(0);
+  assert.equal(finished, false, "the scan cannot finish before its deadline");
+  t.mock.timers.tick(1);
+  const document = await scanning;
   assert.equal(document.complete, false);
   assert.equal(document.clis[0].state, "probe_timeout");
   assert.match(formatCapabilities(document), /deadline/);
 });
 
-test("probes get no stdin and a non-interactive environment that cannot open a browser", { skip: !posix }, async (t) => {
+test("probes get no stdin and a non-interactive environment that cannot open a browser", { skip: !posix, timeout: 15_000 }, async (t) => {
   const box = sandbox(t);
   const seen = path.join(box.root, "seen");
   fakeCli(box.bin, "fakeenv", `case "$1" in --version) echo "1.0.0";; auth) printf '%s|%s|%s' "$BROWSER" "$GH_PROMPT_DISABLED" "$(cat 2>/dev/null; echo eof)" > "${seen}"; exit 0;; esac`);
-  await scan(box, [entry("fakeenv", { auth: exitAuth })]);
+  const document = await scan(t, box, [entry("fakeenv", { auth: exitAuth })]);
+  assert.equal(document.clis[0].state, "signed_in");
   assert.equal(fs.readFileSync(seen, "utf8"), "true|1|eof");
   assert.equal(probeEnvironment({}, "linux").BROWSER, "true");
 });
 
-test("a CLI found only outside PATH is reported with a PATH fix", { skip: !posix }, async (t) => {
+test("a CLI found only outside PATH is reported with a PATH fix", { skip: !posix, timeout: 15_000 }, async (t) => {
   const box = sandbox(t);
   const localBin = path.join(box.home, ".local", "bin");
   fs.mkdirSync(localBin, { recursive: true });
   fakeCli(localBin, "fakelocal", `echo "5.0.0"`);
-  const document = await scan(box, [entry("fakelocal")]);
+  const document = await scan(t, box, [entry("fakelocal")]);
   const [row] = document.clis;
   assert.deepEqual([row.installed, row.onPath, row.where, row.auth], [true, false, "~/.local/bin/fakelocal", "unknown"]);
   assert.deepEqual(row.fix, { kind: "path", command: "Add ~/.local/bin to PATH" });
@@ -224,14 +283,12 @@ function labHome(box) {
   write(".gemini/settings.json", { mcpServers: { figma: { httpUrl: "https://figma.invalid/mcp" } } });
 }
 
-test("lab readers report MCP, plugin and skill NAMES only; no config value leaves the computer", { skip: !posix }, async (t) => {
+test("lab readers report MCP, plugin and skill NAMES only; no config value leaves the computer", { skip: !posix, timeout: 15_000 }, async (t) => {
   const box = sandbox(t);
   labHome(box);
   fakeCli(box.bin, "codex", `case "$1 $2" in "mcp list") echo '[{"name":"linear","enabled":true,"auth_status":"not_logged_in","transport":{"url":"${SECRETS[3]}"}},{"name":"clickup-verduona","enabled":true,"auth_status":"o_auth"},{"name":"off","enabled":false,"auth_status":"unsupported"}]';; *) echo "codex-cli 0.162.1";; esac`);
-  const document = await scanCapabilities({
-    env: { PATH: `${box.bin}:/bin:/usr/bin`, HOME: box.home },
-    home: box.home,
-    registry: [],
+  const document = await scan(t, box, [], {
+    readers: LAB_CONFIG_READERS,
     timeoutMs: 2_000,
   });
   const mcp = document.mcp.map((row) => `${row.lab}:${row.name}:${row.scope}:${row.transport}:${row.state}`).sort();
