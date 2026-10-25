@@ -165,7 +165,7 @@ test("a hanging probe is killed at its timeout and the scan still completes", { 
     entry("fakeslowversion", { auth: exitAuth }),
     entry("fakeok", { auth: exitAuth }),
   ]).then((document) => { finished = true; return document; });
-  await waitFor(() => fs.existsSync(pidFile) && fs.existsSync(slowReady)
+  await waitFor(() => fs.existsSync(pidFile) && /^\d+\s*$/.test(fs.readFileSync(pidFile, "utf8")) && fs.existsSync(slowReady)
     && box.probes.some((probe) => path.basename(probe.file) === "fakeok" && probe.args[0] === "auth" && probe.closed), "all probes reached their intended state");
   const pid = Number(fs.readFileSync(pidFile, "utf8"));
   assert.equal(processRunning(pid), true, "the descendant is running before the timeout");
