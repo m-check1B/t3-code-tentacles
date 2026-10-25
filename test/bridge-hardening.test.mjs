@@ -526,14 +526,14 @@ test("a bad intent is retried/dead-lettered without starving healthy work", asyn
   const client = watchingClient([
     source("unavailable", { messages: [{ id: "m503", role: "user", text: "@hermes 503", createdAt: "2026-01-02T00:00:00.000Z" }] }),
     source("timeout", { messages: [{ id: "mtimeout", role: "user", text: "@hermes timeout", createdAt: "2026-01-02T00:00:00.000Z" }] }),
-    source("gone", { messages: [{ id: "m404", role: "user", text: "@hermes 404", createdAt: "2026-01-02T00:00:00.000Z" }] }),
+    source("gone-503", { messages: [{ id: "m404", role: "user", text: "@hermes 404", createdAt: "2026-01-02T00:00:00.000Z" }] }),
     source("malformed", { messages: [{ id: "m400", role: "user", text: "@hermes malformed", createdAt: "2026-01-02T00:00:00.000Z" }] }),
     source("healthy", { messages: [{ id: "mok", role: "user", text: "@hermes healthy", createdAt: "2026-01-02T00:00:00.000Z" }] }),
   ], (command) => {
-    if (command.message.text.includes("503")) throw new T3HttpError({ method: "POST", pathname: "/dispatch", status: 503, body: "secret-token" });
-    if (command.message.text.includes("timeout")) throw new Error("timed out after acceptance is unknown");
-    if (command.message.text.includes("404")) throw new T3HttpError({ method: "POST", pathname: "/dispatch", status: 404, body: "prompt" });
-    if (command.message.text.includes("malformed")) throw new T3HttpError({ method: "POST", pathname: "/dispatch", status: 400, body: "prompt" });
+    if (command.message.text.endsWith("\n503")) throw new T3HttpError({ method: "POST", pathname: "/dispatch", status: 503, body: "secret-token" });
+    if (command.message.text.endsWith("\ntimeout")) throw new Error("timed out after acceptance is unknown");
+    if (command.message.text.endsWith("\n404")) throw new T3HttpError({ method: "POST", pathname: "/dispatch", status: 404, body: "prompt" });
+    if (command.message.text.endsWith("\nmalformed")) throw new T3HttpError({ method: "POST", pathname: "/dispatch", status: 400, body: "prompt" });
   });
   const routed = await routeMentionsOnce(client, { stateFile, policy: ALLOW_ALL_MENTION_POLICY });
   assert.equal(routed.length, 1);
