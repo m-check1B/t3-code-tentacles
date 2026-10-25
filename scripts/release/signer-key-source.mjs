@@ -6,7 +6,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
-const ITEMS = new Set(["tentacles-manifest-signing-key-current", "tentacles-signer-forgejo-read-token"]);
+const ITEMS = new Set(["tentacles-manifest-signing-key-current"]);
 const FD_PATH = "/dev/fd/3";
 const STATUS = Buffer.from(`nasvault: wrote value to ${FD_PATH} (0600)\n`);
 export const NASVAULT = path.join(os.homedir(), "bin", "nasvault");

@@ -7,7 +7,7 @@ import { releaseAssetUrl, RELEASE_SERVER, RELEASE_REPOSITORY } from "../../src/u
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
 /** GitHub is the only live provenance backend; tests use isolated fixtures. */
-export function createGithubBackends({ spawnImpl = spawn, workDir, runChild, refuse, protectedBranch }) {
+export function createGithubBackends({ spawnImpl = spawn, workDir, runChild, refuse, releaseBranch }) {
   workDir ??= fs.mkdtempSync(path.join(os.tmpdir(), "tentacles-signer-"));
   const mirror = path.join(workDir, "mirror.git");
   const git = (args) => runChild(spawnImpl, "git", ["--git-dir", mirror, ...args]);
@@ -16,12 +16,12 @@ export function createGithubBackends({ spawnImpl = spawn, workDir, runChild, ref
     workDir,
     async syncMirror() {
       if (!fs.existsSync(mirror)) await runChild(spawnImpl, "git", ["init", "--bare", "--quiet", mirror]);
-      await git(["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential", "fetch", "--quiet", "--prune", `${RELEASE_SERVER}/${RELEASE_REPOSITORY}.git`, `+refs/heads/${protectedBranch}:refs/heads/${protectedBranch}`]);
+      await git(["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential", "fetch", "--quiet", "--prune", `${RELEASE_SERVER}/${RELEASE_REPOSITORY}.git`, `+refs/heads/${releaseBranch}:refs/heads/${releaseBranch}`]);
       fetched = true;
     },
     async isAncestor(commit) {
       if (!fetched) refuse("mirror_not_synced");
-      try { await git(["merge-base", "--is-ancestor", commit, `refs/heads/${protectedBranch}`]); return true; } catch { return false; }
+      try { await git(["merge-base", "--is-ancestor", commit, `refs/heads/${releaseBranch}`]); return true; } catch { return false; }
     },
     async showFile(commit, file) { return (await git(["show", `${commit}:${file}`])).toString("utf8"); },
     async rebuildSha256(commit) {
@@ -57,4 +57,3 @@ export function createGithubBackends({ spawnImpl = spawn, workDir, runChild, ref
     },
   };
 }
-

@@ -9,7 +9,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { createHash, verify } from "node:crypto";
 import {
-  KEY_SOURCE, NEXT_SIGNING_ITEM, PROTECTED_BRANCH, signManifest, SIGNING_ITEM,
+  KEY_SOURCE, NEXT_SIGNING_ITEM, prBodySha256, RELEASE_BRANCH, signManifest, SIGNING_ITEM,
 } from "../scripts/release/sign-manifest.mjs";
 import { verifyManifest } from "../src/updater/manifest.mjs";
 import { entryFor, ephemeralKey, manifestOf, packageTgz, RPC, signEnvelope } from "./helpers/self-update-fixtures.mjs";
@@ -57,7 +57,7 @@ function backends({ keys, entries, overrides = {} }) {
   const byCommit = new Map(entries.map((entry) => [entry.commit, entry]));
   let activeHead;
   const facts = {
-    protected: true, ancestor: true, merged: true, b3: true, approval: {}, writer: { id: 127414494, login: "m-check1B" }, rebuild: null, asset: null, version: null, rpc: RPC, pinned: keys,
+    tip: null, events: null, firstParent: true, pushedAt: "2026-10-22T07:20:00Z", ancestor: true, merged: true, b3: true, approval: {}, writer: { id: 127414494, login: "m-check1B" }, rebuild: null, asset: null, version: null, rpc: RPC, pinned: keys,
     ...overrides,
   };
   return {
@@ -76,17 +76,24 @@ function backends({ keys, entries, overrides = {} }) {
       return facts.asset ?? entries.find((entry) => entry.version === version).sha256;
     },
     async api(suffix) {
-      if (suffix === `/branches/${encodeURIComponent(PROTECTED_BRANCH)}`) return { protected: facts.protected };
-      if (suffix === "/pulls/71") return { number: 71, merged: facts.merged, base: { ref: PROTECTED_BRANCH, repo: { full_name: "m-check1B/t3-code-tentacles-private" } }, merge_commit_sha: activeHead, user: facts.writer,
+      if (suffix === `/branches/${encodeURIComponent(RELEASE_BRANCH)}`) return { name: RELEASE_BRANCH, commit: { sha: facts.tip ?? activeHead } };
+      // The previous manifest's recommended commit (entries[0]) is the baseline.
+      if (suffix === `/compare/${entries[0].commit}...${activeHead}`) return { status: "ahead", behind_by: 0, total_commits: 1,
+        commits: [{ sha: activeHead, parents: [{ sha: facts.firstParent ? entries[0].commit : "9".repeat(40) }] }] };
+      if (suffix === "/pulls/71") return { number: 71, merged: facts.merged, base: { ref: RELEASE_BRANCH, repo: { full_name: "m-check1B/t3-code-tentacles-private" } }, merge_commit_sha: activeHead, user: facts.writer,
         head: { sha: activeHead, repo: { full_name: "m-check1B/t3-code-tentacles-private" } }, body: "writer-thread=synthetic-writer", merged_at: "2026-10-22T07:30:00Z" };
       throw new Error(`unexpected api ${suffix}`);
     },
     async list(suffix) {
       const pull = /^\/commits\/([0-9a-f]{40})\/pulls\?per_page=100$/.exec(suffix);
-      if (pull) { activeHead = pull[1]; return [{ number: 71, base: { ref: PROTECTED_BRANCH, repo: { full_name: "m-check1B/t3-code-tentacles-private" } }, head: { sha: activeHead } }]; }
+      if (pull) { activeHead = pull[1]; return [{ number: 71, base: { ref: RELEASE_BRANCH, repo: { full_name: "m-check1B/t3-code-tentacles-private" } }, head: { sha: activeHead } }]; }
+      if (suffix.startsWith("/activity?")) return facts.events ?? [
+        { activity_type: "push", before: entries[0].commit, after: activeHead, timestamp: facts.pushedAt, ref: `refs/heads/${RELEASE_BRANCH}` },
+        { activity_type: "branch_creation", before: "0".repeat(40), after: entries[0].commit, timestamp: "2026-10-01T00:00:00Z", ref: `refs/heads/${RELEASE_BRANCH}` },
+      ];
       if (suffix.includes("/check-suites?")) return [{ head_sha: activeHead, repository: { full_name: "m-check1B/t3-code-tentacles-private" }, app: { id: 15368, slug: "github-actions" }, created_at: "2026-10-22T07:00:00Z" }];
       if (suffix.startsWith("/issues/71/comments")) return facts.b3 ? [{
-        body: `APPROVE tentacles-private#71 ${activeHead} P1=0 P2=0\nwriter-thread=synthetic-writer reviewer-thread=synthetic-reviewer`, user: { id: 127414494, login: "m-check1B" },
+        body: `APPROVE tentacles-private#71 ${activeHead} P1=0 P2=0\nwriter-thread=synthetic-writer reviewer-thread=synthetic-reviewer\npr-body-sha256=${prBodySha256("writer-thread=synthetic-writer")}`, user: { id: 127414494, login: "m-check1B" },
         created_at: "2026-10-22T07:10:00.000Z", updated_at: "2026-10-22T07:10:00.000Z", ...facts.approval,
       }] : [{ body: "looks fine" }];
       throw new Error(`unexpected list ${suffix}`);
@@ -103,7 +110,7 @@ function scenario(t, { previousFloor = "0.4.1-jack.1", draftFloor = "0.4.1-jack.
   const previousFile = path.join(dir, "previous.json");
   fs.writeFileSync(previousFile, signEnvelope(manifestOf({ serial: 4, expires: EXPIRES, securityFloor: previousFloor, recommended: "0.4.1-jack.1", versions: [v1] }), current));
   const draftFile = path.join(dir, "draft.json");
-  fs.writeFileSync(draftFile, JSON.stringify(manifestOf({ serial: previous ? 5 : 1, expires: EXPIRES, securityFloor: draftFloor, recommended: "0.4.1-jack.2", versions: [v1, v2] })));
+  fs.writeFileSync(draftFile, JSON.stringify(manifestOf({ serial: previous ? 5 : 1, expires: EXPIRES, securityFloor: draftFloor, recommended: "0.4.1-jack.2", versions: previous ? [v1, v2] : [v2] })));
   const recorder = recordingSpawn(current, { keyFinalNewline });
   const run = (founderOk = null) => signManifest({
     draftFile, previousFile: previous ? previousFile : null, logFile: path.join(dir, "signing.log"), outFile: path.join(dir, `signed-${Math.random()}.json`), founderOk, now: NOW,
@@ -168,11 +175,14 @@ test("key bytes never appear in argv, env, the log, the output or the Linear com
   }
 });
 
-test("refuses an unmerged PR, a commit off the protected branch, an unprotected branch and a missing B3", async (t) => {
+test("refuses an unmerged PR, a commit off the release branch or not its tip, a rewritten branch, an early push and a missing B3", async (t) => {
   for (const [overrides, code] of [
     [{ merged: false }, "pr_not_merged"],
-    [{ ancestor: false }, "commit_not_on_protected_branch"],
-    [{ protected: false }, "branch_not_protected"],
+    [{ ancestor: false }, "commit_not_on_release_branch"],
+    [{ tip: "f".repeat(40) }, "commit_not_branch_tip"],
+    [{ firstParent: false }, "history_not_first_parent"],
+    [{ events: [{ activity_type: "force_push", before: "8".repeat(40), after: "f".repeat(40), timestamp: "2026-10-22T07:20:00Z", ref: `refs/heads/${RELEASE_BRANCH}` }] }, "branch_history_rewritten"],
+    [{ pushedAt: "2026-10-22T07:05:00Z" }, "branch_push_after_receipt_missing"],
     [{ b3: false }, "b3_receipt_missing"],
     [{ rebuild: "0".repeat(64) }, "rebuild_sha_mismatch"],
     [{ asset: "1".repeat(64) }, "release_asset_sha_mismatch"],

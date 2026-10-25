@@ -51,7 +51,7 @@ function launch(t, code) {
   return { child, outputs, closed };
 }
 
-for (const item of [SIGNING_ITEM, "tentacles-signer-forgejo-read-token"]) {
+for (const item of [SIGNING_ITEM]) {
   test(`helper resolves exact ${item} and writes to inherited fd only`, async (t) => {
     const f = fixture(t);
     const run = launch(t, f.runner(item));
@@ -82,13 +82,15 @@ for (const mode of ["missing", "duplicate", "extra stdout", "extra stderr", "fai
   });
 }
 
-test("helper refuses the next-key item before invoking nasvault", async (t) => {
-  const f = fixture(t);
-  const run = launch(t, f.runner(NEXT_SIGNING_ITEM));
-  const [code] = await run.closed;
-  assert.equal(code, 1);
-  assert.equal(fs.existsSync(f.calls), false);
-});
+for (const item of [NEXT_SIGNING_ITEM, "tentacles-signer-forgejo-read-token"]) {
+  test(`helper refuses ${item} before invoking nasvault`, async (t) => {
+    const f = fixture(t);
+    const run = launch(t, f.runner(item));
+    const [code] = await run.closed;
+    assert.equal(code, 1);
+    assert.equal(fs.existsSync(f.calls), false);
+  });
+}
 
 async function until(predicate, timeoutMs = 3000) {
   const deadline = Date.now() + timeoutMs;

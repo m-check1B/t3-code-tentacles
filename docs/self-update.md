@@ -135,15 +135,28 @@ The release captain calls the script. The script alone decides whether to sign.
 
 ```
 node scripts/release/sign-manifest.mjs --draft draft.json --previous signed-current.json \
-  --log signing.log --out signed-next.json [--founder-ok KRA-NNNN:ref]
+  --log signing.log --out signed-next.json [--founder-ok KRA-NNNN:label]
 ```
 
 **Provenance.** Every new version entry needs all of these:
 
-- The protected branch `jack/0.4.1-maintenance` is reported as protected.
-- The commit is the merge commit of a merged PR into that branch, and an
-  ancestor of the branch tip.
+- The commit is the merge commit of a merged PR into the release branch
+  `jack/0.4.1-maintenance`, and is that branch's **current tip** on GitHub.
+  So each manifest adds exactly one new version.
 - The signed commit equals the merged PR head (fast-forward merges only).
+- GitHub's compare API shows the tip is reached along first parents from the
+  audited (B3) head and from the previous manifest's recommended commit.
+- GitHub's server-side branch activity log is one unbroken chain of `push` /
+  `pr_merge` events (each starts where the previous ended), with no
+  `force_push`, deletion or re-creation **ever**. A rewritten branch holds
+  signing until a fresh release branch is cut and reviewed.
+- The single push that made the commit the tip happened strictly after the
+  latest B3 receipt, and not in the future.
+
+The branch is **not protected**: branch protection on a private repository is
+a paid GitHub feature (HTTP 403 on Free) and the budget is $0 (KRA-8810). The
+checks above replace it and fail closed. Every refusal prints `; fix: ...`
+with its one concrete fix.
 - The GitHub PR has exactly one standalone `writer-thread=<id>` line in its
   body. An unedited **PR conversation comment** from `m-check1B` (numeric id
   `127414494` **and** exact login pinned in source) starts with:
@@ -151,10 +164,15 @@ node scripts/release/sign-manifest.mjs --draft draft.json --previous signed-curr
   ```text
   APPROVE tentacles-private#<PR number> <full head SHA> P1=0 P2=0
   writer-thread=<writer id> reviewer-thread=<reviewer id>
+  pr-body-sha256=<sha256 of the PR body at review time>
   ```
 
   Both thread ids must be present and different, and the writer must equal the
-  PR body's writer. Duplicate or malformed markers fail closed. Review API
+  PR body's writer. The reviewer computes the body hash with
+  `gh api repos/m-check1B/t3-code-tentacles-private/pulls/<n> --jq .body | sha256sum`
+  (the body plus one LF). Any later PR body edit voids the receipt, so the
+  writer thread cannot change after review. Duplicate or malformed markers
+  fail closed. Review API
   submissions, quoted text and older Forgejo receipt formats do not count.
 - The receipt is created strictly after authenticated evidence that this exact
   head was on GitHub, and no later than merge. GitHub's commit `pushedDate` is
@@ -179,8 +197,8 @@ node scripts/release/sign-manifest.mjs --draft draft.json --previous signed-curr
 
 The active signer uses `githubBackends`, with existing GitHub CLI authentication
 and a pinned host. The exported legacy `defaultBackends` always refuses. The
-obsolete Forgejo read-token item is unreachable from the active signer; only
-the current signing key is fetched after provenance and policy checks. The
+key-source helper accepts only the current signing-key item; it is fetched
+only after provenance and policy checks. The
 updater still refuses redirects, so unavailable assets hold without a fallback.
 
 **Policy.**
@@ -197,6 +215,14 @@ updater still refuses redirects, so unavailable assets hold without a fallback.
 - any new version below `recommended`;
 - any change of the pinned keys;
 - the first manifest.
+
+`--founder-ok` is a **label, not a gate**. It records which Founder decision
+the captain relied on, in the log and the Linear comment. The script cannot
+authenticate it: the Founder and every seat share one GitHub account, and the
+signer holds no Linear token (adding one would widen key custody). The real
+Founder gate is custody of the signing key and the Founder-gated first signing
+(KRA-8371 U6). Reviewers must check the label against the Founder's own
+Linear comment.
 
 **Key custody and human setup (U2).**
 
@@ -236,12 +262,11 @@ reader manifest**:
 ```
 node scripts/release/sign-manifest.mjs --check-key-source
 ~/bin/nasvault list tentacles-manifest-signing-key-
-~/bin/nasvault list tentacles-signer-forgejo-read-token
 ```
 
 The first command only checks pinned source bytes; it never runs the reader or
-opens a vault. The two metadata-only lists must show exactly the three full
-names above, once each. They do not prove key validity. Record only names,
+opens a vault. The metadata-only list must show exactly the two full names
+above, once each. They do not prove key validity. Record only names,
 helper hash, host and approval receipt; never values. Stop on any nasvault error.
 Do not perform a first real signing until the separate GUARDIAN audit and
 Founder-owned setup are complete. Tests use synthetic bytes and stub readers.

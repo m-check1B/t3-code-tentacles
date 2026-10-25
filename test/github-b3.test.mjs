@@ -1,11 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { approvedB3 } from "../scripts/release/sign-manifest.mjs";
+import { approvedB3, prBodySha256 } from "../scripts/release/sign-manifest.mjs";
 
 const head = "a".repeat(40);
-const binding = { head, number: 71, writerThread: "writer-session", headAvailableAt: "2026-10-24T10:00:00Z", mergedAt: "2026-10-24T11:30:00Z", now: Date.parse("2026-10-24T12:00:00Z") };
+const prBody = "writer-thread=writer-session";
+const bodySha = prBodySha256(prBody);
+const binding = { head, number: 71, writerThread: "writer-session", prBodySha256: bodySha, headAvailableAt: "2026-10-24T10:00:00Z", mergedAt: "2026-10-24T11:30:00Z", now: Date.parse("2026-10-24T12:00:00Z") };
 const receipt = {
-  body: `APPROVE tentacles-private#71 ${head} P1=0 P2=0\nwriter-thread=writer-session reviewer-thread=reviewer-session`,
+  body: `APPROVE tentacles-private#71 ${head} P1=0 P2=0\nwriter-thread=writer-session reviewer-thread=reviewer-session\npr-body-sha256=${bodySha}`,
   user: { id: 127414494, login: "m-check1B" }, created_at: "2026-10-24T11:00:00Z", updated_at: "2026-10-24T11:00:00Z",
 };
 
@@ -26,6 +28,10 @@ for (const [label, patch] of [
   ["missing threads", { body: receipt.body.split("\n")[0] }],
   ["writer mismatch", { body: receipt.body.replace("writer-thread=writer-session", "writer-thread=other") }],
   ["duplicate marker", { body: `${receipt.body}\nwriter-thread=other reviewer-thread=other2` }],
+  ["missing PR body hash", { body: receipt.body.split("\n").slice(0, 2).join("\n") }],
+  ["PR body edited after review", { body: receipt.body.replace(bodySha, prBodySha256(`${prBody}\nedited`)) }],
+  ["duplicate PR body hash", { body: `${receipt.body}\npr-body-sha256=${bodySha}` }],
+  ["decorated PR body hash", { body: `${receipt.body} ` }],
   ["edited", { updated_at: "2026-10-24T11:01:00Z" }],
   ["missing edit metadata", { updated_at: undefined }],
   ["old before push evidence", { created_at: "2026-10-24T09:59:59Z", updated_at: "2026-10-24T09:59:59Z" }],
@@ -34,7 +40,13 @@ for (const [label, patch] of [
   ["post merge", { created_at: "2026-10-24T11:31:00Z", updated_at: "2026-10-24T11:31:00Z" }],
 ]) test(`GitHub B3 refuses ${label}`, () => assert.equal(approvedB3({ ...receipt, ...patch }, binding), false));
 
-for (const patch of [{ writerThread: null }, { headAvailableAt: null }, { mergedAt: null }, { number: 72 }]) {
+test("the PR body hash is the LF-terminated body, as `gh api ... --jq .body | sha256sum` prints it", async () => {
+  const { createHash } = await import("node:crypto");
+  assert.equal(bodySha, createHash("sha256").update(`${prBody}\n`).digest("hex"));
+  assert.equal(prBodySha256(null), null);
+});
+
+for (const patch of [{ writerThread: null }, { prBodySha256: null }, { headAvailableAt: null }, { mergedAt: null }, { number: 72 }]) {
   test(`GitHub B3 refuses missing or mismatched binding ${Object.keys(patch)[0]}`, () => assert.equal(approvedB3(receipt, { ...binding, ...patch }), false));
 }
 
@@ -43,7 +55,7 @@ const repo = "m-check1B/t3-code-tentacles-private";
 const suite = { head_sha: head, repository: { full_name: repo }, app: { id: 15368, slug: "github-actions" }, created_at: binding.headAvailableAt };
 function provenanceBackend({ pullPatch = {}, suites = [suite], comments = [receipt], candidates = null } = {}) {
   const calls = [];
-  const pull = { number: 71, merged: true, merge_commit_sha: head, head: { sha: head, repo: { full_name: repo } }, base: { ref: signer.PROTECTED_BRANCH, repo: { full_name: repo } }, body: "writer-thread=writer-session", merged_at: binding.mergedAt, ...pullPatch };
+  const pull = { number: 71, merged: true, merge_commit_sha: head, head: { sha: head, repo: { full_name: repo } }, base: { ref: signer.RELEASE_BRANCH, repo: { full_name: repo } }, body: prBody, merged_at: binding.mergedAt, ...pullPatch };
   return { calls, async api(suffix) { calls.push(suffix); assert.equal(suffix, "/pulls/71"); return pull; }, async list(suffix, field) {
     calls.push(suffix);
     if (suffix.endsWith("/pulls?per_page=100")) return candidates ?? [pull];
@@ -57,6 +69,7 @@ test("GitHub provenance binds a full merged PR, exact head, protected repo and a
   const backend = provenanceBackend();
   const result = await signer.verifyGithubProvenance(backend, { commit: head, version: "0.4.1" }, binding.now);
   assert.equal(result.binding.writerThread, "writer-session");
+  assert.equal(result.receiptAt, "2026-10-24T11:00:00.000Z");
   assert.ok(backend.calls.includes(`/commits/${head}/pulls?per_page=100`));
   assert.ok(backend.calls.includes("/issues/71/comments?per_page=100"));
 });
@@ -65,11 +78,12 @@ for (const [label, facts] of [
   ["unmerged", { pullPatch: { merged: false } }],
   ["merge commit instead of reviewed head", { pullPatch: { merge_commit_sha: "b".repeat(40) } }],
   ["different head", { pullPatch: { head: { sha: "b".repeat(40), repo: { full_name: repo } } } }],
-  ["foreign base repo", { pullPatch: { base: { ref: signer.PROTECTED_BRANCH, repo: { full_name: "other/repo" } } } }],
+  ["foreign base repo", { pullPatch: { base: { ref: signer.RELEASE_BRANCH, repo: { full_name: "other/repo" } } } }],
   ["foreign head repo", { pullPatch: { head: { sha: head, repo: { full_name: "other/repo" } } } }],
   ["wrong branch", { pullPatch: { base: { ref: "main", repo: { full_name: repo } } } }],
   ["missing PR writer", { pullPatch: { body: null } }],
   ["duplicate PR writer", { pullPatch: { body: "writer-thread=writer-session\nwriter-thread=other" } }],
+  ["PR body edited after the receipt", { pullPatch: { body: `${prBody}\nchanged after review` } }],
   ["missing push bound", { suites: [] }],
   ["wrong head push bound", { suites: [{ ...suite, head_sha: "b".repeat(40) }] }],
   ["foreign repo push bound", { suites: [{ ...suite, repository: { full_name: "other/repo" } }] }],
@@ -77,7 +91,7 @@ for (const [label, facts] of [
   ["forged app slug", { suites: [{ ...suite, app: { id: 15368, slug: "other" } }] }],
   ["future push bound", { suites: [{ ...suite, created_at: "2026-10-25T00:00:00Z" }] }],
   ["no comments", { comments: [] }],
-  ["ambiguous PR association", { candidates: [{ number: 71, head: { sha: head }, base: { ref: signer.PROTECTED_BRANCH, repo: { full_name: repo } } }, { number: 72, head: { sha: head }, base: { ref: signer.PROTECTED_BRANCH, repo: { full_name: repo } } }] }],
+  ["ambiguous PR association", { candidates: [{ number: 71, head: { sha: head }, base: { ref: signer.RELEASE_BRANCH, repo: { full_name: repo } } }, { number: 72, head: { sha: head }, base: { ref: signer.RELEASE_BRANCH, repo: { full_name: repo } } }] }],
 ]) test(`GitHub provenance refuses ${label}`, async () => {
   await assert.rejects(signer.verifyGithubProvenance(provenanceBackend(facts), { commit: head, version: "0.4.1" }, binding.now), error => ["pr_not_merged", "b3_head_not_signed_commit", "b3_receipt_missing"].includes(error.code));
 });
