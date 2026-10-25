@@ -104,9 +104,9 @@ test("an absent lab stays absent, and an enabled broken lab is never hidden as d
 const TIMEOUTS = [
   ["cursor", { driver: "cursor", models: [{ slug: "synthetic:model" }] }, "Cursor Agent CLI is installed but timed out while running `agent about`.", /run `agent about`/],
   ["grok", {}, "Grok CLI is installed but timed out while running `grok --version`.", /run `grok --version`/],
-  ["opencode", { driver: "opencode" }, "OpenCode is installed but timed out while running `opencode --version`.", /run `opencode --version`/],
+  ["opencode", { driver: "opencode" }, "Failed to execute OpenCode CLI health check: OpenCode CLI version probe timed out after 4 seconds.", /run `opencode --version`/],
   ["kimi", {}, "Grok CLI is installed but timed out while running `grok --version`.", /run `tentacles install-kimi-provider --instance kimi`/],
-  ["codex-app", { driver: "codex", config: { binaryPath: APP_CODEX } }, "Codex CLI is installed but timed out while running `codex --version`.", /run `codex --version`.*`tentacles install-codex-app-provider --instance codex-app`/],
+  ["codex-app", { driver: "codex", config: { binaryPath: APP_CODEX } }, "Timed out while checking Codex app-server provider status.", /open the Codex app.*`tentacles install-codex-app-provider --instance codex-app`/],
 ];
 for (const [id, options, message, command] of TIMEOUTS) {
   test(`${id}: T3's real probe-timeout template names the exact command to run`, async (t) => {
@@ -116,7 +116,7 @@ for (const [id, options, message, command] of TIMEOUTS) {
     assert.match(timedOut.action, command);
     assert.match(timedOut.action, /rerun doctor/);
     assert.doesNotMatch(timedOut.action, /make it answer quickly/);
-    assert.equal(JSON.stringify(report).includes("timed out while running"), false);
+    assert.equal(JSON.stringify(report).includes(message), false);
   });
 }
 

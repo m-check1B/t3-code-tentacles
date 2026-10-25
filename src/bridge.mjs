@@ -1181,17 +1181,27 @@ async function probeHermesHealth(hermesUrl, fetchImpl, signal) {
 
 // KRA-8860: T3's provider message is classified by shape and never echoed,
 // so each known upstream failure points to its own fix.
-// T3 probes each CLI with its own command (Cursor runs `agent about`). Only
-// these exact commands are ever named back; anything else stays unechoed.
-const T3_PROBE_COMMANDS = new Set([
-  "agent about", "claude --version", "codex --version", "dsh --version", "grok --version",
-  "hermes --version", "kimi --version", "opencode --version", "pi --version",
-]);
+// T3's shared template is "<CLI> is installed but timed out while running
+// `<command>`." Only Cursor (`agent about`), Grok (`grok --version`) and
+// DeepSeek (`dsh --version`) use it upstream, so only these exact commands are
+// ever named back; anything else stays unechoed.
+const T3_PROBE_COMMANDS = new Set(["agent about", "dsh --version", "grok --version"]);
+// T3's own wording for the labs that do not use the shared template, matched
+// whole (test/fixtures/t3-probe-timeouts.json holds the verbatim strings).
+const T3_FIXED_PROBE_TIMEOUTS = [
+  [/^Claude Agent CLI is installed but failed to run\. Timed out while running command\.$/, { command: "claude --version" }],
+  [/^Timed out while checking Codex app-server provider status\.$/, { command: "codex login status", probe: "codex-app-server" }],
+  [/^Failed to execute OpenCode CLI health check: OpenCode CLI version probe timed out after [0-9]{1,6} [a-z]{1,12}\.$/, { command: "opencode --version" }],
+];
 const probeCommands = new WeakMap();
 
 function providerProbeTimeout(message) {
   if (typeof message !== "string") return null;
-  const match = /^([^`\n]{1,80}?) timed out while running `([^`\n]{1,200})`\.?$/.exec(message.trim());
+  const text = message.trim();
+  for (const [pattern, probe] of T3_FIXED_PROBE_TIMEOUTS) {
+    if (pattern.test(text)) return { ...probe };
+  }
+  const match = /^([^`\n]{1,80}?) timed out while running `([^`\n]{1,200})`\.?$/.exec(text);
   if (!match) return null;
   const command = T3_PROBE_COMMANDS.has(match[2]) ? match[2] : null;
   // T3's template is "<CLI> is installed but timed out while running `<command>`."
@@ -1247,7 +1257,7 @@ function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
     defaultAvailable,
     webTools: inspectInstanceWebTools(settings, instanceId),
   };
-  if (code === "provider_probe_timeout") probeCommands.set(row, providerProbeTimeout(configProvider.message).command);
+  if (code === "provider_probe_timeout") probeCommands.set(row, providerProbeTimeout(configProvider.message));
   if (modelsMode === "full") row.modelCatalog = fullModelCatalog(configProvider, allModels);
   if (instanceId === "codex" || instanceId === "codex-noweb" || instanceId === DEFAULT_CODEX_APP_INSTANCE_ID) {
     const legacyConfig = settings?.providers?.codex;
@@ -1286,7 +1296,14 @@ function probeTimeoutAction(lab) {
   if (install && ADAPTER_LABS.includes(lab.instanceId)) {
     return `T3's version check of the ${lab.instanceId} adapter timed out; run \`${install}\` to reinstall its launcher, then rerun doctor`;
   }
-  const command = probeCommands.get(lab);
+  const probe = probeCommands.get(lab);
+  if (probe?.probe === "codex-app-server") {
+    // T3 starts `<codex> app-server` and reads the account and models.
+    return lab.instanceId === DEFAULT_CODEX_APP_INSTANCE_ID
+      ? `T3's Codex app-server status check of codex-app timed out; open the Codex app and let it finish any update or sign-in, or reinstall with \`${install}\`, then rerun doctor`
+      : `T3's Codex app-server status check of ${lab.instanceId} timed out; run \`${probe.command}\` in a terminal and clear whatever stalls it (update check or sign-in), then rerun doctor`;
+  }
+  const command = probe?.command ?? null;
   const check = command ? `run \`${command}\`` : `run the ${lab.instanceId} CLI's version check`;
   return `T3's ${command ? `\`${command}\`` : "version"} check of ${lab.instanceId} timed out; ${check} in a terminal and clear whatever stalls it (update check or first-run prompt)${install ? `, or reinstall with \`${install}\`` : ""}, then rerun doctor`;
 }
@@ -1314,12 +1331,17 @@ function doctorAction(lab) {
     ? `T3 cannot start the ${lab.instanceId} binary; run \`${labInstallHint(lab.instanceId)}\`, then rerun doctor`
     : `T3 cannot start the ${lab.instanceId} binary; fix its binary path in T3 Settings → Providers, then rerun doctor`;
   if (lab.code === "hermes_degraded") return "Hermes answers but its health is not ok, so T3's Hermes adapter fails; recover the loopback Hermes gateway until its /health reports ok, then rerun doctor";
+  if (lab.code === "hermes_adapter_not_ready") return "Hermes health is ok but T3 has not marked its Hermes adapter ready; run `tentacles install-provider --instance hermes`, then rerun doctor";
   if (lab.code === "hermes_adapter_error") return "Hermes health is ok, so T3's Hermes adapter is failing; run `tentacles install-provider --instance hermes`, then rerun doctor";
   if (lab.code === "model_unavailable") return "Refresh the provider and choose a model shown by doctor";
   if (lab.code === "provider_error" || lab.code === "provider_not_ready") return "Inspect the upstream runtime locally, then rerun doctor";
-  if (lab.code === "runtime_misconfigured") return lab.instanceId === DEFAULT_CODEX_APP_INSTANCE_ID
-    ? "codex-app must use T3's codex driver with an app-bundled <App>.app/Contents/Resources/codex binary"
-    : "codex must use T3's codex driver with a standalone Codex CLI binary";
+  if (lab.code === "runtime_misconfigured") {
+    if (lab.instanceId === DEFAULT_CODEX_APP_INSTANCE_ID) return "codex-app must use T3's codex driver with an app-bundled <App>.app/Contents/Resources/codex binary";
+    if (lab.instanceId === "codex" || lab.instanceId === "codex-noweb") return `${lab.instanceId} must use T3's codex driver with a standalone Codex CLI binary`;
+    const driver = Object.hasOwn(NOWEB_LAB_DRIVERS, lab.instanceId) ? NOWEB_LAB_DRIVERS[lab.instanceId] : null;
+    if (driver) return `${lab.instanceId} must be a T3 ${driver}-driver instance in both Settings and the provider registry; fix it in T3 Settings → Providers, then rerun doctor`;
+    return `${lab.instanceId} has a misconfigured T3 runtime; fix it in T3 Settings → Providers, then rerun doctor`;
+  }
   return null;
 }
 
@@ -1529,7 +1551,9 @@ async function doctorReport(client, {
 
   for (const labId of ["deepseek", "deepseek-noweb"]) {
     const deepseekLab = labs.find((lab) => lab.instanceId === labId);
-    if (deepseekLab?.enabled && deepseekLab.installed && deepseekLab.defaultAvailable && adapterCredential.constructable && !duplicateIds.has(labId)) {
+    // A T3 error (for example a `dsh --version` timeout) is never hidden as ready.
+    if (deepseekLab?.enabled && deepseekLab.installed && deepseekLab.defaultAvailable && adapterCredential.constructable && !duplicateIds.has(labId)
+      && configById.get(labId)?.status !== "error") {
       deepseekLab.ready = true;
       deepseekLab.status = "configured";
       deepseekLab.code = null;
@@ -1593,6 +1617,9 @@ async function doctorReport(client, {
     } else if (hermesLab.code === "provider_error" && hermes.reachable) {
       // Any reachable Hermes gets a Hermes-specific fix, whatever its health word.
       hermesLab.code = ["healthy", "ok", "ready"].includes(hermes.status) ? "hermes_adapter_error" : "hermes_degraded";
+    } else if (hermesLab.code === "provider_not_ready" && hermes.reachable && !duplicateIds.has("hermes")) {
+      // T3 has not marked the Hermes adapter ready; a duplicate id keeps its own meaning.
+      hermesLab.code = ["healthy", "ok", "ready"].includes(hermes.status) ? "hermes_adapter_not_ready" : "hermes_degraded";
     }
     if (hermesLab.ready) {
       hermesLab.ready = false;

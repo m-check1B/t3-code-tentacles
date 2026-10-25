@@ -319,9 +319,10 @@ test("doctor does not mislabel a configured DeepSeek adapter from stale provider
     getSettings: async () => ({ providerInstances: {
       deepseek: { driver: "grok", enabled: true },
     } }),
+    // A stale not-ready status; a T3 error is never overridden (KRA-8860 R3).
     rpc: async () => ({ providers: [{
       instanceId: "deepseek",
-      status: "error",
+      status: "warning",
       installed: true,
       models: [{ slug: "deepseek/deepseek-v4-flash" }],
     }] }),

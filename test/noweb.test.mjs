@@ -161,7 +161,8 @@ test("twin doctor flags fail closed on disabled config and mismatched driver", a
 test("DeepSeek twin receives the same credential readiness gate as the base", async (t) => {
   const f = fixture(t);
   const id = "deepseek-noweb";
-  const client = catalog({ providerInstances: { [id]: { driver: "grok", enabled: true } } }, [provider(id, "error")]);
+  // A stale not-ready status; a T3 error is never overridden (KRA-8860 R3).
+  const client = catalog({ providerInstances: { [id]: { driver: "grok", enabled: true } } }, [provider(id, "warning")]);
   let row = (await doctor(client, { ...f.options, openrouterTokenFile: path.join(f.root, "missing.token") })).labs.find(row => row.instanceId === id);
   assert.equal(row.ready, false);
   assert.equal(row.code, "adapter_auth_unavailable");

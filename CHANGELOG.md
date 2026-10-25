@@ -31,12 +31,18 @@ All notable changes to this project are documented here.
   id in `readySessions`; it counts only in `activeTurns` (KRA-8952).
 - `doctor` no longer reports a lab `provider_error` with the generic action
   while Hermes health is ok (KRA-8860). T3's provider message is classified,
-  never echoed: T3's timed-out probe (any lab's template, including Cursor's
-  `agent about`) is `provider_probe_timeout` and names the exact command to
-  run or the lab's install command, an unstartable binary is
-  `provider_binary_unavailable`, and any other Hermes adapter error while
-  Hermes answers is `hermes_adapter_error` (health ok) or `hermes_degraded`
-  (any other health word), each with one fix. A lab switched off on the host
+  never echoed. T3's probe-timeout messages for Claude, Codex (codex,
+  codex-noweb, codex-app), OpenCode, Cursor (`agent about`), Grok and DeepSeek
+  (the strings in T3 `t3code-tplus-private` main @ 5a738105, kept verbatim in
+  `test/fixtures/t3-probe-timeouts.json`) are `provider_probe_timeout` and
+  name the command to run or the lab's install command. An unstartable binary
+  is `provider_binary_unavailable`. Any other Hermes adapter error while Hermes
+  answers is `hermes_adapter_error` (health ok) or `hermes_degraded` (any other
+  health word), and an enabled Hermes that T3 calls not ready while Hermes
+  answers is `hermes_adapter_not_ready` (health ok) or `hermes_degraded`, each
+  with one fix. A duplicate Hermes id stays `provider_not_ready`. deepseek and
+  deepseek-noweb are no longer reported ready over a T3 `status=error`, and
+  `runtime_misconfigured` on a noweb lab names that lab and its T3 driver. A lab switched off on the host
   reports `status=disabled code=disabled` over every other finding: a stale
   T3 error, Hermes health, Hermes or adapter auth, and runtime
   misconfiguration. An unavailable default model names the `T3_*_MODEL`

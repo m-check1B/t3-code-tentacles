@@ -1,0 +1,43 @@
+{
+  "source": "m-check1B/t3code-tplus-private main @ 5a7381052e59de71bb6684582d606523c3df952a, apps/server/src/provider",
+  "note": "Verbatim T3 provider messages for a timed-out provider probe. OpenCode's is formatOpenCodeProbeError's version label around the probe detail, with OPENCODE_VERSION_PROBE_TIMEOUT = \"4 seconds\".",
+  "templates": [
+    {
+      "source": "Layers/ClaudeProvider.ts:498",
+      "message": "Claude Agent CLI is installed but failed to run. Timed out while running command.",
+      "labs": { "claudeAgent": "run `claude --version`" }
+    },
+    {
+      "source": "Layers/CodexProvider.ts:651",
+      "message": "Timed out while checking Codex app-server provider status.",
+      "labs": {
+        "codex": "run `codex login status`",
+        "codex-noweb": "run `codex login status`",
+        "codex-app": "open the Codex app and let it finish any update or sign-in, or reinstall with `tentacles install-codex-app-provider --instance codex-app`"
+      }
+    },
+    {
+      "source": "Layers/OpenCodeProvider.ts:462 inside Layers/OpenCodeProvider.ts:137-141",
+      "message": "Failed to execute OpenCode CLI health check: OpenCode CLI version probe timed out after 4 seconds.",
+      "labs": { "opencode": "run `opencode --version`", "opencode-noweb": "run `opencode --version`" }
+    },
+    {
+      "source": "Layers/CursorProvider.ts:1166",
+      "message": "Cursor Agent CLI is installed but timed out while running `agent about`.",
+      "labs": { "cursor": "run `agent about`", "cursor-noweb": "run `agent about`" }
+    },
+    {
+      "source": "Layers/GrokProvider.ts:432",
+      "message": "Grok CLI is installed but timed out while running `grok --version`.",
+      "labs": { "grok": "run `grok --version`", "grok-noweb": "run `grok --version`" }
+    },
+    {
+      "source": "Layers/DeepSeekProvider.ts:297",
+      "message": "DeepSeek Harness is installed but timed out while running `dsh --version`.",
+      "labs": {
+        "deepseek": "run `tentacles install-deepseek-provider --instance deepseek` to reinstall its launcher",
+        "deepseek-noweb": "run `dsh --version`"
+      }
+    }
+  ]
+}
