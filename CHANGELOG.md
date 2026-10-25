@@ -31,12 +31,16 @@ All notable changes to this project are documented here.
   id in `readySessions`; it counts only in `activeTurns` (KRA-8952).
 - `doctor` no longer reports a lab `provider_error` with the generic action
   while Hermes health is ok (KRA-8860). T3's provider message is classified,
-  never echoed: a timed-out `--version` check is `provider_probe_timeout`, an
-  unstartable binary is `provider_binary_unavailable`, and any other Hermes
-  adapter error with healthy Hermes is `hermes_adapter_error`, each with one
-  fix. A lab switched off on the host reports `status=disabled code=disabled`
-  even over a stale T3 error, Hermes health or auth finding. An unavailable
-  default model names the `T3_*_MODEL` override to change.
+  never echoed: T3's timed-out probe (any lab's template, including Cursor's
+  `agent about`) is `provider_probe_timeout` and names the exact command to
+  run or the lab's install command, an unstartable binary is
+  `provider_binary_unavailable`, and any other Hermes adapter error while
+  Hermes answers is `hermes_adapter_error` (health ok) or `hermes_degraded`
+  (any other health word), each with one fix. A lab switched off on the host
+  reports `status=disabled code=disabled` over every other finding: a stale
+  T3 error, Hermes health, Hermes or adapter auth, and runtime
+  misconfiguration. An unavailable default model names the `T3_*_MODEL`
+  override to change (and codex-app's `T3_CODEX_MODEL` fallback).
 
 ### Rollback
 

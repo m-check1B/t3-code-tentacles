@@ -52,6 +52,11 @@ export const LAB_DEFAULT_MODEL_ENV = Object.freeze({
   opencode: "T3_OPENCODE_MODEL",
 });
 
+// codex-app falls back to the codex override when its own is unset.
+export const LAB_DEFAULT_MODEL_ENV_FALLBACK = Object.freeze({
+  "codex-app": "T3_CODEX_MODEL",
+});
+
 export function labKind(instanceId) {
   if (!ORIGINATE_LABS.includes(instanceId)) return "external";
   instanceId = baseLabId(instanceId);

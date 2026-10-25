@@ -25,9 +25,11 @@ import {
   requireLoopbackUrl,
 } from "./config.mjs";
 import {
+  ADAPTER_LABS,
   baseLabId,
   defaultModelForLab,
   LAB_DEFAULT_MODEL_ENV,
+  LAB_DEFAULT_MODEL_ENV_FALLBACK,
   labInstallHint,
   labKind,
   ORIGINATE_LABS,
@@ -1179,9 +1181,26 @@ async function probeHermesHealth(hermesUrl, fetchImpl, signal) {
 
 // KRA-8860: T3's provider message is classified by shape and never echoed,
 // so each known upstream failure points to its own fix.
+// T3 probes each CLI with its own command (Cursor runs `agent about`). Only
+// these exact commands are ever named back; anything else stays unechoed.
+const T3_PROBE_COMMANDS = new Set([
+  "agent about", "claude --version", "codex --version", "dsh --version", "grok --version",
+  "hermes --version", "kimi --version", "opencode --version", "pi --version",
+]);
+const probeCommands = new WeakMap();
+
+function providerProbeTimeout(message) {
+  if (typeof message !== "string") return null;
+  const match = /^([^`\n]{1,80}?) timed out while running `([^`\n]{1,200})`\.?$/.exec(message.trim());
+  if (!match) return null;
+  const command = T3_PROBE_COMMANDS.has(match[2]) ? match[2] : null;
+  // T3's template is "<CLI> is installed but timed out while running `<command>`."
+  return command || /\bis installed but$/.test(match[1]) ? { command } : null;
+}
+
 function providerErrorCode(message) {
   if (typeof message !== "string") return "provider_error";
-  if (/\btimed out while running `[^`]*--version`/i.test(message)) return "provider_probe_timeout";
+  if (providerProbeTimeout(message)) return "provider_probe_timeout";
   if (/^Could not start\b[\s\S]*\bBinary path\b/i.test(message)) return "provider_binary_unavailable";
   return "provider_error";
 }
@@ -1228,6 +1247,7 @@ function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
     defaultAvailable,
     webTools: inspectInstanceWebTools(settings, instanceId),
   };
+  if (code === "provider_probe_timeout") probeCommands.set(row, providerProbeTimeout(configProvider.message).command);
   if (modelsMode === "full") row.modelCatalog = fullModelCatalog(configProvider, allModels);
   if (instanceId === "codex" || instanceId === "codex-noweb" || instanceId === DEFAULT_CODEX_APP_INSTANCE_ID) {
     const legacyConfig = settings?.providers?.codex;
@@ -1256,6 +1276,21 @@ function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
   return row;
 }
 
+function probeTimeoutAction(lab) {
+  if (lab.instanceId === "hermes") {
+    return "T3's `hermes --version` check timed out (Hermes can pause for its update check); run `hermes --version` until it answers quickly, then rerun doctor";
+  }
+  const hint = labInstallHint(lab.instanceId);
+  const install = hint?.startsWith("tentacles ") ? hint : null;
+  // Adapter labs run a Tentacles launcher, so reinstalling it is the fix.
+  if (install && ADAPTER_LABS.includes(lab.instanceId)) {
+    return `T3's version check of the ${lab.instanceId} adapter timed out; run \`${install}\` to reinstall its launcher, then rerun doctor`;
+  }
+  const command = probeCommands.get(lab);
+  const check = command ? `run \`${command}\`` : `run the ${lab.instanceId} CLI's version check`;
+  return `T3's ${command ? `\`${command}\`` : "version"} check of ${lab.instanceId} timed out; ${check} in a terminal and clear whatever stalls it (update check or first-run prompt)${install ? `, or reinstall with \`${install}\`` : ""}, then rerun doctor`;
+}
+
 function doctorAction(lab) {
   if (lab.instanceId === ANTIGRAVITY_INSTANCE_ID) return antigravityAction(lab.code);
   if (!lab.installed) return labInstallHint(lab.instanceId);
@@ -1269,16 +1304,16 @@ function doctorAction(lab) {
     : `Enable the ${lab.instanceId} instance in T3`;
   if (lab.code === "default_model_unavailable") {
     const variable = LAB_DEFAULT_MODEL_ENV[baseLabId(lab.instanceId)];
+    const fallback = LAB_DEFAULT_MODEL_ENV_FALLBACK[baseLabId(lab.instanceId)];
     return variable && lab.defaultModel
-      ? `${lab.instanceId} no longer offers default ${lab.defaultModel}; set ${variable} to a model doctor lists, then rerun doctor`
+      ? `${lab.instanceId} no longer offers default ${lab.defaultModel}; set ${variable}${fallback ? ` (it overrides the ${fallback} fallback)` : ""} to a model doctor lists, then rerun doctor`
       : "Refresh the provider and install the documented default model";
   }
-  if (lab.code === "provider_probe_timeout") return lab.instanceId === "hermes"
-    ? "T3's `hermes --version` check timed out (Hermes can pause for its update check); run `hermes --version` until it answers quickly, then rerun doctor"
-    : `T3's \`--version\` check of the ${lab.instanceId} runtime timed out; make it answer quickly, then rerun doctor`;
+  if (lab.code === "provider_probe_timeout") return probeTimeoutAction(lab);
   if (lab.code === "provider_binary_unavailable") return labInstallHint(lab.instanceId)?.startsWith("tentacles ")
     ? `T3 cannot start the ${lab.instanceId} binary; run \`${labInstallHint(lab.instanceId)}\`, then rerun doctor`
     : `T3 cannot start the ${lab.instanceId} binary; fix its binary path in T3 Settings → Providers, then rerun doctor`;
+  if (lab.code === "hermes_degraded") return "Hermes answers but its health is not ok, so T3's Hermes adapter fails; recover the loopback Hermes gateway until its /health reports ok, then rerun doctor";
   if (lab.code === "hermes_adapter_error") return "Hermes health is ok, so T3's Hermes adapter is failing; run `tentacles install-provider --instance hermes`, then rerun doctor";
   if (lab.code === "model_unavailable") return "Refresh the provider and choose a model shown by doctor";
   if (lab.code === "provider_error" || lab.code === "provider_not_ready") return "Inspect the upstream runtime locally, then rerun doctor";
@@ -1555,8 +1590,9 @@ async function doctorReport(client, {
     } else if (hermesLab.installed && !hermes.reachable) {
       hermesLab.ready = false;
       hermesLab.code = "hermes_unreachable";
-    } else if (hermesLab.code === "provider_error" && ["healthy", "ok", "ready"].includes(hermes.status)) {
-      hermesLab.code = "hermes_adapter_error";
+    } else if (hermesLab.code === "provider_error" && hermes.reachable) {
+      // Any reachable Hermes gets a Hermes-specific fix, whatever its health word.
+      hermesLab.code = ["healthy", "ok", "ready"].includes(hermes.status) ? "hermes_adapter_error" : "hermes_degraded";
     }
     if (hermesLab.ready) {
       hermesLab.ready = false;
@@ -1565,6 +1601,14 @@ async function doctorReport(client, {
     }
   }
   for (const lab of labs) {
+    // KRA-8860: disabled wins at the last write, over every later override
+    // (adapter auth, runtime, stale T3 error, Hermes). Only an absent lab
+    // (or an antigravity T3 too old to know it) keeps its own code.
+    if (!lab.enabled && !["absent", "t3_update_required"].includes(lab.code)) {
+      lab.ready = false;
+      lab.status = "disabled";
+      lab.code = "disabled";
+    }
     const action = doctorAction(lab);
     if (!lab.ready && action) lab.action = action;
   }
