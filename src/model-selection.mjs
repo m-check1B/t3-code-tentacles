@@ -39,6 +39,24 @@ export const LAB_DEFAULT_MODELS = Object.freeze({
   opencode: process.env.T3_OPENCODE_MODEL || "opencode/big-pickle",
 });
 
+// The environment variable that overrides each lab's default model above.
+export const LAB_DEFAULT_MODEL_ENV = Object.freeze({
+  hermes: "T3_HERMES_MODEL",
+  pi: "T3_PI_MODEL",
+  deepseek: "T3_DEEPSEEK_MODEL",
+  kimi: "T3_KIMI_MODEL",
+  grok: "T3_GROK_MODEL",
+  codex: "T3_CODEX_MODEL",
+  "codex-app": "T3_CODEX_APP_MODEL",
+  claudeAgent: "T3_CLAUDE_MODEL",
+  opencode: "T3_OPENCODE_MODEL",
+});
+
+// codex-app falls back to the codex override when its own is unset.
+export const LAB_DEFAULT_MODEL_ENV_FALLBACK = Object.freeze({
+  "codex-app": "T3_CODEX_MODEL",
+});
+
 export function labKind(instanceId) {
   if (!ORIGINATE_LABS.includes(instanceId)) return "external";
   instanceId = baseLabId(instanceId);
