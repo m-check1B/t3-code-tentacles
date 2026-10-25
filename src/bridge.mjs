@@ -1192,6 +1192,9 @@ const T3_FIXED_PROBE_TIMEOUTS = [
   [/^Claude Agent CLI is installed but failed to run\. Timed out while running command\.$/, { command: "claude --version" }],
   [/^Timed out while checking Codex app-server provider status\.$/, { command: "codex login status", probe: "codex-app-server" }],
   [/^Failed to execute OpenCode CLI health check: OpenCode CLI version probe timed out after [0-9]{1,6} [a-z]{1,12}\.$/, { command: "opencode --version" }],
+  // The inventory phase starts `opencode serve` and checks its version.
+  [/^Failed to load OpenCode provider inventory: Timed out waiting for OpenCode server start after [0-9]{1,7}ms\.$/, { command: "opencode serve", probe: "opencode-server" }],
+  [/^Failed to load OpenCode provider inventory: Timed out while checking the OpenCode server version\.$/, { command: "opencode serve", probe: "opencode-server" }],
 ];
 const probeCommands = new WeakMap();
 
@@ -1301,7 +1304,10 @@ function probeTimeoutAction(lab) {
     // T3 starts `<codex> app-server` and reads the account and models.
     return lab.instanceId === DEFAULT_CODEX_APP_INSTANCE_ID
       ? `T3's Codex app-server status check of codex-app timed out; open the Codex app and let it finish any update or sign-in, or reinstall with \`${install}\`, then rerun doctor`
-      : `T3's Codex app-server status check of ${lab.instanceId} timed out; run \`${probe.command}\` in a terminal and clear whatever stalls it (update check or sign-in), then rerun doctor`;
+      : `T3's Codex app-server status check of ${lab.instanceId} timed out; run \`${probe.command}\` in a terminal (with \`CODEX_HOME=<home>\` if the instance sets a custom home) and clear whatever stalls it (update check or sign-in), then rerun doctor`;
+  }
+  if (probe?.probe === "opencode-server") {
+    return `T3's OpenCode server start for ${lab.instanceId} timed out; run \`${probe.command}\` in a terminal and clear whatever stalls it (update check, first-run prompt or a busy port), then rerun doctor`;
   }
   const command = probe?.command ?? null;
   const check = command ? `run \`${command}\`` : `run the ${lab.instanceId} CLI's version check`;

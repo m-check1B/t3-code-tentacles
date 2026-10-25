@@ -32,8 +32,9 @@ All notable changes to this project are documented here.
 - `doctor` no longer reports a lab `provider_error` with the generic action
   while Hermes health is ok (KRA-8860). T3's provider message is classified,
   never echoed. T3's probe-timeout messages for Claude, Codex (codex,
-  codex-noweb, codex-app), OpenCode, Cursor (`agent about`), Grok, DeepSeek
-  and Antigravity's health check (the strings in T3 `t3code-tplus-private`
+  codex-noweb, codex-app), OpenCode (version check and `opencode serve`
+  start), Cursor (`agent about`), Grok, DeepSeek and Antigravity's health
+  check (the strings in T3 `t3code-tplus-private`
   main @ 5a738105, kept verbatim in `test/fixtures/t3-probe-timeouts.json`)
   are `provider_probe_timeout` and name the command to run, the lab's install
   command, or where to refresh it in T3. An unstartable binary is

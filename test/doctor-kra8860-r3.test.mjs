@@ -80,6 +80,8 @@ test("a command T3 never probes with is classified but not named back", async (t
 for (const message of [
   "Timed out while checking Codex app-server provider status. SECRET-CANARY",
   "Failed to execute OpenCode CLI health check: OpenCode CLI version probe timed out after SECRET-CANARY.",
+  "Failed to load OpenCode provider inventory: Timed out waiting for OpenCode server start after SECRET-CANARY.",
+  "Failed to load OpenCode provider inventory: Timed out while checking the OpenCode server version. SECRET-CANARY",
   "Claude Agent CLI is installed but failed to run. SECRET-CANARY",
 ]) {
   test(`a near-miss of a fixed T3 template stays provider_error: ${message.slice(0, 40)}`, async (t) => {
