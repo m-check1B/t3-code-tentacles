@@ -3,15 +3,22 @@
 // seat) may call it, but only this script decides whether a manifest is
 // signed. It refuses unless every new version entry proves its provenance:
 //
-//   * the commit is the merge commit of a merged PR into the protected branch,
-//     and is an ancestor of that branch tip;
-//   * that PR carries a B3 receipt comment citing the PR head sha;
+//   * the commit is the merge commit of a merged PR into the release branch,
+//     and is that branch's current tip on GitHub;
+//   * that PR carries a B3 receipt comment citing the PR head sha and the PR
+//     body hash;
+//   * GitHub's server-side activity log shows the branch reached the commit by
+//     fast-forward pushes only, after the B3 receipt, with no force-push or
+//     deletion (KRA-8810: branch protection is a paid feature for private repos);
 //   * a clean rebuild (git archive + npm pack) of the commit has the entry's
 //     sha256, and the published release asset has the same sha256;
 //   * the commit's package.json version and REMOTE_RPC_METHODS match the entry.
 //
 // Founder OK (`--founder-ok REF`) is required to lower securityFloor, to add
-// or rotate a pinned public key, or to sign anything below recommended.
+// or rotate a pinned public key, or to sign anything below recommended. It is a
+// recorded LABEL, not an authenticated gate (KRA-8810 F3): every seat and the
+// Founder share one GitHub account, so no artifact this script can read proves
+// Founder authorship. The Founder's gate is custody of the signing key.
 //
 // Key custody: the private key is fetched only after every check passed, from
 // KEY_SOURCE by the exact item name SIGNING_ITEM. It arrives on a pipe, lives
@@ -34,22 +41,73 @@ import {
 
 export { RELEASE_DOWNLOAD } from "../../src/updater/release-source.mjs";
 export const REPOSITORY = "m-check1B/t3-code-tentacles-private";
-export const PROTECTED_BRANCH = "jack/0.4.1-maintenance";
+export const RELEASE_BRANCH = "jack/0.4.1-maintenance";
 export const SIGNING_ITEM = "tentacles-manifest-signing-key-current";
 export const NEXT_SIGNING_ITEM = "tentacles-manifest-signing-key-next"; // never fetched here
 // Execute verified source bytes on stdin, so replacing the path after hashing
 // cannot substitute a different program. Secrets use fd 3, never helper stdout.
 export const KEY_SOURCE = fileURLToPath(new URL("./signer-key-source.mjs", import.meta.url));
-export const KEY_SOURCE_SHA256 = "bacdb830730c868bd7a1cc5300844e8d4d799ea2d7f82f5ffe07704ac57ed1cf";
+export const KEY_SOURCE_SHA256 = "e389b0f59d7f3bcef0a09c9cc5308b6ab93ef9d8aef31aa56515427ba11e68b3";
 export const MAX_EXPIRY_DAYS = 45;
+// Bounds the GitHub compare walk; a longer gap means sign more often.
+const MAX_HISTORY_COMMITS = 250;
 const B3_RECEIPT = /^APPROVE tentacles-private#([1-9][0-9]*) ([0-9a-f]{40}) P1=0 P2=0$/;
 const THREAD = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/;
 const FOUNDER_REF = /^[A-Za-z0-9._:#/-]{3,160}$/;
 const HEX40 = /^[0-9a-f]{40}$/;
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 
+/** One concrete fix per refusal code, printed with the refusal. */
+export const REFUSAL_FIXES = Object.freeze({
+  branch_history_rewritten: "the release branch was force-pushed, deleted or rewritten; cut a fresh release branch from the last signed commit and re-review",
+  branch_push_after_receipt_missing: "post the B3 receipt first, then fast-forward push the reviewed head to the release branch",
+  commit_not_branch_tip: "sign exactly one new version per manifest, at the current release branch tip",
+  commit_not_on_release_branch: "fast-forward the release branch to the signed commit, then re-run",
+  draft_invalid: "fix the draft so it validates as tentacles-manifest/v1",
+  expiry_out_of_range: "set expires in the future and at most 45 days ahead",
+  founder_ok_reference_invalid: "pass --founder-ok as 3-160 characters of [A-Za-z0-9._:#/-]",
+  founder_ok_required: "get the Founder's OK for the listed rules and pass its reference with --founder-ok",
+  github_provenance_unavailable: "use githubBackends; the legacy backend never signs",
+  github_response_invalid: "re-run when GitHub returns a well-formed response for this repository",
+  history_not_first_parent: "merge into the release branch by fast-forward from the audited head and the last signed commit",
+  history_too_long: `sign before the release branch moves ${MAX_HISTORY_COMMITS} commits past the last signed commit`,
+  key_source_hash_mismatch: "restore scripts/release/signer-key-source.mjs to the pinned, GUARDIAN-audited bytes",
+  key_source_missing_or_unsafe: "restore scripts/release/signer-key-source.mjs as a regular file owned by you",
+  key_source_unsafe: "make signer-key-source.mjs a regular file owned by you, not group/world writable, under 32 KiB",
+  legacy_rpc_mismatch: "copy REMOTE_RPC_METHODS from the commit into the entry's legacyRpc",
+  mirror_not_synced: "call syncMirror before checking ancestry",
+  output_exists: "choose an --out path that does not exist yet",
+  pinned_keys_not_configured: "pin exactly two distinct public keys in src/updater/pinned.mjs at that commit",
+  pinned_keys_unreadable: "keep PINNED_PUBLIC_KEYS as an Object.freeze([...]) literal in src/updater/pinned.mjs",
+  pr_not_merged: "merge exactly one PR from this repository into the release branch with the signed commit as its head",
+  previous_manifest_invalid: "pass the exact previously published signed manifest as --previous",
+  previous_manifest_not_ours: "pass a previous manifest signed by the current pinned key, or get Founder OK for a key change",
+  rebuild_failed: "make npm pack --ignore-scripts at that commit produce one tentacles-<version>.tgz",
+  rebuild_sha_mismatch: "set the entry's sha256 to the clean rebuild of that commit",
+  release_asset_sha_mismatch: "re-publish the release asset from the clean rebuild of that commit",
+  release_asset_unavailable: "publish a non-draft GitHub release v<version> with exactly one tentacles-<version>.tgz asset",
+  rpc_list_unreadable: "keep REMOTE_RPC_METHODS as an Object.freeze([...]) literal in src/outbound-pairer.mjs",
+  serial_already_signed: "raise the draft serial above the last serial in the signing log",
+  serial_not_next: "set the draft serial to the previous manifest serial + 1",
+  signed_entry_changed: "carry already signed entries over byte-for-byte; publish changes as a new version",
+  signing_key_invalid: "store a single Ed25519 PKCS8 PEM in the current signing-key item (Founder only)",
+  signing_key_not_ed25519: "store an Ed25519 key in the current signing-key item (Founder only)",
+  signing_key_not_pinned_current: "pin the current signing key's public half first in PINNED_PUBLIC_KEYS at that commit",
+  signing_log_invalid: "restore the signing log from its last good backup; never hand-edit it",
+  signing_log_torn: "restore the signing log from its last good backup; its last line is incomplete",
+  subprocess_failed: "check that the named tool runs and is authenticated, then re-run",
+  vault_item_not_allowed: "request only the current signing-key item",
+  version_mismatch: "set the entry version to package.json version at that commit",
+  b3_head_not_signed_commit: "fast-forward merge so the signed commit equals the reviewed PR head",
+  b3_receipt_missing: "post an unedited B3 receipt for this PR head, writer thread and pr-body-sha256 from the pinned account",
+});
+
 export class SignerRefusal extends Error {
-  constructor(code, detail = code) { super(`refused: ${code}${detail === code ? "" : ` (${detail})`}`); this.code = code; }
+  constructor(code, detail = code) {
+    const fix = REFUSAL_FIXES[code];
+    super(`refused: ${code}${detail === code ? "" : ` (${detail})`}${fix ? `; fix: ${fix}` : ""}`);
+    this.code = code;
+  }
 }
 
 function refuse(code, detail) { throw new SignerRefusal(code, detail); }
@@ -141,7 +199,14 @@ export function writerThread(body) {
   return THREAD.test(id) ? id : null;
 }
 
-export function approvedB3(receipt, { head, number, writerThread: writer, headAvailableAt, mergedAt, now }) {
+/** The reviewer snapshots the PR body (the writer-thread source) in the
+ * receipt, so a later body edit voids it. LF-terminated to match
+ * `gh api repos/<repo>/pulls/<n> --jq .body | sha256sum`. */
+export function prBodySha256(body) {
+  return typeof body === "string" ? sha256(Buffer.from(`${body}\n`)) : null;
+}
+
+export function approvedB3(receipt, { head, number, writerThread: writer, prBodySha256: bodySha, headAvailableAt, mergedAt, now }) {
   const author = receipt?.user;
   if (!B3_REVIEWERS.some((account) => account.id === author?.id && account.login === author?.login)) return false;
   if (typeof receipt?.body !== "string" || !THREAD.test(writer ?? "")) return false;
@@ -152,6 +217,8 @@ export function approvedB3(receipt, { head, number, writerThread: writer, headAv
   if (markers.length !== 1) return false;
   const threads = /^writer-thread=([^ ]+) reviewer-thread=([^ ]+)$/.exec(markers[0]);
   if (!threads || threads[1] !== writer || !THREAD.test(threads[2]) || threads[1] === threads[2]) return false;
+  const bodies = lines.filter((line) => line.includes("pr-body-sha256="));
+  if (!/^[0-9a-f]{64}$/.test(bodySha ?? "") || bodies.length !== 1 || bodies[0] !== `pr-body-sha256=${bodySha}`) return false;
   const at = Date.parse(receipt.created_at);
   const updated = Date.parse(receipt.updated_at);
   const available = Date.parse(headAvailableAt);
@@ -174,21 +241,76 @@ export function headAvailableAt(suites, head, now) {
 
 export async function verifyGithubProvenance(backend, entry, now) {
   const candidates = await backend.list(`/commits/${entry.commit}/pulls?per_page=100`);
-  const merged = candidates.filter((pull) => pull?.base?.ref === PROTECTED_BRANCH
+  const merged = candidates.filter((pull) => pull?.base?.ref === RELEASE_BRANCH
     && pull?.base?.repo?.full_name === REPOSITORY && pull?.head?.sha === entry.commit);
   // Ambiguity cannot select whichever PR happens to have an approval.
   if (merged.length !== 1 || !Number.isSafeInteger(merged[0].number) || merged[0].number <= 0) refuse("pr_not_merged", entry.version);
   const pull = await backend.api(`/pulls/${merged[0].number}`);
-  if (pull?.number !== merged[0].number || pull?.merged !== true || pull?.base?.ref !== PROTECTED_BRANCH
+  if (pull?.number !== merged[0].number || pull?.merged !== true || pull?.base?.ref !== RELEASE_BRANCH
     || pull?.base?.repo?.full_name !== REPOSITORY || pull?.head?.repo?.full_name !== REPOSITORY
     || pull?.merge_commit_sha !== entry.commit || !HEX40.test(pull?.head?.sha ?? "")) refuse("pr_not_merged", entry.version);
   if (pull.head.sha !== entry.commit) refuse("b3_head_not_signed_commit", entry.version);
   const suites = await backend.list(`/commits/${entry.commit}/check-suites?per_page=100`, "check_suites");
-  const binding = { head: entry.commit, number: pull.number, writerThread: writerThread(pull.body),
+  const binding = { head: entry.commit, number: pull.number, writerThread: writerThread(pull.body), prBodySha256: prBodySha256(pull.body),
     headAvailableAt: headAvailableAt(suites, entry.commit, now), mergedAt: pull.merged_at, now };
   const comments = await backend.list(`/issues/${pull.number}/comments?per_page=100`);
-  if (!comments.some((comment) => approvedB3(comment, binding))) refuse("b3_receipt_missing", entry.version);
-  return { pull, binding };
+  const receipts = comments.filter((comment) => approvedB3(comment, binding));
+  if (!receipts.length) refuse("b3_receipt_missing", entry.version);
+  // The latest approval bounds the push, so every receipt precedes it.
+  const receiptAt = new Date(Math.max(...receipts.map((comment) => Date.parse(comment.created_at)))).toISOString();
+  return { pull, binding, receiptAt };
+}
+
+/** Fail closed unless `tip` is reached from `base` along first parents only,
+ * per GitHub's compare API (not the local mirror). */
+async function assertFirstParent(backend, base, tip, version) {
+  if (base === tip) return;
+  const compare = await backend.api(`/compare/${base}...${tip}`);
+  const commits = Array.isArray(compare?.commits) ? compare.commits : null;
+  if (!commits || !["ahead", "identical"].includes(compare.status) || compare.behind_by !== 0) refuse("history_not_first_parent", version);
+  if (compare.total_commits !== commits.length || commits.length > MAX_HISTORY_COMMITS) refuse("history_too_long", version);
+  const bySha = new Map(commits.map((commit) => [commit?.sha, commit]));
+  let cursor = tip;
+  for (let steps = 0; cursor !== base; steps += 1) {
+    const commit = bySha.get(cursor);
+    if (!commit || steps > commits.length || !HEX40.test(commit.parents?.[0]?.sha ?? "")) refuse("history_not_first_parent", version);
+    cursor = commit.parents[0].sha;
+  }
+}
+
+/** $0 replacement for branch protection, which GitHub Free refuses (HTTP 403)
+ * for private repositories (KRA-8810). All facts come from the GitHub API:
+ *   1. the commit is the release branch tip now;
+ *   2. it is first-parent fast-forward from the audited head and from the last
+ *      signed commit, and the branch activity log is an unbroken chain of
+ *      pushes/merges with no force-push or deletion ever;
+ *   3. the single push that made it the tip happened after the B3 receipt. */
+export async function verifyReleaseBranch(backend, entry, { auditedHead, receiptAt, baseline = null }, now) {
+  const branch = await backend.api(`/branches/${encodeURIComponent(RELEASE_BRANCH)}`);
+  if (branch?.name !== RELEASE_BRANCH || !HEX40.test(branch?.commit?.sha ?? "")) refuse("github_response_invalid");
+  if (branch.commit.sha !== entry.commit) refuse("commit_not_branch_tip", entry.version);
+  for (const base of [auditedHead, baseline]) {
+    if (base !== null) {
+      if (!HEX40.test(base ?? "")) refuse("history_not_first_parent", entry.version);
+      await assertFirstParent(backend, base, entry.commit, entry.version);
+    }
+  }
+  const ref = `refs/heads/${RELEASE_BRANCH}`;
+  const events = await backend.list(`/activity?ref=${encodeURIComponent(ref)}&direction=desc&per_page=100`);
+  if (!events.length || events.some((event) => event?.ref !== ref || !HEX40.test(event?.before ?? "") || !HEX40.test(event?.after ?? "")
+    || !Number.isFinite(Date.parse(event?.timestamp)))) refuse("github_response_invalid");
+  const ordered = [...events].sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
+  for (const [index, event] of ordered.entries()) {
+    const older = ordered[index + 1];
+    const allowed = event.activity_type === "push" || event.activity_type === "pr_merge"
+      || (event.activity_type === "branch_creation" && !older);
+    // Every move must start where the previous one ended: no gap, no rewrite.
+    if (!allowed || (older && event.before !== older.after)) refuse("branch_history_rewritten", entry.version);
+  }
+  const [last] = ordered;
+  const at = Date.parse(last.timestamp);
+  if (last.after !== entry.commit || ordered.filter((event) => event.after === entry.commit).length !== 1) refuse("commit_not_branch_tip", entry.version);
+  if (last.activity_type === "branch_creation" || !(at > Date.parse(receiptAt)) || at > now) refuse("branch_push_after_receipt_missing", entry.version);
 }
 
 function parsePinnedKeys(source) {
@@ -305,14 +427,15 @@ export async function signManifest({
       return !old;
     });
 
-    const branch = await backend.api(`/branches/${encodeURIComponent(PROTECTED_BRANCH)}`);
-    if (branch?.protected !== true) refuse("branch_not_protected");
     await backend.syncMirror();
 
+    // The newest previously signed commit must stay in the branch's history.
+    const baseline = previous ? previousEntries.get(previous.manifest.recommended)?.commit ?? null : null;
     const pinnedAt = new Map();
     for (const entry of fresh) {
-      if (!HEX40.test(entry.commit) || !(await backend.isAncestor(entry.commit))) refuse("commit_not_on_protected_branch", entry.version);
-      await verifyGithubProvenance(backend, entry, now);
+      if (!HEX40.test(entry.commit) || !(await backend.isAncestor(entry.commit))) refuse("commit_not_on_release_branch", entry.version);
+      const { pull, receiptAt } = await verifyGithubProvenance(backend, entry, now);
+      await verifyReleaseBranch(backend, entry, { auditedHead: pull.head.sha, receiptAt, baseline }, now);
       const packageJson = JSON.parse(await backend.showFile(entry.commit, "package.json"));
       if (packageJson.version !== entry.version) refuse("version_mismatch", entry.version);
       const rpc = parseRemoteRpc(await backend.showFile(entry.commit, "src/outbound-pairer.mjs"));
@@ -398,7 +521,7 @@ function parseCli(argv) {
   for (let index = 0; index < argv.length; index += 2) {
     const key = argv[index]?.replace(/^--/, "");
     if (!argv[index]?.startsWith("--") || !allowed.has(key) || argv[index + 1] === undefined || options[key] !== undefined) {
-      throw new Error("usage: sign-manifest --draft FILE [--previous SIGNED_FILE] --log FILE --out FILE [--founder-ok REF]");
+      throw new Error("usage: sign-manifest --draft FILE [--previous SIGNED_FILE] --log FILE --out FILE [--founder-ok LABEL]");
     }
     options[key] = argv[index + 1];
   }
@@ -407,7 +530,7 @@ function parseCli(argv) {
 }
 
 export function githubBackends(options) {
-  return createGithubBackends({ ...options, runChild, refuse, protectedBranch: PROTECTED_BRANCH });
+  return createGithubBackends({ ...options, runChild, refuse, releaseBranch: RELEASE_BRANCH });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
