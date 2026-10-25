@@ -38,6 +38,11 @@
         "deepseek": "run `tentacles install-deepseek-provider --instance deepseek` to reinstall its launcher",
         "deepseek-noweb": "run `dsh --version`"
       }
+    },
+    {
+      "source": "Layers/AntigravityProvider.ts:192 with Layers/AntigravityProvider.ts:35",
+      "message": "Antigravity did not respond to its local health check within 90 seconds.",
+      "labs": { "antigravity": "refresh Antigravity in T3 Code" }
     }
   ]
 }

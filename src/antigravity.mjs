@@ -26,6 +26,10 @@ export function t3SupportsAntigravity(serverVersion) {
   return true;
 }
 
+// KRA-8860: T3's message when its Antigravity health check times out, matched
+// whole and never echoed.
+const T3_HEALTH_CHECK_TIMEOUT = /^Antigravity did not respond to its local health check within [0-9]{1,6} [a-z]{1,12}\.$/;
+
 // Only T3's observed provider and authentication states establish readiness.
 // An initialized agent or a cached model list does not prove Google sign-in.
 export function applyAntigravityState(row, configProvider, serverVersion) {
@@ -59,7 +63,8 @@ export function applyAntigravityState(row, configProvider, serverVersion) {
   }
   if (configProvider.status === "error") {
     row.ready = false;
-    row.code = "provider_error";
+    const message = typeof configProvider.message === "string" ? configProvider.message.trim() : "";
+    row.code = T3_HEALTH_CHECK_TIMEOUT.test(message) ? "provider_probe_timeout" : "provider_error";
     return row;
   }
   if (row.signedIn !== true) {
@@ -88,6 +93,8 @@ export function antigravityAction(code) {
       return `Sign in with Google in T3 Code: ${ANTIGRAVITY_SETUP_URL}`;
     case "sign_in_unchecked":
       return `Sign in with Google in T3 Code, or refresh Antigravity there if you already did: ${ANTIGRAVITY_SETUP_URL}`;
+    case "provider_probe_timeout":
+      return `T3's Antigravity health check timed out; refresh Antigravity in T3 Code, or reinstall it there if it stays stuck, then rerun doctor: ${ANTIGRAVITY_SETUP_URL}`;
     default:
       return null;
   }

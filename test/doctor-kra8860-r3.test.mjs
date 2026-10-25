@@ -35,7 +35,7 @@ function fixture(t, { providers, instances, health = { status: "ok" }, token = f
   return { client, options };
 }
 
-const DRIVERS = { claudeAgent: "claudeAgent", codex: "codex", "codex-app": "codex", opencode: "opencode", cursor: "cursor", ...NOWEB_LAB_DRIVERS };
+const DRIVERS = { claudeAgent: "claudeAgent", codex: "codex", "codex-app": "codex", opencode: "opencode", cursor: "cursor", antigravity: "antigravity", ...NOWEB_LAB_DRIVERS };
 
 function lab(instanceId, { status = "error", message, models = [{ slug: "synthetic:model", isDefault: true }] } = {}) {
   const driver = DRIVERS[instanceId] ?? "grok";
@@ -88,6 +88,13 @@ for (const message of [
     assert.equal(JSON.stringify(report).includes("SECRET-CANARY"), false);
   });
 }
+
+test("a near-miss of T3's Antigravity health-check timeout stays provider_error", async (t) => {
+  const message = "Antigravity did not respond to its local health check within SECRET-CANARY.";
+  const { report, row } = await run(t, [["antigravity", lab("antigravity", { message })]]);
+  assert.equal(row("antigravity").code, "provider_error");
+  assert.equal(JSON.stringify(report).includes("SECRET-CANARY"), false);
+});
 
 // P2-B: a reachable Hermes that T3 calls not ready gets a Hermes-specific fix.
 test("reachable Hermes with health ok that T3 calls not ready names the Hermes fix", async (t) => {
