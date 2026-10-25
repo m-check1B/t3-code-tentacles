@@ -121,15 +121,26 @@ function turnEndEvents(thread) {
   }
   const ordered = [...lastMessageAt].sort((a, b) => a[1].localeCompare(b[1]));
   const latest = record(thread.latestTurn) && safeText(thread.latestTurn.turnId, 200) ? thread.latestTurn : null;
+  const newestMessageTurn = ordered.at(-1);
+  // A message turn other than latestTurn is newer when latestTurn has no
+  // later reply of its own and did not complete after that turn's reply.
+  const messageTurnIsNewer = Boolean(latest && newestMessageTurn && newestMessageTurn[0] !== latest.turnId
+    && (lastMessageAt.has(latest.turnId) || !validTime(latest.completedAt) || iso(latest.completedAt) < newestMessageTurn[1]));
   // The turn whose outcome is still open: never ended here. Without an
-  // activeTurnId on a running session, the newest turn may be live.
-  const live = running ? (safeText(session.activeTurnId, 200) ? session.activeTurnId : latest?.turnId ?? ordered.at(-1)?.[0]) : undefined;
-  const newest = latest?.turnId ?? ordered.at(-1)?.[0];
+  // activeTurnId on a running session, the newest message turn is live when it
+  // is newer than latestTurn (T3 may not have published it yet); otherwise
+  // latestTurn, or the newest message turn when latestTurn is missing.
+  const live = !running ? undefined : safeText(session.activeTurnId, 200) ? session.activeTurnId
+    : messageTurnIsNewer || !latest ? newestMessageTurn?.[0] : latest.turnId;
+  const newest = latest?.turnId ?? newestMessageTurn?.[0];
   const ends = [];
   if (newest !== undefined && newest !== live) {
-    const outcome = latest ? TURN_END_OUTCOMES[latest.state]
+    let outcome = latest ? TURN_END_OUTCOMES[latest.state]
       : session.status === "error" ? "failed" : session.status === "interrupted" ? "cancelled"
         : ["ready", "idle", "stopped"].includes(session.status) ? "succeeded" : undefined;
+    // Without latestTurn, a failure or cancel after a newer user message may
+    // belong to a turn that never replied; attribute it to no turn.
+    if (!latest && ["failed", "cancelled"].includes(outcome) && newestUserAt(thread) > lastMessageAt.get(newest)) outcome = undefined;
     const occurredAt = latest && validTime(latest.completedAt) ? iso(latest.completedAt) : lastMessageAt.get(newest);
     if (outcome && occurredAt) ends.push(end(newest, occurredAt, outcome));
   }
@@ -139,6 +150,16 @@ function turnEndEvents(thread) {
     if (turnId !== newest && turnId !== live) ends.push(end(turnId, occurredAt, "unknown"));
   }
   return ends;
+}
+
+function newestUserAt(thread) {
+  let newest = "";
+  for (const message of Array.isArray(thread.messages) ? thread.messages : []) {
+    if (!record(message) || message.role !== "user" || !validTime(message.createdAt)) continue;
+    const at = iso(message.createdAt);
+    if (at > newest) newest = at;
+  }
+  return newest;
 }
 
 /**
@@ -172,6 +193,9 @@ export function recordThreadEvents(threadId, candidates, { directory = DEFAULT_T
         || !["message", "tool_summary", "artifact", "state", "memory", "turn_end"].includes(candidate.kind)
         || !record(candidate.payload)) throw new Error("Invalid journal candidate");
       const old = existing.get(candidate.eventId);
+      // A turn ends once. Checked under the lock, so a concurrent poller that
+      // saw the same turn differently drops its later observation.
+      if (old?.kind === "turn_end" && candidate.kind === "turn_end") continue;
       if (old) {
         if (old.kind !== candidate.kind || JSON.stringify(old.payload) !== JSON.stringify(candidate.payload)) {
           throw new Error("Source event changed after journaling");
@@ -212,10 +236,11 @@ export function recordThreadEvents(threadId, candidates, { directory = DEFAULT_T
 }
 
 export async function threadEvents(client, params, { directory = DEFAULT_THREAD_EVENTS_DIRECTORY } = {}) {
-  if (!record(params) || Object.keys(params).some((key) => !["threadId", "afterSequence", "limit"].includes(key))) {
+  if (!record(params) || Object.keys(params).some((key) => !["threadId", "afterSequence", "limit", "includeTurnEnd"].includes(key))) {
     throw new Error("Invalid thread-events params");
   }
-  const { threadId, afterSequence = 0, limit = 100 } = params;
+  const { threadId, afterSequence = 0, limit = 100, includeTurnEnd = false } = params;
+  if (typeof includeTurnEnd !== "boolean") throw new Error("Invalid thread-events params");
   if (!UUID.test(threadId) || !Number.isSafeInteger(afterSequence) || afterSequence < 0
     || !Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new Error("Invalid thread-events cursor");
   const response = await client.thread(threadId);
@@ -226,17 +251,14 @@ export async function threadEvents(client, params, { directory = DEFAULT_THREAD_
   const projected = projectThreadEvents(response.thread);
   privateDirectory(directory);
   const previous = readJournal(path.join(directory, `${threadId}.json`));
-  // A turn ends once: the first journaled turn_end is immutable and later
-  // observations of the same turn (for example as an older turn) are dropped.
-  const journaledTurnEnds = new Set(previous.filter((event) => event.kind === "turn_end").map((event) => event.eventId));
-  projected.events = projected.events.filter((event) => event.kind !== "turn_end" || !journaledTurnEnds.has(event.eventId));
   projected.events.push(...await attachmentEvents(client, response.thread, previous));
   projected.events.sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
   const journal = recordThreadEvents(threadId, projected.events, { directory, state: projected.state });
-  if (afterSequence > journal.length) throw new Error("Thread journal cursor is ahead of source");
+  const view = includeTurnEnd ? journal : baseView(journal);
+  if (afterSequence > view.length) throw new Error("Thread journal cursor is ahead of source");
   const events = [];
   let bytes = 0; let artifactBytes = 0;
-  for (const stored of journal.slice(afterSequence, afterSequence + limit)) {
+  for (const stored of view.slice(afterSequence, afterSequence + limit)) {
     const event = stored.kind === "artifact" ? { ...stored, payload: {
       name: stored.payload.name, mediaType: stored.payload.mediaType, sha256: stored.payload.sha256,
       artifactId: stored.eventId, sizeBytes: Buffer.from(stored.payload.contentBase64, "base64").length,
@@ -249,7 +271,23 @@ export async function threadEvents(client, params, { directory = DEFAULT_THREAD_
     events.push(event); bytes += size;
   }
   const nextSequence = events.at(-1)?.sequence ?? afterSequence;
-  return { threadId, afterSequence, events, nextSequence, hasMore: nextSequence < journal.length };
+  return { threadId, afterSequence, events, nextSequence, hasMore: nextSequence < view.length };
+}
+
+/**
+ * KRA-8958: readers that do not pass `includeTurnEnd: true` get the base
+ * kinds only, numbered 1..n within that view, so a strict base importer sees
+ * the same contiguous sequences and cursors it saw before turn_end existed.
+ * A journal without turn_end is its own base view.
+ */
+function baseView(journal) {
+  const view = [];
+  for (const event of journal) {
+    if (event.kind === "turn_end") continue;
+    const sequence = view.length + 1;
+    view.push(event.sequence === sequence ? event : { ...event, sequence });
+  }
+  return view;
 }
 
 async function readAsset(client, resource, expectedSize) {

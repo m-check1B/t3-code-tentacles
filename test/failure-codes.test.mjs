@@ -156,3 +156,25 @@ test("redaction: a provider body with a secret-shaped token never reaches messag
     }
   }
 });
+
+test("context and token overflow are provider errors; key-value timeouts are not timeouts", () => {
+  for (const [code, text] of [
+    ["usage_limit", "usage limit reached"],
+    ["usage_limit", "Rate limit reached for requests"],
+    ["usage_limit", "monthly spend limit exceeded"],
+    ["usage_limit", "Rate limit reached on tokens per min (TPM)"],
+    ["provider_error", "maximum context length limit exceeded"],
+    ["provider_error", "prompt token limit exceeded"],
+    ["provider_error", "This model's maximum context length is 8192 tokens (context_length_exceeded)"],
+    ["provider_error", "prompt is too long: 210000 tokens > 200000 maximum"],
+    ["provider_error", "context window limit reached"],
+    ["timeout", "timeout"],
+    ["timeout", "provider request timed out after 600s"],
+    ["timeout", "request timeout"],
+    ["timeout", "Timeout exceeded while waiting for the model"],
+    ["timeout", "ETIMEDOUT"],
+    ["provider_error", "invalid api key (timeout=30)"],
+    ["provider_error", "bad config: timeout: 30, retries: 2"],
+    ["provider_error", "unsupported option timeout"],
+  ]) assert.equal(classifyFailure({ state: "failed", error: text }).code, code, text);
+});

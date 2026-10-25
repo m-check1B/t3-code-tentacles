@@ -31,8 +31,13 @@ const MAX_CLASSIFIED_TEXT = 4096;
 // Ordered: the first matching pattern wins. Patterns describe the failure
 // class only; the matched text is discarded.
 const TEXT_PATTERNS = [
+  // Context-window and token-limit overflow is a request problem, not a
+  // usage limit: a fallback lab or a later retry would fail the same way.
+  ["provider_error", /\b(?:context[ _-]?(?:length|window|limit)|context_length_exceeded|tokens?[ _-]?limit|prompt is too long|too many (?:input |prompt )?tokens)\b/i],
   ["usage_limit", /\b(?:usage[ _-]?limit|rate[ _-]?limit(?:ed)?|insufficient[ _-]?quota|quota (?:exceeded|exhausted|reached)|too many requests|(?:hit|reached) (?:your|the) (?:usage |rate )?limit|limit (?:reached|exceeded)|out of credits|credit balance is too low)\b/i],
-  ["timeout", /\b(?:timed[ -]?out|timeout|deadline exceeded|ETIMEDOUT)\b/i],
+  // A bare `timeout` word (for example a `timeout=30` setting) is not a
+  // timeout; only timeout phrases or the whole text `timeout` are.
+  ["timeout", /\b(?:timed[ -]?out|deadline exceeded|ETIMEDOUT|(?:request|connection|connect|read|write|gateway|socket|idle|operation|turn|response|upstream)[ _-]timeout|timeout (?:error|exceeded|expired|reached|occurred))\b|^\s*timeout[.!]?\s*$/i],
   ["session_busy", /\b(?:session|thread|state|lab) (?:is )?busy\b|\b(?:turn|session) (?:is )?already (?:running|active|in progress)\b|\banother turn is (?:running|active|in progress)\b/i],
   ["lab_not_ready", /\b(?:lab|provider(?: instance)?|harness|adapter|model)\b[^\n]{0,80}?\b(?:not (?:ready|found|installed|configured|available)|unavailable|is missing)\b|\bharness_not_found\b/i],
   ["cancelled", /\b(?:cancel(?:l)?ed|interrupted|aborted by user)\b/i],

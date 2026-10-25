@@ -44,11 +44,17 @@ is inferred. Jack must register its dispatched user/assistant origin IDs before
 draining events so policy envelopes and already-finalized replies are not
 projected again. Text or timestamp equality is never an origin match.
 
-- `thread-events` params: `{threadId, afterSequence: 0, limit: 100}`; limit 1–200.
+- `thread-events` params: `{threadId, afterSequence: 0, limit: 100,
+  includeTurnEnd: false}`; limit 1–200. `includeTurnEnd` must be a boolean.
+  Only a reader that passes `includeTurnEnd: true` receives `turn_end` events
+  (see [Turn-end opt-in](#turn-end-opt-in-kra-8958)). A pairer older than this
+  release rejects the parameter as `Invalid thread-events params`, so an
+  opted-in reader never mistakes an old pairer for a journal without ends.
 - Page: `{threadId, afterSequence, events, nextSequence, hasMore}`.
 - Event: `{threadId,eventId,sequence,occurredAt,kind,payload}`; sequences start at
   one and are contiguous. Kinds: `message`, `tool_summary`, `artifact`, `state`,
-  `memory`, `turn_end`. No raw tool input/output is projected.
+  `memory`, and `turn_end` for opted-in readers only. No raw tool input/output
+  is projected.
 - Artifact manifest payload: `{name,mediaType,artifactId,sizeBytes,sha256}`.
 - Turn end payload (`turn_end`, KRA-8958): `{turnId,outcome}` plus `code` and
   `message` from the [failure-code table](orchestration.md#typed-failure-codes-kra-8958)
@@ -73,19 +79,28 @@ last committed cursor; never advance past it.
 Each turn ends with exactly one `turn_end` event, ID `turn:<turnId>`. The
 exporter journals the first end it sees for a turn and drops every later
 observation of that turn, so a terminal event is never duplicated or
-rewritten. Sources, newest first:
+rewritten. The check runs inside the journal write, under the per-thread lock,
+so a concurrent poller that saw the same turn differently (for example as an
+older, `unknown` turn) drops its observation instead of failing. Sources,
+newest first:
 
 - T3 `latestTurn` in a terminal state (`completed` → `succeeded`, `error` or
   `failed` → `failed`, `interrupted` or `cancelled` → `cancelled`), at
   `completedAt`. Failure codes come from the session's `lastError`.
 - Without `latestTurn`: the newest turn with a final assistant message, once
   the session is `ready`/`idle`/`stopped` (`succeeded`), `error` (`failed`) or
-  `interrupted` (`cancelled`).
+  `interrupted` (`cancelled`). A failure or cancel is attributed to that turn
+  only if no user message is newer than the turn's last assistant message;
+  otherwise the failure may belong to a turn that never replied, and no end is
+  journaled.
 - An older turn with a final assistant message whose own end was never
   observed as latest: `unknown`, at its last assistant message time.
 
-A live turn (the session's `activeTurnId`, or the newest turn of a running
-session without one) never gets an end. Sequence is journal order, not causal
+A live turn never gets an end. On a running session it is the session's
+`activeTurnId`. Without one, it is the newest turn with an assistant message
+when that turn is newer than `latestTurn` (whatever `latestTurn`'s state),
+otherwise `latestTurn`, or the newest message turn when `latestTurn` is
+missing. A terminal `latestTurn` that is older than the live turn still ends. Sequence is journal order, not causal
 order: an older turn's end can follow events of the next turn.
 
 How far back the guarantee goes: contiguous sequences hold for every journal
@@ -95,8 +110,23 @@ upgraded exporter first polls the thread get an end only if they have a final
 assistant message, and then with outcome `unknown` unless the turn is still
 T3's `latestTurn`. Turns without a `turnId` on their assistant messages, and
 earlier turns that produced no assistant message, have no `turn_end`.
-Consumers must ignore unknown kinds; an importer that rejects them must be
-updated before it reads a journal written by this release.
+### Turn-end opt-in (KRA-8958)
+
+`turn_end` is opt-in through the `includeTurnEnd: true` request parameter.
+Strict importers (Jack's `ThreadEventsPage` allows only the five base kinds and
+forbids extra fields) keep working unchanged:
+
+- Without the parameter, a page is the **base view**: the journal without
+  `turn_end` events, renumbered `1..n` in journal order. A journal with no
+  `turn_end` is its own base view, so cursors committed before this release
+  stay valid, and a base reader's cursor advances past every skipped end with
+  no gap. Page shape, cursor-ahead refusal and `hasMore` are as before, counted
+  in the base view.
+- With `includeTurnEnd: true`, a page is the full journal with its stored
+  sequences.
+- Cursors belong to one view. A reader that switches views must restart from
+  `afterSequence: 0` (event IDs are stable, so it deduplicates by `eventId`)
+  and never reuse a cursor across views. `findSequenceGap` works on either.
 
 A chunk is at most 384 KiB before base64; pages are below 750,000 bytes and carry
 at most 25 MiB aggregate artifact content. Individual artifacts are bounded to

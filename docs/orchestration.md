@@ -159,15 +159,16 @@ generating, ready/idle and `Done` entries carry neither field.
 | --- | --- | --- |
 | `approval_required` | pending approvals or pending user input | The turn is waiting for an approval or user input. |
 | `cancelled` | turn-result `cancelled`; session/turn `interrupted`; an `AbortError`; cancel/interrupt text | The turn was cancelled. |
-| `usage_limit` | HTTP 429; usage-limit, rate-limit, quota or credit text | The provider usage limit was reached; route to a fallback lab or retry later. |
-| `timeout` | Tentacles' own projection/turn-outcome timeouts; HTTP 408/504; a `TimeoutError`; timed-out/deadline text | The operation timed out before T3 confirmed an outcome. |
+| `usage_limit` | HTTP 429; usage-limit, rate-limit, quota or credit text (not context-length or token-limit overflow) | The provider usage limit was reached; route to a fallback lab or retry later. |
+| `timeout` | Tentacles' own projection/turn-outcome timeouts; HTTP 408/504; a `TimeoutError`; timed-out/deadline text, a timeout phrase such as `request timeout`, or the whole text `timeout` (a bare `timeout` word such as `timeout=30` does not count) | The operation timed out before T3 confirmed an outcome. |
 | `session_busy` | HTTP 409; busy session/state, or another turn already running | The session is busy with another turn; retry after it finishes. |
 | `lab_not_ready` | lab, provider, harness, adapter or model text saying not ready, not found, not installed, not configured, unavailable or missing; `harness_not_found` | The lab or provider is not ready; check tentacles doctor. |
-| `provider_error` | any other failure | The provider reported an error; details stay on the owner surface. |
+| `provider_error` | context-length, context-window or token-limit overflow text; any other failure | The provider reported an error; details stay on the owner surface. |
 
 Structured signals win over text, in this order: pending requests, cancelled
 state, a code already attached by Tentacles, error class, HTTP status, then
-text patterns in the order usage limit, timeout, busy, not ready, cancelled.
+text patterns in the order context/token overflow (`provider_error`), usage
+limit, timeout, busy, not ready, cancelled.
 Provider text (`session.lastError`, an optional upstream turn-result `error`
 string or `{message}`, an error message) is matched against those patterns
 only, bounded to 4 KiB, and never copied: `message` is always the static

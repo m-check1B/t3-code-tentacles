@@ -169,7 +169,7 @@ const turnEnds = (events) => events.filter((event) => event.kind === "turn_end")
 async function drain(client, directory) {
   const all = []; let cursor = 0; let page;
   do {
-    page = await threadEvents(client, { threadId: THREAD, afterSequence: cursor, limit: 2 }, { directory });
+    page = await threadEvents(client, { threadId: THREAD, afterSequence: cursor, limit: 2, includeTurnEnd: true }, { directory });
     assert.equal(findSequenceGap(page), null, "every page resumes exactly at its cursor");
     all.push(...page.events); cursor = page.nextSequence;
   } while (page.hasMore);
@@ -252,4 +252,107 @@ test("the newest turn ends from session state, never while live", (t) => {
   assert.deepEqual(turnEnds(projectThreadEvents(thread).events)[0].payload, { turnId: "turn-1", outcome: "succeeded" });
   thread.session = { status: "error", lastError: "Provider instance 'grok' is not ready" };
   assert.equal(turnEnds(projectThreadEvents(thread).events)[0].payload.code, "lab_not_ready");
+});
+
+// ── KRA-8958 R2: base readers never see turn_end; B3 repros ─────────────────
+
+const BASE_KINDS = new Set(["message", "tool_summary", "artifact", "state", "memory"]);
+const exactKeys = (value, keys) => assert.deepEqual(Object.keys(value).sort(), [...keys].sort());
+
+// Mirrors Jack's ThreadEventsPage: base kinds only, extra fields forbidden,
+// contiguous sequences from the cursor and an exact nextSequence.
+function strictBaseReader(page) {
+  exactKeys(page, ["threadId", "afterSequence", "events", "nextSequence", "hasMore"]);
+  let cursor = page.afterSequence;
+  for (const event of page.events) {
+    exactKeys(event, ["threadId", "eventId", "sequence", "occurredAt", "kind", "payload"]);
+    assert.ok(BASE_KINDS.has(event.kind), `strict reader rejects kind ${event.kind}`);
+    assert.equal(event.sequence, cursor + 1, "strict reader rejects a sequence gap");
+    cursor = event.sequence;
+  }
+  assert.equal(page.nextSequence, cursor);
+  assert.equal(page.hasMore && page.events.length === 0, false);
+  return page;
+}
+
+function turnJournalThread(thread) {
+  thread.messages[0].turnId = "turn-1";
+  thread.messages.push({ id: "a1", role: "assistant", text: "One", turnId: "turn-1", createdAt: WHEN },
+    { id: "u2", role: "user", text: "Two", createdAt: LATER },
+    { id: "a2", role: "assistant", text: "Done", turnId: "turn-2", createdAt: "2026-09-30T11:01:00.000Z" });
+  thread.session = { status: "ready" };
+  thread.latestTurn = { turnId: "turn-2", state: "completed", completedAt: "2026-09-30T11:02:00.000Z" };
+}
+
+test("a strict base reader drains a journal with turn_end without gaps; opt-in sees the ends", async (t) => {
+  const { directory, thread, client } = setup(t);
+  turnJournalThread(thread);
+  const optIn = await threadEvents(client, { threadId: THREAD, includeTurnEnd: true }, { directory });
+  assert.equal(turnEnds(optIn.events).length, 2, "journal holds turn_end events");
+  const base = []; let cursor = 0; let page;
+  do {
+    page = strictBaseReader(await threadEvents(client, { threadId: THREAD, afterSequence: cursor, limit: 2 }, { directory }));
+    base.push(...page.events); cursor = page.nextSequence;
+  } while (page.hasMore);
+  assert.deepEqual(base.map((event) => event.eventId), optIn.events.filter((event) => event.kind !== "turn_end").map((event) => event.eventId));
+  assert.deepEqual(base.map((event) => event.sequence), base.map((_, index) => index + 1));
+  // The base cursor keeps advancing past later turn_end events.
+  thread.messages.push({ id: "u3", role: "user", text: "Three", createdAt: "2026-09-30T12:00:00.000Z" });
+  const next = strictBaseReader(await threadEvents(client, { threadId: THREAD, afterSequence: cursor }, { directory }));
+  assert.deepEqual(next.events.map((event) => event.eventId), ["message:u3"]);
+  assert.equal(next.events[0].sequence, cursor + 1);
+  // A base cursor beyond the base view is refused, not silently reset.
+  await assert.rejects(threadEvents(client, { threadId: THREAD, afterSequence: next.nextSequence + 1 }, { directory }),
+    /cursor is ahead/);
+  // The opt-in flag is strict and the journal keeps its own sequences.
+  await assert.rejects(threadEvents(client, { threadId: THREAD, includeTurnEnd: "yes" }, { directory }), /Invalid thread-events/);
+  const all = await threadEvents(client, { threadId: THREAD, includeTurnEnd: true, limit: 200 }, { directory });
+  assert.deepEqual(all.events.map((event) => event.sequence), all.events.map((_, index) => index + 1));
+});
+
+test("B3 LIVE: a running session never ends a message turn newer than a terminal latestTurn", (t) => {
+  const { thread } = setup(t);
+  thread.messages = [
+    { id: "a1", role: "assistant", text: "done", turnId: "t1", createdAt: WHEN },
+    { id: "u2", role: "user", text: "go", createdAt: "2026-09-30T10:10:00.000Z" },
+    { id: "a2", role: "assistant", text: "working, step 1", turnId: "t2", createdAt: "2026-09-30T10:11:00.000Z" }];
+  thread.session = { status: "running" };
+  thread.latestTurn = { turnId: "t1", state: "completed", completedAt: WHEN };
+  assert.deepEqual(turnEnds(projectThreadEvents(thread).events).map((event) => [event.payload.turnId, event.payload.outcome]),
+    [["t1", "succeeded"]]);
+});
+
+test("B3 RACE: a turn_end journaled by a concurrent poller drops the later observation", async (t) => {
+  const { directory, thread, client } = setup(t);
+  thread.messages.push({ id: "a1", role: "assistant", text: "x", turnId: "t1", createdAt: WHEN });
+  thread.latestTurn = { turnId: "t1", state: "completed", completedAt: WHEN };
+  const asOlder = structuredClone(thread);
+  asOlder.messages.push({ id: "a2", role: "assistant", text: "y", turnId: "t2", createdAt: "2026-09-30T10:20:00.000Z" });
+  asOlder.latestTurn = { turnId: "t2", state: "completed", completedAt: "2026-09-30T10:21:00.000Z" };
+  // B projects before A journals, so B still carries turn:t1 as `unknown`.
+  const projectedByB = projectThreadEvents(asOlder);
+  assert.equal(turnEnds(projectedByB.events).find((event) => event.eventId === "turn:t1").payload.outcome, "unknown");
+  await threadEvents(client, { threadId: THREAD }, { directory });
+  const journal = recordThreadEvents(THREAD, projectedByB.events, { directory });
+  const ends = turnEnds(journal);
+  assert.deepEqual(ends.map((event) => [event.payload.turnId, event.payload.outcome]), [["t1", "succeeded"], ["t2", "succeeded"]]);
+  // Content drift on other kinds still fails closed.
+  assert.throws(() => recordThreadEvents(THREAD, [{ eventId: "message:a1", kind: "message", occurredAt: WHEN,
+    payload: { role: "assistant", text: "changed", messageId: "a1", turnId: "t1" } }], { directory }), /Source event changed/);
+});
+
+test("B3 MISATTRIBUTION: without latestTurn, a failure after a newer user message ends no turn", (t) => {
+  const { thread } = setup(t);
+  thread.messages = [
+    { id: "a1", role: "assistant", text: "done", turnId: "t1", createdAt: WHEN },
+    { id: "u2", role: "user", text: "go", createdAt: "2026-09-30T10:10:00.000Z" }];
+  thread.session = { status: "error", lastError: "boom" };
+  assert.deepEqual(turnEnds(projectThreadEvents(thread).events), []);
+  thread.session = { status: "interrupted" };
+  assert.deepEqual(turnEnds(projectThreadEvents(thread).events), []);
+  // Without a newer user message the failure is still attributed.
+  thread.messages.pop();
+  thread.session = { status: "error", lastError: "boom" };
+  assert.deepEqual(turnEnds(projectThreadEvents(thread).events).map((event) => [event.payload.turnId, event.payload.outcome]),
+    [["t1", "failed"]]);
 });

@@ -16,7 +16,9 @@ All notable changes to this project are documented here.
   `message`. Existing fields are unchanged.
 - `thread-events` journals exactly one `turn_end` event per turn and exports
   `findSequenceGap` so a resuming reader detects a missing sequence
-  (KRA-8958). Consumers must ignore unknown event kinds.
+  (KRA-8958). Readers receive `turn_end` only with `includeTurnEnd: true`;
+  without it, pages keep the base kinds and contiguous base-view sequences,
+  so strict importers such as Jack's are unaffected.
 
 ### Fixed
 
