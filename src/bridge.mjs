@@ -1320,7 +1320,9 @@ function doctorAction(lab) {
   if (lab.code === "codex_auth_missing") return "Authenticate openai-codex through Hermes' normal local setup";
   if (lab.code === "hermes_unreachable") return "Start or recover the loopback Hermes health endpoint";
   if (lab.code === "adapter_auth_unavailable") return "Repair the adapter runtime's owner-controlled credential file, then rerun doctor";
-  if (lab.code === "assistant_unverified") return "Update T3 Code so doctor can read the Claude Code sign-in state; keep this lab skipped";
+  if (lab.code === "assistant_unverified") return lab.instanceId === "hermes"
+    ? "Hermes assistant reply is unverified; keep this lab skipped and have the Hermes runtime owner verify an assistant reply before using it"
+    : "Update T3 Code so doctor can read the Claude Code sign-in state; keep this lab skipped";
   if (lab.code === "auth_required") return "Sign in to Claude Code: run `claude auth login` in a terminal, then rerun doctor";
   if (lab.code === "disabled") return lab.instanceId === "cursor"
     ? "Enable Cursor in T3, then choose a model shown by doctor"
@@ -1333,6 +1335,9 @@ function doctorAction(lab) {
       : "Refresh the provider and install the documented default model";
   }
   if (lab.code === "provider_probe_timeout") return probeTimeoutAction(lab);
+  if (lab.code === "provider_binary_unavailable" && lab.instanceId === DEFAULT_CODEX_APP_INSTANCE_ID) {
+    return "T3 cannot start the codex-app binary; install or restore the Codex app with an executable at <App>.app/Contents/Resources/codex, then run `tentacles install-codex-app-provider --instance codex-app` (use --codex-app-bin for a nonstandard app location), then rerun doctor";
+  }
   if (lab.code === "provider_binary_unavailable") return labInstallHint(lab.instanceId)?.startsWith("tentacles ")
     ? `T3 cannot start the ${lab.instanceId} binary; run \`${labInstallHint(lab.instanceId)}\`, then rerun doctor`
     : `T3 cannot start the ${lab.instanceId} binary; fix its binary path in T3 Settings → Providers, then rerun doctor`;
@@ -1778,7 +1783,7 @@ export function formatDoctor(result = {}) {
       const parts = [lab.instanceId || "unknown"];
       if (lab.status) parts.push(`status=${lab.status}`);
       if (lab.code) parts.push(`code=${lab.code}`);
-      const action = clipDoctorText(lab.action, 160);
+      const action = clipDoctorText(lab.action, 320);
       if (action) parts.push(`action: ${action}`);
       lines.push(`  - ${parts.join("  ")}`);
     }

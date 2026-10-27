@@ -22,6 +22,13 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- `doctor` names the missing app-bundle prerequisite before recommending
+  `install-codex-app-provider` for an unstartable codex-app binary (KRA-7727).
+  The action also names `--codex-app-bin` for a nonstandard app location.
+  Plain-text output preserves that full repair advice within a bounded
+  320-character action budget, including the installer command and rerun hint.
+- `doctor` keeps an unverified Hermes assistant skipped with a Hermes-specific
+  action, instead of telling the operator to fix Claude Code sign-in (KRA-8860).
 - `thread-events` no longer journals a message turn that is newer than T3's
   `latestTurn` as `unknown` when the session is not running (KRA-8998); first
   write wins, so that outcome was permanent. Its real end is journaled on a
