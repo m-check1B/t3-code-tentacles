@@ -24,6 +24,10 @@ identity and duplicate provider rows make the twin unready with unknown web
 tools. Runtime driver diagnostics come from the provider snapshot, never from
 settings. A ready base Codex does not supply readiness to an unsigned-in twin.
 
+For the separate twin login, pinned staging install sequence and remaining
+live gates, see [staging Server labs](staging-server-labs.md). This operational
+plan does not authorize credential access or bypass runtime activation holds.
+
 ## Evidence and limits
 
 - Codex: inspect only the exact instance's explicit absolute `config.homePath`
