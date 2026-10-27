@@ -1320,7 +1320,9 @@ function doctorAction(lab) {
   if (lab.code === "codex_auth_missing") return "Authenticate openai-codex through Hermes' normal local setup";
   if (lab.code === "hermes_unreachable") return "Start or recover the loopback Hermes health endpoint";
   if (lab.code === "adapter_auth_unavailable") return "Repair the adapter runtime's owner-controlled credential file, then rerun doctor";
-  if (lab.code === "assistant_unverified") return "Update T3 Code so doctor can read the Claude Code sign-in state; keep this lab skipped";
+  if (lab.code === "assistant_unverified") return lab.instanceId === "hermes"
+    ? "Hermes assistant reply is unverified; keep this lab skipped and have the Hermes runtime owner verify an assistant reply before using it"
+    : "Update T3 Code so doctor can read the Claude Code sign-in state; keep this lab skipped";
   if (lab.code === "auth_required") return "Sign in to Claude Code: run `claude auth login` in a terminal, then rerun doctor";
   if (lab.code === "disabled") return lab.instanceId === "cursor"
     ? "Enable Cursor in T3, then choose a model shown by doctor"

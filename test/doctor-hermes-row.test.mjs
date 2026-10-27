@@ -36,6 +36,16 @@ function fixture(t, { message, status = "error", enabled = true, models = [{ slu
 }
 const hermes = (report) => report.labs.find((lab) => lab.instanceId === "hermes");
 
+test("a ready Hermes adapter awaiting assistant proof names Hermes in its action", async (t) => {
+  const { client, options } = fixture(t, { status: "ready" });
+  const row = hermes(await doctor(client, options));
+  assert.equal(row.ready, false);
+  assert.equal(row.code, "assistant_unverified");
+  assert.match(row.action, /Hermes/);
+  assert.match(row.action, /assistant reply/);
+  assert.doesNotMatch(row.action, /Claude/);
+});
+
 test("health ok with a T3 version-probe timeout gives a specific code and one fix", async (t) => {
   const { client, calls, options } = fixture(t, { message: PROBE_TIMEOUT });
   const report = await doctor(client, options);
