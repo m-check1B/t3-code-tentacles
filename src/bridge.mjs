@@ -1333,6 +1333,9 @@ function doctorAction(lab) {
       : "Refresh the provider and install the documented default model";
   }
   if (lab.code === "provider_probe_timeout") return probeTimeoutAction(lab);
+  if (lab.code === "provider_binary_unavailable" && lab.instanceId === DEFAULT_CODEX_APP_INSTANCE_ID) {
+    return "T3 cannot start the codex-app binary; install or restore the Codex app with an executable at <App>.app/Contents/Resources/codex, then run `tentacles install-codex-app-provider --instance codex-app` (use --codex-app-bin for a nonstandard app location), then rerun doctor";
+  }
   if (lab.code === "provider_binary_unavailable") return labInstallHint(lab.instanceId)?.startsWith("tentacles ")
     ? `T3 cannot start the ${lab.instanceId} binary; run \`${labInstallHint(lab.instanceId)}\`, then rerun doctor`
     : `T3 cannot start the ${lab.instanceId} binary; fix its binary path in T3 Settings → Providers, then rerun doctor`;

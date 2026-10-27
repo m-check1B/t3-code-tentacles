@@ -146,3 +146,29 @@ test("codex-app default-model action names its T3_CODEX_MODEL fallback too", asy
   assert.match(codexApp.action, /T3_CODEX_APP_MODEL/);
   assert.match(codexApp.action, /T3_CODEX_MODEL\b/);
 });
+
+test("codex-app with an unstartable bundle names the app prerequisite before reinstallation", async (t) => {
+  const message = "Could not start Codex CLI /private/SECRET-CANARY.app/Contents/Resources/codex. Check Settings → Providers → Codex → Binary path on the server.";
+  const { report, row } = await run(t, [["codex-app", lab("codex-app", {
+    driver: "codex", message, models: [], config: { binaryPath: APP_CODEX },
+  })]]);
+  const app = row("codex-app");
+  assert.equal(app.ready, false);
+  assert.equal(app.code, "provider_binary_unavailable");
+  assert.equal(app.runtime.binarySource, "app-bundled");
+  assert.match(app.action, /[Ii]nstall or restore the Codex app/);
+  assert.match(app.action, /<App>\.app\/Contents\/Resources\/codex/);
+  assert.match(app.action, /`tentacles install-codex-app-provider --instance codex-app`/);
+  assert.match(app.action, /--codex-app-bin/);
+  assert.match(app.action, /rerun doctor/);
+  assert.equal(JSON.stringify(report).includes("SECRET-CANARY"), false);
+});
+
+test("codex CLI binary failure keeps its standalone fix", async (t) => {
+  const { row } = await run(t, [["codex", lab("codex", {
+    driver: "codex", message: "Could not start Codex CLI. Check Binary path.",
+  })]]);
+  assert.equal(row("codex").code, "provider_binary_unavailable");
+  assert.match(row("codex").action, /Settings → Providers/);
+  assert.doesNotMatch(row("codex").action, /[Ii]nstall or restore the Codex app/);
+});
