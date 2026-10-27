@@ -1783,7 +1783,7 @@ export function formatDoctor(result = {}) {
       const parts = [lab.instanceId || "unknown"];
       if (lab.status) parts.push(`status=${lab.status}`);
       if (lab.code) parts.push(`code=${lab.code}`);
-      const action = clipDoctorText(lab.action, 160);
+      const action = clipDoctorText(lab.action, 320);
       if (action) parts.push(`action: ${action}`);
       lines.push(`  - ${parts.join("  ")}`);
     }

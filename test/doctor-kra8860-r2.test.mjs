@@ -162,6 +162,27 @@ test("codex-app with an unstartable bundle names the app prerequisite before rei
   assert.match(app.action, /--codex-app-bin/);
   assert.match(app.action, /rerun doctor/);
   assert.equal(JSON.stringify(report).includes("SECRET-CANARY"), false);
+  const text = formatDoctor(report);
+  const actionLine = text.split("\n").find((line) => line.startsWith("  - codex-app  "));
+  assert.ok(actionLine, "plain-text doctor includes the blocked codex-app action");
+  assert.equal(actionLine.split("action: ")[1], app.action, "plain-text doctor preserves the full JSON repair advice");
+  assert.match(actionLine, /`tentacles install-codex-app-provider --instance codex-app`/);
+  assert.match(actionLine, /--codex-app-bin/);
+  assert.match(actionLine, /rerun doctor$/);
+  assert.equal(text.includes("SECRET-CANARY"), false);
+});
+
+test("plain-text doctor bounds oversized actions and flattens whitespace", () => {
+  const text = formatDoctor({ labs: [{
+    instanceId: "codex-app", ready: false, status: "error", code: "provider_binary_unavailable",
+    action: `  Repair\n\t${"synthetic ".repeat(1000)}`,
+  }] });
+  const actionLine = text.split("\n").find((line) => line.startsWith("  - codex-app  "));
+  const action = actionLine.split("action: ")[1];
+  assert.ok(action.startsWith("Repair synthetic "));
+  assert.ok(action.length <= 320, "repair advice has a finite display budget");
+  assert.ok(action.endsWith("…"));
+  assert.doesNotMatch(action, /[\n\t]| {2}/);
 });
 
 test("codex CLI binary failure keeps its standalone fix", async (t) => {
