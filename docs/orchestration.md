@@ -120,12 +120,13 @@ That path never loads the shell snapshot, archived shell, or `observe`.
 
 The document is `{ threadId, status, lastError, model }`, plus `code` and
 `message` when `blocked` (see [typed failure codes](#typed-failure-codes-kra-8958)). `status` is one of
-`Done`, `generating`, `ready/idle`, `blocked`.
+`Done`, `generating`, `ready/idle`, `blocked`, `stalled`.
 
 | Input | Result |
 | --- | --- |
 | `settledAt` present | `Done` |
 | pending approvals or pending user input | `blocked` |
+| session `starting` / `running`, newest activity a stream disconnect/reconnect warning, idle past the stall window | `stalled` (CLI only) |
 | session `starting` / `running` | `generating` |
 | session `error`, or a non-empty string `lastError` while not generating | `blocked` |
 | session `ready` / `idle` / `stopped`, without an error | `ready/idle` |
@@ -145,7 +146,40 @@ auth material, so the report never copies their strings or objects; read the
 thread through its owner surface when details are needed. `model` is
 `modelSelection.model` only when it is a printable ID of at most 80 characters
 (`[A-Za-z0-9._:+-]`), otherwise `null`; the relay uses the same bound.
-`observe` stays additive and unchanged.
+`observe` stays additive.
+
+### Stalled streams (KRA-9494)
+
+Codex can exhaust its stream reconnects (seen after HTTP 429: `Reconnecting...
+5/5`, `exceeded retry limit, last status: 429 Too Many Requests`) and leave the
+turn `running` with no further events. The CLI `report` then says `stalled`
+instead of `generating` when the thread's newest activity is a
+`runtime.warning`/`runtime.error` whose detail is a
+`codexErrorInfo.responseStreamDisconnected`, a `Reconnecting... N/M` message or
+an exceeded retry limit, and nothing at all happened for longer than
+`TENTACLES_STALL_IDLE_MINUTES` (default 10). The document adds
+`stall: { reason, idleSince, idleForMs, lastError: { kind, httpStatusCode,
+reconnectAttempt, retryLimitExceeded, summary } }`; every field is parsed
+numbers or fixed words, never provider text. `observe` lists the same turns in
+`stalledTurns` (they stay in `activeTurns`, like stale turns) and counts them in
+`counts.stalledTurns`. The check needs a clock, so the relay keeps reporting
+`generating`. V2 projections carry no activities, so on V2 only the
+[stall watcher](../scripts/stall-watcher.mjs) (which reads provider logs) sees it.
+
+`scripts/stall-watcher.mjs` is a no-AI, one-pass watcher: for each `observe`
+active turn whose T3 provider log `events.<threadId>.log` is unchanged for over
+10 min and ends in a reconnect/disconnect/429 error event (a NTIVE `error`
+notification or a CANON `runtime.warning`/`runtime.error`; the same text in a
+command, its output or assistant text never counts), it sends one full-access
+`thread.continue` with a fixed resume text, at least 60 s apart across threads,
+a second one no sooner than 10 min later, at most two per thread. It exits 3
+and prints `WAKE <threadId>`, once per thread, when 10 min after the second
+nudge the log tail is still such an error idle past the window (unchanged, or
+disconnected again). Each pass logs a `concurrency` line with generating Codex
+turns per provider instance (visibility only, never throttles). A corrupt state
+file is renamed to `<name>.corrupt-<epoch>` and logged. `--dry-run` sends
+nothing; state and an action log live in `--state-dir`. A sample, not installed, launchd job is in
+[docs/stall-watcher.plist.sample](stall-watcher.plist.sample).
 
 ### Typed failure codes (KRA-8958)
 

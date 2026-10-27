@@ -1,0 +1,3 @@
+[2026-10-27T09:40:00.000Z] NTIVE: {"method":"item/started","payload":{"item":{"type":"commandExecution","command":"npm test","status":"inProgress"}}}
+[2026-10-27T09:41:00.000Z] NTIVE: {"method":"item/commandExecution/outputDelta","payload":{"delta":"Reconnecting... 3/5\n"}}
+[2026-10-27T09:41:01.000Z] NTIVE: {"method":"item/commandExecution/outputDelta","payload":{"delta":"error: 429 Too Many Requests (exceeded retry limit) {\"codexErrorInfo\":{\"responseStreamDisconnected\":{\"httpStatusCode\":429}}}\n"}}

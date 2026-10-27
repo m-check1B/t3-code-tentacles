@@ -1,0 +1,5 @@
+[2026-10-27T09:41:00.000Z] NTIVE: {"method":"error","message":"Reconnecting... 1/5","payload":{"willRetry":true,"error":{"message":"Reconnecting... 1/5","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}}}}}
+[2026-10-27T09:41:05.000Z] NTIVE: {"method":"item/agentMessage/delta","payload":{"delta":"ok"}}
+[2026-10-27T09:41:06.000Z] NTIVE: {"method":"item/completed","payload":{"item":{"type":"agentMessage"}}}
+[2026-10-27T09:41:07.000Z] NTIVE: {"method":"turn/completed","payload":{"turn":{"status":"completed"}}}
+[2026-10-27T09:41:07.001Z] CANON: {"type":"turn.completed","payload":{"state":"completed"}}

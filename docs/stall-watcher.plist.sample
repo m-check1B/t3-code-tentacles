@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- KRA-9494 sample only; not installed. Copy to ~/Library/LaunchAgents, replace USER and paths, then load it yourself. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.tentacles.stall-watcher</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/USER/.local/node/bin/node</string>
+    <string>/Users/USER/path/to/tentacles/scripts/stall-watcher.mjs</string>
+    <string>--log-dir</string>
+    <string>/Users/USER/path/to/t3/userdata/logs/provider</string>
+    <string>--state-dir</string>
+    <string>/Users/USER/.local/state/tentacles-stall-watcher</string>
+    <string>--tentacles</string>
+    <string>/Users/USER/.local/bin/tentacles</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/USER/.local/node/bin:/usr/bin:/bin</string>
+  </dict>
+  <!-- One pass every 2 minutes; the watcher staggers nudges 60 s apart itself. -->
+  <key>StartInterval</key>
+  <integer>120</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/USER/.local/state/tentacles-stall-watcher/stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/USER/.local/state/tentacles-stall-watcher/stderr.log</string>
+</dict>
+</plist>

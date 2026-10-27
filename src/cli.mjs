@@ -52,7 +52,7 @@ import {
   resolveModelSelection,
   RUNTIME_MODES,
 } from "./model-selection.mjs";
-import { applyIntents, observe, report, INTENT_ACTIONS } from "./orchestrate.mjs";
+import { applyIntents, observe, report, streamStallIdleMs, INTENT_ACTIONS } from "./orchestrate.mjs";
 import { LoopbackRuntimeAdapter, OutboundPairer } from "./outbound-pairer.mjs";
 import {
   CapabilityCache,
@@ -244,8 +244,10 @@ Run doctor to print the advertised lab matrix for this machine
 machine-readable document. Doctor never prints tokens or secrets.
 
 report --thread returns a compact parent-check document (Done | generating |
-ready/idle | blocked, plus an error-presence marker and a bounded model label)
-from one per-thread HTTP read; provider error text is never printed.
+ready/idle | blocked | stalled, plus an error-presence marker and a bounded model label)
+from one per-thread HTTP read; provider error text is never printed. stalled is a
+generating turn whose newest activity is a stream disconnect/reconnect warning
+and that has been idle past TENTACLES_STALL_IDLE_MINUTES (default 10).
 It does not scrape the observe snapshot. observe remains the additive full-state
 read. THREAD_ID must be a full thread UUID; short IDs are display-only. Use
 threadId from tentacles originate or threads[].id from tentacles observe.
@@ -286,6 +288,7 @@ Environment:
   TENTACLES_COMPUTER        default for --computer NAME (doctor, observe, report, act, orchestrate, originate, reauth):
                             run against the T3 environment on that computer through an SSH loopback forward
   TENTACLES_COMPUTERS_FILE  default <state dir>/computers.json
+  TENTACLES_STALL_IDLE_MINUTES  default 10: idle window before report/observe call a disconnected turn stalled
   T3_HERMES_TOKEN_FILE      default ~/.local/state/t3-hermes-bridge/t3.token
   T3_HERMES_MODEL           default deepseek:deepseek-v4-flash
   CODEX_APP_BIN             optional absolute <App>.app/Contents/Resources/codex path
@@ -555,11 +558,11 @@ async function main() {
     return;
   }
   if (command === "observe") {
-    console.log(JSON.stringify(await observe(client), null, 2));
+    console.log(JSON.stringify(await observe(client, { stallIdleMs: streamStallIdleMs() }), null, 2));
     return;
   }
   if (command === "report") {
-    console.log(JSON.stringify(await report(client, reportThreadId), null, 2));
+    console.log(JSON.stringify(await report(client, reportThreadId, { stallIdleMs: streamStallIdleMs() }), null, 2));
     return;
   }
   if (command === "act") {

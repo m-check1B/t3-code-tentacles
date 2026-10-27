@@ -454,7 +454,53 @@ function projectThreadSummary(thread) {
 }
 
 // Compact parent-check document. One per-thread HTTP read; never the observe snapshot.
-export const THREAD_REPORT_STATUSES = Object.freeze(["Done", "generating", "ready/idle", "blocked"]);
+// "stalled" is CLI-only (KRA-9494): it needs a clock, so the relay keeps "generating".
+export const THREAD_REPORT_STATUSES = Object.freeze(["Done", "generating", "ready/idle", "blocked", "stalled"]);
+
+// KRA-9494: Codex can exhaust its stream reconnects (e.g. after HTTP 429) and
+// leave the turn "running" with no further events. Idle window before "stalled".
+export const STREAM_STALL_IDLE_MS = 10 * 60 * 1000;
+const RECONNECT_ATTEMPT = /^Reconnecting\.\.\.\s*(\d{1,3})\/(\d{1,3})(?!\d)/;
+
+/**
+ * Pure: stall evidence when the newest activity is a stream disconnect or
+ * reconnect warning and nothing at all has happened for over `idleMs`, else
+ * null. Only parsed numbers leave this function, never provider text.
+ */
+export function threadStreamStall(thread, { now = Date.now(), idleMs = STREAM_STALL_IDLE_MS } = {}) {
+  if (!isRecord(thread)) return null;
+  let last = null;
+  for (const activity of recordArray(thread.activities)) {
+    const at = canonicalActivityStamp(activity.createdAt);
+    if (at && (!last || at >= last.at)) last = { activity, at };
+  }
+  if (!last || !["runtime.warning", "runtime.error"].includes(last.activity.kind)) return null;
+  const payload = isRecord(last.activity.payload) ? last.activity.payload : {};
+  // T3 keeps the Codex notification params as `detail`; accept the raw params too.
+  const error = [payload.detail?.error, payload.error].find(isRecord) ?? {};
+  const disconnect = isRecord(error.codexErrorInfo) && isRecord(error.codexErrorInfo.responseStreamDisconnected)
+    ? error.codexErrorInfo.responseStreamDisconnected : null;
+  const attempt = [payload.message, error.message].map((text) => typeof text === "string" ? RECONNECT_ATTEMPT.exec(text) : null).find(Boolean);
+  const retryLimitExceeded = typeof error.additionalDetails === "string" && /exceeded retry limit/i.test(error.additionalDetails);
+  if (!disconnect && !attempt && !retryLimitExceeded) return null;
+  const lastActivity = sanitizedLastActivity(thread);
+  const idleForMs = lastActivity ? now - Date.parse(lastActivity) : NaN;
+  if (!(idleForMs > idleMs)) return null;
+  const httpStatusCode = Number.isSafeInteger(disconnect?.httpStatusCode) ? disconnect.httpStatusCode : null;
+  const reconnectAttempt = attempt ? `${Number(attempt[1])}/${Number(attempt[2])}` : null;
+  const summary = [disconnect ? "stream disconnected" : "stream reconnecting",
+    httpStatusCode !== null ? `HTTP ${httpStatusCode}` : null,
+    reconnectAttempt ? `reconnect ${reconnectAttempt}` : null,
+    retryLimitExceeded ? "retry limit exceeded" : null].filter(Boolean).join(", ");
+  return { reason: "stream-disconnected", idleSince: lastActivity, idleForMs,
+    lastError: { kind: last.activity.kind, httpStatusCode, reconnectAttempt, retryLimitExceeded, summary } };
+}
+
+/** CLI stall window: TENTACLES_STALL_IDLE_MINUTES when a positive number, else 10 min. */
+export function streamStallIdleMs(env = process.env) {
+  const minutes = Number(env.TENTACLES_STALL_IDLE_MINUTES);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes * 60 * 1000 : STREAM_STALL_IDLE_MS;
+}
 
 // Model labels leave this process only when they are short, printable IDs.
 export const REPORT_MODEL_LABEL = /^[A-Za-z0-9._:+-]{1,80}$/;
@@ -522,10 +568,12 @@ export function threadReportFailure(thread) {
   });
 }
 
-export function projectThreadReport(thread, threadId) {
+export function projectThreadReport(thread, threadId, { now = Date.now(), stallIdleMs = STREAM_STALL_IDLE_MS } = {}) {
   if (!isRecord(thread)) throw new Error(`T3 thread ${threadId} is not projected`);
   if (thread.id !== threadId) throw new Error(`T3 thread ${threadId} projection identity mismatch`);
-  const status = threadReportStatus(thread);
+  let status = threadReportStatus(thread);
+  const stall = status === "generating" ? threadStreamStall(thread, { now, idleMs: stallIdleMs }) : null;
+  if (stall) status = "stalled";
   if (status === null) throw new Error(`T3 thread ${threadId} report is unproven`);
   if (!THREAD_REPORT_STATUSES.includes(status)) {
     throw new Error(`Thread report produced an unknown status: ${status}`);
@@ -536,6 +584,7 @@ export function projectThreadReport(thread, threadId) {
     lastError: reportError(isRecord(thread.session) ? thread.session : {}),
     model: reportModel(thread.modelSelection),
     ...(threadReportFailure(thread) ?? {}),
+    ...(stall ? { stall } : {}),
   };
 }
 
@@ -556,7 +605,7 @@ function unwrapThreadDetail(detail) {
   return null;
 }
 
-export async function report(client, threadId) {
+export async function report(client, threadId, options = {}) {
   const id = requireFullThreadId(threadId);
   if (typeof client?.thread !== "function") {
     throw new Error("T3 client does not expose a per-thread read");
@@ -564,13 +613,13 @@ export async function report(client, threadId) {
   const detail = await client.thread(id);
   const thread = unwrapThreadDetail(detail);
   if (!thread) throw new Error(`T3 thread ${id} is not projected`);
-  return projectThreadReport(thread, id);
+  return projectThreadReport(thread, id, options);
 }
 
 // An in-progress turn with no activity for this long is listed as stale (KRA-8952).
 export const STALE_TURN_MS = 6 * 60 * 60 * 1000;
 
-export async function observe(client, { now = Date.now(), staleTurnMs = STALE_TURN_MS } = {}) {
+export async function observe(client, { now = Date.now(), staleTurnMs = STALE_TURN_MS, stallIdleMs = STREAM_STALL_IDLE_MS } = {}) {
   const [snapshot, archived] = await Promise.all([readOrchestrationSnapshot(client), client.archivedShell()]);
   const readModel = isRecord(snapshot) ? snapshot : {};
   const projects = recordArray(readModel.projects).filter((project) => project.deletedAt == null);
@@ -600,6 +649,11 @@ export async function observe(client, { now = Date.now(), staleTurnMs = STALE_TU
   const staleTurnThreadIds = inProgress
     .filter((thread) => thread.lastActivity != null && now - Date.parse(thread.lastActivity) > staleTurnMs)
     .map((thread) => thread.id);
+  // KRA-9494: like stale turns, stalled ones stay in activeTurns; raw threads keep activities.
+  const stalledTurns = liveThreads.flatMap((thread, index) => {
+    const stall = inProgressSet.has(threads[index]) ? threadStreamStall(thread, { now, idleMs: stallIdleMs }) : null;
+    return stall ? [{ threadId: threads[index].id, status: "stalled", ...stall }] : [];
+  });
   const activeTurns = inProgress
     .map((thread) => ({
       threadId: thread.id,
@@ -620,6 +674,7 @@ export async function observe(client, { now = Date.now(), staleTurnMs = STALE_TU
     pendingWork,
     activeTurns,
     staleTurnThreadIds,
+    stalledTurns,
     counts: {
       projects: projects.length,
       threads: threads.length,
@@ -628,6 +683,7 @@ export async function observe(client, { now = Date.now(), staleTurnMs = STALE_TU
       pendingUserInput: pendingWork.filter((entry) => entry.userInput).length,
       activeTurns: activeTurns.length,
       staleTurns: staleTurnThreadIds.length,
+      stalledTurns: stalledTurns.length,
       // A ready status with an explicit turn id is an active turn, not a free session.
       readySessions: liveThreads.filter((thread, index) => !inProgressSet.has(threads[index]) && (thread.orchestrationProtocol === V2_PROTOCOL
         ? thread.session?.sourceStatus === "idle" : thread.session?.status === "ready")).length,

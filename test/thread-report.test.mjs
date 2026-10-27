@@ -18,7 +18,7 @@ import {
 const THREAD_ID = "12345678-1111-4111-8111-111111111111";
 
 test("thread report status enum is the closed parent-check set", () => {
-  assert.deepEqual([...THREAD_REPORT_STATUSES], ["Done", "generating", "ready/idle", "blocked"]);
+  assert.deepEqual([...THREAD_REPORT_STATUSES], ["Done", "generating", "ready/idle", "blocked", "stalled"]);
 });
 
 test("CLI and real relay projection share the status truth table, including unproven", async () => {
