@@ -74,6 +74,33 @@ test("a long silent command after grepping for 429 text is never nudged", async 
   assert.deepEqual(h.sends(), []);
 });
 
+test("the newest stall error or turn activity line decides the tail (KRA-9525)", () => {
+  const tail = (fixture) => stalledTail(fs.readFileSync(path.join(FIXTURES, fixture), "utf8"));
+  assert.equal(tail("recovered-long-command.log"), false, "reconnect, recovery, then a command started");
+  assert.equal(tail("stalled-reconnect-newest.log"), true, "reconnect error is the newest line");
+  assert.equal(tail("stalled-reconnect-then-warning.log"), true, "only a plain runtime.warning after the reconnect");
+});
+
+test("a recovered reconnect followed by a long silent command is never nudged (KRA-9525)", async (t) => {
+  const h = harness([A]); t.after(h.cleanup);
+  for (const idle of [11, 30, 120]) {
+    h.setLog(A, "recovered-long-command.log", T0 - idle * MIN);
+    assert.equal(await h.pass(), 0);
+    h.clock.t += 20 * MIN;
+  }
+  assert.deepEqual(h.sends(), []);
+  assert.deepEqual(h.out, []);
+});
+
+test("a reconnect error as the newest line, or followed only by a runtime.warning, is nudged", async (t) => {
+  for (const fixture of ["stalled-reconnect-newest.log", "stalled-reconnect-then-warning.log"]) {
+    const h = harness([A]); t.after(h.cleanup);
+    h.setLog(A, fixture, T0 - 11 * MIN);
+    assert.equal(await h.pass(), 0);
+    assert.deepEqual(h.sends().map((intent) => intent.threadId), [A], fixture);
+  }
+});
+
 test("a stalled thread gets exactly one full-access continue with the fixed text", async (t) => {
   const h = harness([A]); t.after(h.cleanup);
   h.setLog(A, "stalled-429.log", T0 - 11 * MIN);
@@ -172,6 +199,61 @@ test("valid JSON without the state shape is treated as corrupt too", async (t) =
   assert.deepEqual(JSON.parse(fs.readFileSync(h.stateFile, "utf8")), { lastNudgeAt: null, threads: {} });
 });
 
+test("a thread entry without valid nudges is corrupt: moved aside, state empty, pass exits 0", async (t) => {
+  const bad = [{ lastNudgeAt: null, threads: { [A]: { wokeAt: null } } },
+    { lastNudgeAt: null, threads: { [A]: { nudges: [T0] } } },
+    { lastNudgeAt: null, threads: { [A]: { nudges: [{ at: "x", size: 1, mtimeMs: 1, ok: true }] } } },
+    { lastNudgeAt: null, threads: { [A]: { nudges: [], wokeAt: "soon" } } },
+    { lastNudgeAt: "now", threads: {} }];
+  for (const state of bad) {
+    const h = harness([A]); t.after(h.cleanup);
+    h.setLog(A, "stalled-429.log", T0 - 11 * MIN);
+    fs.mkdirSync(h.stateDir, { recursive: true });
+    fs.writeFileSync(h.stateFile, JSON.stringify(state));
+    assert.equal(await h.pass(), 0, JSON.stringify(state));
+    const aside = `stall-watcher.state.json.corrupt-${T0 / 1000}`;
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(h.stateDir, aside), "utf8")), state);
+    assert.deepEqual(h.actions().map((entry) => [entry.action, entry.movedTo]), [["state-corrupt", aside], ["nudge", undefined]]);
+    assert.equal(JSON.parse(fs.readFileSync(h.stateFile, "utf8")).threads[A].nudges.length, 1, "fresh state written");
+  }
+});
+
+test("a state file the watcher wrote itself is valid on the next pass", async (t) => {
+  const h = harness([A]); t.after(h.cleanup);
+  h.setLog(A, "stalled-429.log", T0 - 11 * MIN);
+  await h.pass(); h.clock.t = T0 + 10 * MIN; await h.pass(); h.clock.t = T0 + 21 * MIN; await h.pass();
+  assert.equal(h.actions().some((entry) => entry.action === "state-corrupt"), false);
+  assert.equal(h.out.length, 1, "WAKE read back wokeAt-free state and then wrote wokeAt");
+});
+
+test("log rotation: only the current events.<uuid>.log is read, and a rotation is a change, never a stall", async (t) => {
+  const h = harness([A]); t.after(h.cleanup);
+  const current = path.join(h.stateDir, "..", "logs", `events.${A}.log`);
+  // Old rotated files hold a stall tail; the current file holds a healthy, idle tail.
+  h.setLog(A, "stalled-429.log", T0 - 60 * MIN);
+  fs.renameSync(current, `${current}.2`);
+  h.setLog(A, "stalled-429.log", T0 - 40 * MIN);
+  fs.renameSync(current, `${current}.1`);
+  h.setLog(A, "healthy.log", T0 - 30 * MIN);
+  assert.equal(await h.pass(), 0);
+  assert.deepEqual(h.sends(), [], "rotated .1/.2 files are never read");
+  // A stalled current file draws one nudge; then it rotates to .1 and a smaller file replaces it.
+  h.setLog(A, "stalled-429.log", T0 - 11 * MIN);
+  await h.pass();
+  assert.equal(h.sends().length, 1);
+  fs.renameSync(current, `${current}.1`);
+  fs.writeFileSync(current, '[2026-10-27T10:05:00.000Z] NTIVE: {"method":"turn/started","payload":{"turn":{"status":"inProgress"}}}\n');
+  fs.utimesSync(current, (T0 + 5 * MIN) / 1000, (T0 + 5 * MIN) / 1000);
+  for (const at of [10, 30, 60]) { h.clock.t = T0 + at * MIN; assert.equal(await h.pass(), 0); }
+  assert.equal(h.sends().length, 1, "no nudge after the rotation");
+  assert.deepEqual(h.out, [], "no WAKE after the rotation");
+  // Rotated to an empty current file: still no stall.
+  fs.renameSync(current, `${current}.1`); fs.writeFileSync(current, "");
+  fs.utimesSync(current, (T0 + 61 * MIN) / 1000, (T0 + 61 * MIN) / 1000);
+  h.clock.t = T0 + 120 * MIN; assert.equal(await h.pass(), 0);
+  assert.equal(h.sends().length, 1);
+});
+
 test("each pass logs the generating Codex count per provider instance and never changes what it sends", async (t) => {
   const ids = ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222",
     "33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444"];
@@ -196,6 +278,13 @@ test("codexConcurrency ignores other providers and labels unsafe instance ids un
     { providerName: "codex", providerInstanceId: null },
     null,
   ]), { codex: 1, unknown: 2 });
+});
+
+test("codexConcurrency counts prototype-named instance ids as plain ids", () => {
+  const ids = ["constructor", "toString", "valueOf", "__proto__", "hasOwnProperty"];
+  const counts = codexConcurrency([...ids, "constructor"].map((providerInstanceId) => ({ providerName: "codex", providerInstanceId })));
+  assert.deepEqual(JSON.parse(JSON.stringify(counts)), { constructor: 2, toString: 1, valueOf: 1, ["__proto__"]: 1, hasOwnProperty: 1 });
+  assert.equal(Object.getPrototypeOf(codexConcurrency([])), Object.prototype, "a plain object, so the log line is unchanged");
 });
 
 test("a failed send counts toward the two-nudge limit", async (t) => {

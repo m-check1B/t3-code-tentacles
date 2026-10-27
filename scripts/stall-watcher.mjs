@@ -17,8 +17,10 @@ export const WAKE_EXIT = 3;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LOG_EVENT = /^\[[^\]]*\]\s+(NTIVE|CANON):\s+(\{.*\})\s*$/;
 const STALL_TEXT = /Reconnecting\.\.\.\s*\d+\/\d+|exceeded retry limit|429 Too Many Requests/;
+// Turn activity: turn and item events (tool, command, assistant message), raw or canonical.
+const NTIVE_ACTIVITY = /^(turn|item)\//;
+const CANON_ACTIVITY = /^(turn|item|content|tool)\./;
 const TAIL_BYTES = 64 * 1024;
-const TAIL_LINES = 3;
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 
 /**
@@ -27,21 +29,40 @@ const isRecord = (value) => value !== null && typeof value === "object" && !Arra
  * or 429. The same text inside commands, output or assistant text never counts.
  */
 export function stallEvent(line) {
+  return lineKind(line) === "stall";
+}
+
+/** "stall", "activity" or null (anything else, including unparseable lines). */
+function lineKind(line) {
   const match = LOG_EVENT.exec(line);
-  if (!match) return false;
+  if (!match) return null;
   let event;
-  try { event = JSON.parse(match[2]); } catch { return false; }
-  if (!isRecord(event)) return false;
-  if (match[1] === "NTIVE" ? event.method !== "error" : !["runtime.warning", "runtime.error"].includes(event.type)) return false;
+  try { event = JSON.parse(match[2]); } catch { return null; }
+  if (!isRecord(event)) return null;
+  const name = match[1] === "NTIVE" ? event.method : event.type;
+  if (typeof name === "string" && (match[1] === "NTIVE" ? NTIVE_ACTIVITY : CANON_ACTIVITY).test(name)) return "activity";
+  return isStallError(match[1], event) ? "stall" : null;
+}
+
+function isStallError(tag, event) {
+  if (tag === "NTIVE" ? event.method !== "error" : !["runtime.warning", "runtime.error"].includes(event.type)) return false;
   const body = [event.payload, event.params].find(isRecord) ?? {};
   const error = [body.detail?.error, body.error, event.error].find(isRecord) ?? {};
   if (isRecord(error.codexErrorInfo) && error.codexErrorInfo.responseStreamDisconnected != null) return true;
   return [event.message, body.message, error.message, error.additionalDetails].some((text) => typeof text === "string" && STALL_TEXT.test(text));
 }
 
-/** True when one of the last few log lines is a stall error event. */
+/**
+ * Like threadStreamStall: the newest stall error or turn activity line decides.
+ * A stall error with only other lines (e.g. a plain runtime.warning) after it is
+ * a stall; any turn activity after it (a recovered stream) is not.
+ */
 export function stalledTail(text) {
-  return text.split("\n").filter((line) => line.trim()).slice(-TAIL_LINES).some(stallEvent);
+  for (const line of text.split("\n").reverse()) {
+    const kind = lineKind(line);
+    if (kind) return kind === "stall";
+  }
+  return false;
 }
 
 function readTail(file) {
@@ -55,12 +76,19 @@ function readTail(file) {
   } finally { fs.closeSync(fd); }
 }
 
+const isTime = (value) => typeof value === "number" && Number.isFinite(value);
+const validNudge = (nudge) => isRecord(nudge) && isTime(nudge.at) && isTime(nudge.size) && isTime(nudge.mtimeMs) && typeof nudge.ok === "boolean";
+const validEntry = (entry) => isRecord(entry) && Array.isArray(entry.nudges) && entry.nudges.every(validNudge)
+  && (entry.wokeAt == null || isTime(entry.wokeAt));
+const validState = (state) => isRecord(state) && (state.lastNudgeAt == null || isTime(state.lastNudgeAt))
+  && isRecord(state.threads) && Object.values(state.threads).every(validEntry);
+
 // A corrupt state file is moved aside and logged, so one bad write cannot fail every later pass.
 function readState(file, { t, dryRun, log }) {
   let state;
   try { state = JSON.parse(fs.readFileSync(file, "utf8")); }
   catch (error) { if (error.code === "ENOENT") return { lastNudgeAt: null, threads: {} }; if (!(error instanceof SyntaxError)) throw error; }
-  if (isRecord(state) && isRecord(state.threads)) return state;
+  if (validState(state)) return state;
   const aside = `${file}.corrupt-${Math.floor(t / 1000)}`;
   if (!dryRun) fs.renameSync(file, aside);
   log("state-corrupt", { movedTo: path.basename(aside) });
@@ -71,13 +99,14 @@ const INSTANCE_LABEL = /^[A-Za-z0-9._:-]{1,80}$/;
 
 /** Visibility only (KRA-9494 addendum): generating Codex turns per provider instance. */
 export function codexConcurrency(activeTurns) {
-  const counts = {};
+  const counts = new Map();
   for (const turn of activeTurns) {
     if (typeof turn?.providerName !== "string" || turn.providerName.toLowerCase() !== "codex") continue;
     const instance = typeof turn.providerInstanceId === "string" && INSTANCE_LABEL.test(turn.providerInstanceId) ? turn.providerInstanceId : "unknown";
-    counts[instance] = (counts[instance] ?? 0) + 1;
+    counts.set(instance, (counts.get(instance) ?? 0) + 1);
   }
-  return counts;
+  // fromEntries defines own properties, so prototype-named ids stay plain counts.
+  return Object.fromEntries(counts);
 }
 
 function writeState(file, state) {

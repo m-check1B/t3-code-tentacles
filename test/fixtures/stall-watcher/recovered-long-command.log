@@ -1,0 +1,4 @@
+[2026-10-27T09:40:00.000Z] NTIVE: {"method":"item/completed","payload":{"item":{"type":"commandExecution","status":"completed"}}}
+[2026-10-27T09:41:00.000Z] NTIVE: {"method":"error","message":"Reconnecting... 1/5","payload":{"willRetry":true,"error":{"message":"Reconnecting... 1/5","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}}}}}
+[2026-10-27T09:41:00.001Z] CANON: {"type":"runtime.warning","payload":{"message":"Reconnecting... 1/5"}}
+[2026-10-27T09:41:05.000Z] NTIVE: {"method":"item/started","payload":{"item":{"type":"commandExecution","command":"npm test","status":"inProgress"}}}
