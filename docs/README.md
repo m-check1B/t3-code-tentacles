@@ -19,6 +19,7 @@ proved. The README lab matrix records which labs have a fresh e2e proof.
 ## Repository-owned documentation
 
 - Built-in web tool reporting and Server twin limits: [doctor web tools](web-tools.md)
+- Patched staging Server install and separate twin activation: [staging Server labs](staging-server-labs.md)
 
 - Durable thread events and artifact sync: [thread-events.md](thread-events.md)
 
