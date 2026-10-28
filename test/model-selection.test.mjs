@@ -957,6 +957,14 @@ test("act thread.continue/thread.restart apply the same retained-seat contract",
   );
   assert.equal(unprojected.commands.length, 0);
 
+  // KRA-9673: the refusal names the queried T3 and points at --computer.
+  const located = { ...unprojected, baseUrl: "http://127.0.0.1:3773" };
+  await assert.rejects(
+    applyIntent(located, { action: "thread.continue", threadId: "t1", text: "go", runtimeMode: "full-access" }, waits),
+    /not projected on http:\/\/127\.0\.0\.1:3773;.*Wrong computer\? Pass --computer <name>.*full UUIDs/,
+  );
+  assert.equal(located.commands.length, 0);
+
   // An explicit selection is unchanged by the retained check.
   const explicit = actClient({ instanceId: "grok", model: "grok-4.7", options: [{ id: "reasoningEffort", value: "xhigh" }] });
   await applyIntent(explicit, { action: "thread.continue", threadId: "t1", text: "go", runtimeMode: "full-access", instanceId: "codex", model: "gpt-5.6-sol" }, waits);
