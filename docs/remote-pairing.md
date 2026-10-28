@@ -129,7 +129,7 @@ reject an extended bind. This is a source contract, not deployment proof.
 `originate` and `continue` now return the dispatched `messageId` and
 `turnCommandId` with `threadId` and `projectId`. Originate's idempotency ledger
 preserves those identifiers across ambiguous accepted responses and rejects a
-changed model selection for a new-version ledger entry. `turn-result` takes
+changed model selection for a new-version ledger entry. The ledger holds at most 1000 keys: it warns from 800 and, at the cap, prunes the oldest down to 900 after saving `<state>.rotated` (KRA-9686). `turn-result` takes
 exactly `{threadId,messageId,turnCommandId}` and returns those identifiers with
 `turnId`, `assistantMessageId`, `instanceId`, `model`, `effort`, `state` and `outputText`. States are `pending`,
 `succeeded`, `failed` and `cancelled`; only success includes actual terminal

@@ -71,6 +71,11 @@ const PROCESSED_FALLBACK_LIMIT = 1_000;
 const PENDING_LIMIT = 1_000;
 const THREAD_RETRY_LIMIT = 1_000;
 const ORIGINATION_LIMIT = 1_000;
+// KRA-9686: the ledger is an idempotency record only. At the cap originate
+// prunes the oldest keys (after one rolling backup) instead of refusing every
+// hire, and warns well before that.
+const ORIGINATION_WARN_AT = 800;
+const ORIGINATION_PRUNE_TO = 900;
 const LINK_LIMIT = 10_000;
 const CURSOR_LIMIT = 10_000;
 const MAX_STATE_BYTES = 32 * 1024 * 1024;
@@ -746,6 +751,20 @@ export async function continueThread(client, {
 }
 
 function digest(message) { return createHash("sha256").update(message).digest("hex"); }
+function pruneOriginationLedger(state, stateFile) {
+  const keys = Object.keys(state.originations);
+  if (keys.length >= ORIGINATION_LIMIT) {
+    const backup = `${stateFile}.rotated`;
+    fs.copyFileSync(stateFile, backup);
+    fs.chmodSync(backup, 0o600);
+    const keep = keys.slice(-ORIGINATION_PRUNE_TO);
+    state.originations = Object.fromEntries(keep.map((key) => [key, state.originations[key]]));
+    process.stderr.write(`tentacles: origination ledger pruned from ${keys.length} to ${keep.length} entries; previous state saved to ${backup}\n`);
+  } else if (keys.length >= ORIGINATION_WARN_AT) {
+    process.stderr.write(`tentacles: origination ledger at ${keys.length}/${ORIGINATION_LIMIT}; the oldest keys are pruned automatically at the limit\n`);
+  }
+}
+
 export async function originate(client, { workspace, title, message, instanceId, model = DEFAULT_MODEL, options, budget, runtimeMode, freshProviderContext, fixedTitle, idempotencyKey, stateFile = DEFAULT_BRIDGE_STATE_FILE } = {}) {
   const modelSelection = resolveModelSelection({ instanceId: instanceId === undefined ? DEFAULT_INSTANCE_ID : instanceId, model, options, budget });
   runtimeMode = requireExplicitRuntimeMode(runtimeMode);
@@ -765,7 +784,7 @@ export async function originate(client, { workspace, title, message, instanceId,
     let intent = state.originations[idempotencyKey];
     if (intent && (Boolean(intent.freshProviderContext) !== (freshProviderContext === true) || Boolean(intent.fixedTitle) !== (fixedTitle === true) || intent.workspace !== workspace || intent.title !== title || intent.messageDigest !== digest(message) || (intent.modelSelectionDigest && intent.modelSelectionDigest !== digest(JSON.stringify(modelSelection))))) throw new Error("originate idempotencyKey was already used with different input");
     if (!intent) {
-      if (Object.keys(state.originations).length >= ORIGINATION_LIMIT) throw new Error("Bridge origination ledger is full; rotate state explicitly after audit");
+      pruneOriginationLedger(state, stateFile);
       intent = { workspace, title, ...(freshProviderContext === true ? { freshProviderContext: true } : {}), ...(fixedTitle === true ? { fixedTitle: true } : {}), messageDigest: digest(message), modelSelectionDigest: digest(JSON.stringify(modelSelection)), projectId: randomUUID(), projectCommandId: randomUUID(), threadId: randomUUID(), threadCommandId: randomUUID(), turnCommandId: randomUUID(), messageId: randomUUID() };
       state.originations[idempotencyKey] = intent;
       writeBridgeState(state, stateFile);

@@ -664,6 +664,57 @@ test("originate idempotency reconciles an accepted-but-ambiguous turn without du
   await assert.rejects(originate(client, { ...options, message: "different" }), /different input/);
 });
 
+test("originate prunes the oldest ledger keys at the cap and warns before it (KRA-9686)", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "t3-bridge-ledger-"));
+  const stateFile = path.join(directory, "state.json");
+  const projects = new Map();
+  const threads = new Map();
+  const client = {
+    shell: async () => ({ projects: [...projects.values()] }),
+    thread: async (id) => {
+      const thread = threads.get(id);
+      if (!thread) throw new T3HttpError({ method: "GET", pathname: id, status: 404, body: null });
+      return { thread };
+    },
+    dispatch: async (command) => {
+      if (command.type === "project.create") { projects.set(command.projectId, { id: command.projectId, workspaceRoot: command.workspaceRoot }); return {}; }
+      if (command.type === "thread.create") { threads.set(command.threadId, { id: command.threadId, messages: [] }); return {}; }
+      threads.get(command.threadId).messages.push({ id: command.message.messageId });
+      return {};
+    },
+  };
+  const options = { workspace: "/tmp/ledger", title: "Ledger", message: "hello", runtimeMode: "full-access", stateFile };
+  const stderr = [];
+  const realWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (chunk) => { stderr.push(String(chunk)); return true; };
+  try {
+    await originate(client, { ...options, idempotencyKey: "seed-0" });
+    const seeded = readBridgeState(stateFile);
+    const template = seeded.originations["seed-0"];
+    for (let index = 1; index < 1000; index += 1) seeded.originations[`seed-${index}`] = template;
+    writeBridgeState(seeded, stateFile);
+    assert.equal(Object.keys(readBridgeState(stateFile).originations).length, 1000);
+    const created = await originate(client, { ...options, idempotencyKey: "fresh-key" });
+    const after = readBridgeState(stateFile);
+    const keys = Object.keys(after.originations);
+    assert.equal(keys.length, 901);
+    assert.equal(keys.at(-1), "fresh-key");
+    assert.equal(keys.includes("seed-0"), false);
+    assert.equal(keys.includes("seed-999"), true);
+    assert.equal(fs.statSync(`${stateFile}.rotated`).mode & 0o777, 0o600);
+    assert.match(stderr.join(""), /ledger pruned from 1000 to 900/);
+    assert.deepEqual(await originate(client, { ...options, idempotencyKey: "fresh-key" }), created);
+    stderr.length = 0;
+    const warned = readBridgeState(stateFile);
+    for (let index = 0; index < 5; index += 1) warned.originations[`warn-${index}`] = template;
+    writeBridgeState(warned, stateFile);
+    await originate(client, { ...options, idempotencyKey: "after-warn" });
+    assert.match(stderr.join(""), /ledger at 906\/1000/);
+  } finally {
+    process.stderr.write = realWrite;
+  }
+});
+
 test("legacy pending deliveries fail closed without modifying the state file", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "t3-bridge-legacy-pending-"));
   const stateFile = path.join(directory, "state.json");

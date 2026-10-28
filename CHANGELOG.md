@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- `originate` no longer refuses every hire when the idempotency ledger reaches 1000 keys: at the cap it saves one rolling backup (`<state>.rotated`, mode 0600), prunes the oldest keys down to 900 and keeps the current key; it warns on stderr from 800 entries (KRA-9686).
+
 ### Added
 
 - `observe` reports `counts.staleTurns` and `staleTurnThreadIds` (ids only):
