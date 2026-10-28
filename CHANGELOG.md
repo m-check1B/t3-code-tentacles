@@ -8,7 +8,7 @@ All notable changes to this project are documented here.
 
 ### Added
 
-- No-AI stall watcher `scripts/stall-watcher.mjs` with `docs/stall-watcher.plist.sample` (KRA-9494): visibility only, one steer per stall; source checkout only (not part of the npm tarball).
+- No-AI stall watcher `scripts/stall-watcher.mjs` with `docs/stall-watcher.plist.sample` (KRA-9494): for a stalled Codex turn it sends up to two full-access resume `thread.continue` nudges (60 s stagger, 10 min backoff), then exits 3 with `WAKE <threadId>`; its `concurrency` log line is visibility only; source checkout only (not part of the npm tarball).
 - `observe` reports `counts.staleTurns` and `staleTurnThreadIds` (ids only):
   in-progress turns with no activity for over 6 h (KRA-8952). They stay in
   `activeTurns`, so the seat cap is unchanged.
@@ -26,8 +26,8 @@ All notable changes to this project are documented here.
 ### Fixed
 
 - `originate` no longer refuses every hire when the idempotency ledger reaches 1000 keys: at the cap it saves one rolling backup (`<state>.rotated`, mode 0600), prunes the oldest keys down to 900 and keeps the current key; it warns on stderr from 800 entries (KRA-9686).
-- `orchestrate` names the queried T3 and says "Wrong computer? Pass --computer <name>; thread ids must be full UUIDs" when a continue target is not projected (KRA-9673).
-- `report` and `observe` mark a Codex turn whose stream reconnects were exhausted (HTTP 429) as "stalled" with a reason and a last-error summary after `TENTACLES_STALL_IDLE_MINUTES` (default 10) instead of "generating" forever (KRA-9494).
+- `orchestrate` names the queried T3 and adds "Wrong computer? Pass --computer <name> for a thread on another host; thread ids must be full UUIDs" when a continue target is not projected (KRA-9673).
+- `report` and `observe` mark a turn whose newest activity is a stream disconnect or reconnect warning (seen after HTTP 429) as "stalled", with a reason and a last-error summary, once it has been idle past `TENTACLES_STALL_IDLE_MINUTES` (default 10), instead of "generating" forever (KRA-9494).
 - Stall-watcher hardening (KRA-9525): the stall tail depends on the newest relevant event only, counts are prototype-safe and the state file is validated.
 - `doctor` names the missing app-bundle prerequisite before recommending
   `install-codex-app-provider` for an unstartable codex-app binary (KRA-7727).
