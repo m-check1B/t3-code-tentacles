@@ -939,7 +939,11 @@ async function applyIntentWithReceipt(client, intent, { wait = true, commandId, 
     // pin its effort before anything (including a restart stop) dispatches.
     if (command.modelSelection === undefined) {
       try {
-        if (!baseline) throw new Error(`T3 thread ${command.threadId} is not projected; its retained model selection is unproven`);
+        if (!baseline) {
+          // Almost always a routing miss: the thread lives on another computer's T3.
+          const target = typeof client.baseUrl === "string" ? ` on ${client.baseUrl}` : "";
+          throw new Error(`T3 thread ${command.threadId} is not projected${target}; its retained model selection is unproven. Wrong computer? Pass --computer <name> for a thread on another host; thread ids must be full UUIDs`);
+        }
         const pinned = retainedSelectionPin(baseline.thread?.modelSelection);
         if (pinned !== undefined) command.modelSelection = pinned;
       } catch (error) {
