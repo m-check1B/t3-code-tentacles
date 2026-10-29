@@ -175,19 +175,22 @@ command, its output or assistant text never counts), it sends one full-access
 a second one no sooner than 10 min later, at most two per thread. It exits 3
 and prints `WAKE <threadId>`, once per thread, when 10 min after the second
 nudge the log tail is still such an error idle past the window (unchanged, or
-disconnected again). The newest error decides (KRA-9702): a dead Codex login
-(`refresh token was already used`, `Please log out and sign in again`, an
-unauthorized/401/token-expired marker) is `AUTH_DEAD`; an `exceeded retry
-limit, last status: 429` with no auth marker is `RETRY_EXHAUSTED_429`. The
+disconnected again). The newest such error decides (KRA-9702): one that also
+names a dead Codex login (`refresh token was already used`, `Please log out
+and sign in again`, an unauthorized/401/token-expired marker) is `AUTH_DEAD`;
+one whose message or details read `exceeded retry limit, last status: 429`
+with no auth marker is `RETRY_EXHAUSTED_429`. Auth words in any other warning
+(an MCP or tool 401) never count. The
 provider log cannot tell a dead login from a real quota limit when only the
-429 shows, so both get no nudge (a nudge would only end in another 429): the
+429 shows, so both get no nudge (a nudge would only end in another 429; such
+429 retry-limit stalls got two nudges before KRA-9702): the
 watcher exits 3 at once with `WAKE <threadId> cause=AUTH_DEAD` or
 `cause=RETRY_EXHAUSTED_429`, once per thread, also when the 429 follows the
 first nudge. Any turn activity after an error clears it. When
 `TENTACLES_STALL_ALERT_DIR` names an existing directory, every wake writes
 `<epoch>-<threadId>.json` (mode 0600) with `threadId`, `cause` (including
-`STALLED_AFTER_NUDGES` for an ordinary wake), `nudges`, `lastEventAt` (log
-mtime) and the `observe` title; the directory is never created and a failed
+`STALLED_AFTER_NUDGES` for an ordinary wake), `nudges` and `lastEventAt` (log
+mtime), never the title; the directory is never created and a failed
 write is logged as `alert-failed`. The watcher never interrupts or restarts a
 thread; that stays a manual or seat decision. Logs carry only the cause name,
 never provider text. Each pass logs a `concurrency` line with generating Codex
