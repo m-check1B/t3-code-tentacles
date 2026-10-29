@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { findMisplaced } from "../scripts/changelog-placement.mjs";
@@ -50,4 +52,49 @@ test("a missing base ref exits 2 with a clear reason", () => {
   const result = spawnSync(process.execPath, [SCRIPT, "refs/heads/kra9774-no-such-base"], { encoding: "utf8" });
   assert.equal(result.status, 2);
   assert.match(result.stderr, /base ref refs\/heads\/kra9774-no-such-base not found/);
+});
+
+const JACK3 = "## [0.5.0-jack.3] - 2026-10-28";
+
+test("editing the newest released header does not exempt lines added under it", () => {
+  for (const header of ["## [0.5.0-jack.3] - 2026-10-29", `${JACK3} `, "## [0.5.0-jack.3b] - 2026-10-28"]) {
+    const head = insertAfter(BASE.replace(JACK3, header), "- shipped fix", "- hidden");
+    assert.deepEqual(findMisplaced(BASE, head), [{ line: 9, section: header }, { line: 14, section: header }], header);
+  }
+});
+
+test("a second [Unreleased] header inside a released section is flagged", () => {
+  for (const anchor of ["- shipped fix", "- older"]) {
+    const head = insertAfter(BASE, anchor, "## [Unreleased]", "- hidden");
+    const section = "## [Unreleased] (duplicate)";
+    const at = head.split("\n").indexOf("- hidden") + 1;
+    assert.deepEqual(findMisplaced(BASE, head), [{ line: at - 1, section }, { line: at, section }], anchor);
+  }
+});
+
+test("CRLF line endings are read like LF", () => {
+  const crlf = (text) => text.replaceAll("\n", "\r\n");
+  assert.deepEqual(findMisplaced(BASE, crlf(BASE)), []);
+  assert.deepEqual(findMisplaced(BASE, crlf(insertAfter(BASE, "- pending fix", "- new fix"))), []);
+  assert.deepEqual(findMisplaced(crlf(BASE), crlf(insertAfter(BASE, "- shipped fix", "- new fix"))), [{ line: 14, section: JACK3 }]);
+});
+
+test("the CLI runs through a symlink and from a subdirectory", (t) => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "kra9774-"));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const git = (...args) => spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { cwd: repo, encoding: "utf8" });
+  git("init", "-q");
+  fs.writeFileSync(path.join(repo, "CHANGELOG.md"), BASE);
+  git("add", "CHANGELOG.md");
+  git("commit", "-q", "--no-verify", "-m", "base");
+  const base = git("rev-parse", "HEAD").stdout.trim();
+  fs.writeFileSync(path.join(repo, "CHANGELOG.md"), insertAfter(BASE, "- shipped fix", "- new fix"));
+  fs.mkdirSync(path.join(repo, "sub"));
+  const link = path.join(repo, "link.mjs");
+  fs.symlinkSync(SCRIPT, link);
+  for (const [script, cwd] of [[link, repo], [SCRIPT, path.join(repo, "sub")]]) {
+    const result = spawnSync(process.execPath, [script, base], { cwd, encoding: "utf8" });
+    assert.equal(result.status, 1, `${script} in ${cwd}: ${result.stderr}`);
+    assert.match(result.stderr, /CHANGELOG\.md:14 added under released section/);
+  }
 });

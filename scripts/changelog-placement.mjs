@@ -5,15 +5,19 @@
 // Usage: node scripts/changelog-placement.mjs [base-ref] (default origin/main).
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const UNRELEASED = "## [Unreleased]";
 const isSection = (line) => line.startsWith("## ");
+// "## [0.5.0-jack.3] - 2026-10-28" -> "0.5.0-jack.3", so a date or spacing edit keeps the version.
+const versionOf = (line) => /^## \[([^\]]*)\]/.exec(line)?.[1] ?? line.trimEnd();
+const lines = (text) => text.split(/\r?\n/);
 
 // 1-based head line numbers that are not in the LCS of base and head.
 export function addedLines(baseText, headText) {
-  const a = baseText.split("\n");
-  const b = headText.split("\n");
+  const a = lines(baseText);
+  const b = lines(headText);
   let start = 0;
   while (start < a.length && start < b.length && a[start] === b[start]) start += 1;
   let endA = a.length;
@@ -38,22 +42,29 @@ export function addedLines(baseText, headText) {
   return added;
 }
 
-// Returns [{ line, section }] for added lines outside [Unreleased].
+// Returns [{ line, section }] for added lines outside [Unreleased]. Only the first
+// [Unreleased] header counts; later ones are flagged like released sections.
 export function findMisplaced(baseText, headText) {
-  const head = headText.split("\n");
-  const baseSections = new Set(baseText.split("\n").filter(isSection));
-  // Release PR: the first version section is new and the base still had [Unreleased].
-  const firstVersion = head.find((line) => isSection(line) && line !== UNRELEASED);
-  const released = baseSections.has(UNRELEASED) && firstVersion !== undefined && !baseSections.has(firstVersion) ? firstVersion : null;
+  const head = lines(headText);
+  const baseVersions = new Set(lines(baseText).filter(isSection).map(versionOf));
+  const headVersions = new Set(head.filter(isSection).map(versionOf));
+  const unreleasedAt = head.findIndex((line) => isSection(line) && versionOf(line) === "Unreleased");
+  // Release PR: the first version section has a version the base lacks, the base had
+  // [Unreleased], and no released version vanished (renaming a released header is no release).
+  const firstVersion = head.findIndex((line, index) => isSection(line) && index !== unreleasedAt);
+  const kept = [...baseVersions].every((version) => version === "Unreleased" || headVersions.has(version));
+  const releasedAt = baseVersions.has("Unreleased") && kept && firstVersion !== -1 && !baseVersions.has(versionOf(head[firstVersion])) ? firstVersion : -1;
+  // null = lines may be added here (preamble, the first [Unreleased], a new release).
   const sectionAt = [];
   let section = null;
-  for (const line of head) {
-    if (isSection(line)) section = line;
+  head.forEach((line, index) => {
+    if (isSection(line) && (index === unreleasedAt || index === releasedAt)) section = null;
+    else if (isSection(line)) section = versionOf(line) === "Unreleased" ? `${line} (duplicate)` : line;
     sectionAt.push(section);
-  }
+  });
   return addedLines(baseText, headText)
     .map((line) => ({ line, section: sectionAt[line - 1] }))
-    .filter(({ section: at }) => at !== null && at !== UNRELEASED && at !== released);
+    .filter(({ section: at }) => at !== null);
 }
 
 function git(args) {
@@ -68,8 +79,9 @@ export function main(argv = process.argv.slice(2), { out = console.log, err = co
     err(`changelog-placement: base ref ${base} not found or shares no history with HEAD; fetch it first`);
     return 2;
   }
+  const changelog = path.join(git(["rev-parse", "--show-toplevel"])?.trim() ?? ".", "CHANGELOG.md");
   const baseText = git(["show", `${mergeBase.trim()}:CHANGELOG.md`]) ?? "";
-  const headText = fs.existsSync("CHANGELOG.md") ? fs.readFileSync("CHANGELOG.md", "utf8") : "";
+  const headText = fs.existsSync(changelog) ? fs.readFileSync(changelog, "utf8") : "";
   const misplaced = findMisplaced(baseText, headText);
   for (const { line, section } of misplaced) err(`CHANGELOG.md:${line} added under released section "${section}"; move it under ${UNRELEASED}`);
   if (misplaced.length) return 1;
@@ -77,4 +89,5 @@ export function main(argv = process.argv.slice(2), { out = console.log, err = co
   return 0;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) process.exitCode = main();
+// realpath: Node resolves a symlinked entry script, so compare real paths or main() never runs.
+if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) process.exitCode = main();
