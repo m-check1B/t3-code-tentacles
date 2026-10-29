@@ -119,6 +119,7 @@ export class T3Client {
     return version;
   }
 
+  // retried: false, "rotated" (operator replaced the token file) or "reauth".
   async request(pathname, { method = "GET", body, signal } = {}, retried = false) {
     const usedToken = this.token;
     const response = await this.fetchImpl(`${this.baseUrl}${pathname}`, {
@@ -142,15 +143,16 @@ export class T3Client {
         if (current && current !== usedToken) this.token = current;
         return current && current !== usedToken;
       };
-      if (!retried && this.tokenFile && rotated()) return this.request(pathname, { method, body, signal }, true);
+      if (!retried && this.tokenFile && rotated()) return this.request(pathname, { method, body, signal }, "rotated");
       if (this.reauth && this.tokenFile && (!retried || this.reauthAttempt)) {
         // Concurrent 401s share one issuance; a failed or exhausted attempt is never repeated.
         this.reauthAttempt ??= Promise.resolve().then(() => this.reauth({ tokenFile: this.tokenFile }))
           .then(result => ({ action: result?.action }), error => ({ action: error.action, reason: error.message }));
         const { action, reason } = await this.reauthAttempt;
         // Safe to retry once even for dispatches: a 401 means T3 rejected the request before acting.
-        if (!retried && !reason && rotated()) return this.request(pathname, { method, body, signal }, true);
-        throw new T3AuthError({ method, pathname, action, reason: reason ?? (retried ? "a newly issued session was also rejected" : undefined) });
+        if (!retried && !reason && rotated()) return this.request(pathname, { method, body, signal }, "reauth");
+        const rejected = { rotated: "the replaced bearer in the token file was also rejected", reauth: "a newly issued session was also rejected" }[retried];
+        throw new T3AuthError({ method, pathname, action, reason: reason ?? rejected });
       }
       throw new T3AuthError({ method, pathname });
     }

@@ -460,10 +460,13 @@ If the file was not rotated, local CLI commands (not `--computer`) run the
 `reauth` flow below once per process and retry the rejected request once (a 401
 means T3 acted on nothing). The T3 CLI is `TENTACLES_T3_BIN`, else `t3` on PATH,
 else the newest semantic version under `<T3 home>/runtime/versions/*/t3`
-(`TENTACLES_T3_HOME`, default `~/.t3`; symlinks leaving the T3 home are ignored).
+(`TENTACLES_T3_HOME`, default `~/.t3`; symlinks leaving the T3 home are ignored,
+and a symlink inside it runs as its checked real path). An invalid
+`TENTACLES_T3_BIN` is reported as rejected and never falls through to PATH.
 A missing CLI, a failed issuance or a second 401 fails as before, naming the
-exact manual command with the resolved paths. Set `TENTACLES_T3_AUTO_REAUTH=0`
-to disable it. Library `T3Client` instances do this only with a `reauth` hook.
+exact manual command with the resolved (or rejected configured) paths. Because
+of this, `doctor` and `capabilities scan` may issue a new 30-day T3 session on a
+401; set `TENTACLES_T3_AUTO_REAUTH=0` to keep them read-only and to disable it. Library `T3Client` instances do this only with a `reauth` hook.
 Explicit in-memory bearers are not replaced from disk. `doctor` reports
 `t3.auth.status` as `valid` or `invalid`; invalid auth exits nonzero, prints the
 recovery action, and produces no ready lab matrix.
