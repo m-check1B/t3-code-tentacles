@@ -738,7 +738,7 @@ export async function continueThread(client, {
       // KRA-9781: workspaces from 0.5.0-jack.1..5 predate the guard. A throw aborts before T3.
       // T3 runs a thread in its worktreePath when set, else in the project root; unresolvable fails closed.
       let workspace = detail.thread.worktreePath;
-      if (typeof workspace !== "string") {
+      if (typeof workspace !== "string" || workspace === "") {
         const snapshot = await readOrchestrationSnapshot(client);
         const project = (Array.isArray(snapshot?.projects) ? snapshot.projects : []).find((entry) => entry?.id === detail.thread.projectId);
         workspace = project?.workspaceRoot;
