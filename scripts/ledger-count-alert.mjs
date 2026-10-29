@@ -61,8 +61,12 @@ export function countOriginations(stateFile, home = os.homedir()) {
   // JSON.parse messages quote file content, so the reason stays fixed.
   try { state = JSON.parse(text); } catch { throw new Error("state file is corrupt: invalid JSON"); }
   if (!isRecord(state)) throw new Error("state file is corrupt: not an object");
-  // A version-1 state has no ledger yet; the bridge migrates it to an empty one.
-  if (state.originations === undefined) return 0;
+  // Only a version-1 state may lack the ledger (the bridge migrates it to an
+  // empty one); the bridge refuses any other state without it.
+  if (state.originations === undefined) {
+    if (state.version === 1) return 0;
+    throw new Error("state file is corrupt: originations is missing");
+  }
   if (!isRecord(state.originations)) throw new Error("state file is corrupt: originations is not an object");
   return Object.keys(state.originations).length;
 }

@@ -33,6 +33,7 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- `scripts/ledger-count-alert.mjs` counts a state without `originations` as 0 only when it is version 1, as the bridge does; `{}` or a version-2 state without the ledger now exits 1 with a one-line reason instead of `LEDGER 0/1000` (KRA-9772).
 - `originate` no longer refuses every hire when the idempotency ledger reaches 1000 keys: at the cap it saves one rolling backup (`<state>.rotated`, mode 0600), prunes the oldest keys down to 900 and keeps the current key; it warns on stderr from 800 entries (KRA-9686).
 - `orchestrate` names the queried T3 and adds "Wrong computer? Pass --computer <name> for a thread on another host; thread ids must be full UUIDs" when a continue target is not projected (KRA-9673).
 - `report` and `observe` mark a turn whose newest activity is a stream disconnect or reconnect warning (seen after HTTP 429) as "stalled", with a reason and a last-error summary, once it has been idle past `TENTACLES_STALL_IDLE_MINUTES` (default 10), instead of "generating" forever (KRA-9494).

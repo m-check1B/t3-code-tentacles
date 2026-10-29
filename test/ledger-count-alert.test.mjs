@@ -121,6 +121,13 @@ test("a version-1 state without an originations key counts as 0", () => {
   assert.deepEqual(harness(null, { raw }).run(), { code: 0, lines: ["LEDGER 0/1000 host-a"] });
 });
 
+test("a non-version-1 state without an originations key exits 1, as the bridge refuses it", () => {
+  for (const raw of ["{}", JSON.stringify({ version: 2, mode: "watcher" })]) {
+    assert.deepEqual(harness(null, { raw }).run(), { code: 1, lines: ["ledger-count-alert: state file is corrupt: originations is missing"] });
+  }
+  assert.deepEqual(harness(3).run(), { code: 0, lines: ["LEDGER 3/1000 host-a"] });
+});
+
 test("an in-home name starting with .. is not mistaken for a parent path", () => {
   const { home, run } = harness();
   const file = path.join(home, "..cache", "bridge-state.json");
