@@ -294,9 +294,10 @@ export class LoopbackRuntimeAdapter {
     const input = fullAccessParams(params, "continue", CONTINUE_PARAM_KEYS);
     requireContinueSelection({ instanceId: input.instanceId, model: input.model, options: input.options, budget: input.budget });
     requireFreshFlags(input);
+    const guarded = () => this.continueImpl(this.client, input, { prepareTalkWorkspace: this.prepareTalkWorkspaceImpl });
     const dispatch = () => input.freshProviderContext === true
-      ? requireFreshProviderContext(this.client, input).then(() => this.continueImpl(this.client, input))
-      : this.continueImpl(this.client, input);
+      ? requireFreshProviderContext(this.client, input).then(guarded)
+      : guarded();
     // Serialized with interrupt so a delayed Stop for A cannot land on B.
     return typeof input.threadId === "string"
       ? this.withThreadLock(input.threadId, dispatch)

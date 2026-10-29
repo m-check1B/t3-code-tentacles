@@ -75,6 +75,10 @@
           "method": "GET"
         },
         {
+          "pathname": "/api/orchestration/snapshot",
+          "method": "GET"
+        },
+        {
           "pathname": "/api/orchestration/dispatch",
           "method": "POST",
           "body": {
@@ -224,6 +228,10 @@
         },
         {
           "pathname": "/api/orchestration/threads/12345678-1111-4111-8111-111111111111",
+          "method": "GET"
+        },
+        {
+          "pathname": "/api/orchestration/shell",
           "method": "GET"
         },
         {
