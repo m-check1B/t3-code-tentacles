@@ -9,7 +9,9 @@ import {
   DEFAULT_BRIDGE_STATE_FILE,
   DEFAULT_CODEX_APP_INSTANCE_ID,
   DEFAULT_DEEPSEEK_INSTANCE_ID,
+  BUILT_IN_DEEPSEEK_MODEL,
   DEFAULT_DEEPSEEK_MODEL,
+  deepseekModelOverride,
   DEFAULT_HERMES_PROFILE,
   DEFAULT_HERMES_URL,
   DEFAULT_INSTANCE_ID,
@@ -1157,12 +1159,22 @@ function fullModelCatalog(provider, allModels) {
   return allModels.map((id) => entries.get(id));
 }
 
-// KRA-6909: an installed DeepSeek provider defaults to its DEEPSEEK_MODEL unless
-// T3_DEEPSEEK_MODEL overrides it; a sensitive entry is never read.
-function installedDeepSeekModel(instance) {
-  if (providerHarness(instance) !== DEEPSEEK_HARNESS_VALUE) return null;
-  const variable = instance.environment.find((entry) => entry?.name === "DEEPSEEK_MODEL" && entry.sensitive === false);
-  return process.env.T3_DEEPSEEK_MODEL || modelLabel(variable?.value);
+// KRA-6909: the one lab default shared by doctor and originate without --model.
+// DeepSeek: T3_DEEPSEEK_MODEL, then the installed provider's DEEPSEEK_MODEL, then
+// the built-in model. A sensitive or redacted entry is never read.
+export function labDefaultModel(instanceId, instance) {
+  const deepseek = providerHarness(instance) === DEEPSEEK_HARNESS_VALUE;
+  if (!deepseek && baseLabId(instanceId) !== "deepseek") return defaultModelForLab(instanceId);
+  const variable = deepseek
+    ? instance.environment.find((entry) => entry?.name === "DEEPSEEK_MODEL" && entry.sensitive !== true && entry.valueRedacted !== true)
+    : null;
+  return deepseekModelOverride() || modelLabel(variable?.value) || BUILT_IN_DEEPSEEK_MODEL;
+}
+
+export async function originateDefaultModel(client, instanceId) {
+  if (baseLabId(instanceId) !== "deepseek") return defaultModelForLab(instanceId);
+  const settings = await client.getSettings();
+  return labDefaultModel(instanceId, settings?.providerInstances?.[instanceId]);
 }
 
 function liveDefaultModel(provider, instanceId, allModels, instance) {
@@ -1172,7 +1184,7 @@ function liveDefaultModel(provider, instanceId, allModels, instance) {
   // Older snapshots can expose the default directly instead of marking a row.
   const declared = modelLabel(provider?.defaultModel);
   if (declared && allModels.includes(declared)) return declared;
-  return installedDeepSeekModel(instance) || defaultModelForLab(instanceId);
+  return labDefaultModel(instanceId, instance);
 }
 
 function providerEnabled(settings, instanceId, configProvider) {
