@@ -1,0 +1,56 @@
+[
+  {
+    "workspace": "/Users/Ada (beta) [x] {y}+!@/.jack-local-scratch/jack-talk/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "platform": "darwin",
+    "claudeMdExcludes": [
+      "/Users/Ada [(]beta[)] [[]x[]] [{]y[}][+][!][@]/.jack-local-scratch/jack-talk/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/*",
+      "/Users/Ada [(]beta[)] [[]x[]] [{]y[}][+][!][@]/.jack-local-scratch/jack-talk/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.claude/**",
+      "/Users/Ada [(]beta[)] [[]x[]] [{]y[}][+][!][@]/.jack-local-scratch/jack-talk/*",
+      "/Users/Ada [(]beta[)] [[]x[]] [{]y[}][+][!][@]/.jack-local-scratch/jack-talk/.claude/**",
+      "/Users/Ada [(]beta[)] [[]x[]] [{]y[}][+][!][@]/.jack-local-scratch/*",
+      "/Users/Ada [(]beta[)] [[]x[]] [{]y[}][+][!][@]/.jack-local-scratch/.claude/**",
+      "/Users/Ada [(]beta[)] [[]x[]] [{]y[}][+][!][@]/*",
+      "/Users/Ada [(]beta[)] [[]x[]] [{]y[}][+][!][@]/.claude/**",
+      "/Users/*",
+      "/Users/.claude/**",
+      "/*",
+      "/.claude/**"
+    ]
+  },
+  {
+    "workspace": "/home/ada/.jack-local-scratch/jack-talk/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "platform": "linux",
+    "claudeMdExcludes": [
+      "/home/ada/.jack-local-scratch/jack-talk/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/*",
+      "/home/ada/.jack-local-scratch/jack-talk/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.claude/**",
+      "/home/ada/.jack-local-scratch/jack-talk/*",
+      "/home/ada/.jack-local-scratch/jack-talk/.claude/**",
+      "/home/ada/.jack-local-scratch/*",
+      "/home/ada/.jack-local-scratch/.claude/**",
+      "/home/ada/*",
+      "/home/ada/.claude/**",
+      "/home/*",
+      "/home/.claude/**",
+      "/*",
+      "/.claude/**"
+    ]
+  },
+  {
+    "workspace": "C:\\Users\\Ada\\.jack-local-scratch\\jack-talk\\aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "platform": "win32",
+    "claudeMdExcludes": [
+      "C:/Users/Ada/.jack-local-scratch/jack-talk/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/*",
+      "C:/Users/Ada/.jack-local-scratch/jack-talk/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.claude/**",
+      "C:/Users/Ada/.jack-local-scratch/jack-talk/*",
+      "C:/Users/Ada/.jack-local-scratch/jack-talk/.claude/**",
+      "C:/Users/Ada/.jack-local-scratch/*",
+      "C:/Users/Ada/.jack-local-scratch/.claude/**",
+      "C:/Users/Ada/*",
+      "C:/Users/Ada/.claude/**",
+      "C:/Users/*",
+      "C:/Users/.claude/**",
+      "C:/*",
+      "C:/.claude/**"
+    ]
+  }
+]
