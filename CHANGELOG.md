@@ -8,6 +8,8 @@ All notable changes to this project are documented here.
 
 - The npm tarball now ships `scripts/stall-watcher.mjs` and `scripts/ledger-count-alert.mjs`, so the bundled `docs/*.plist.sample` files point at scripts the package contains (both use Node built-ins only). It no longer ships the retired `scripts/publish-forgejo-release.mjs`, which stays in the source checkout (Forgejo is a read-only backup, KRA-8749).
 - `docs/orchestration.md` and `docs/orchestration-loop.svg` name the 0.5 source line instead of the stale `0.5.0-jack.2` pin.
+- `README.md` names the 0.5 source line instead of the stale `0.5.0-jack.2` pin.
+- `npm run check` syntax-checks every `.mjs` file that exists under `src/` and `scripts/` instead of a hand-kept list, so it passes inside the extracted npm tarball and no longer skips `scripts/stall-watcher.mjs`, `scripts/record-node-path.mjs`, `scripts/publish-github-release.mjs` or `src/updater/`.
 
 ## [0.5.0-jack.4] - 2026-10-29
 
