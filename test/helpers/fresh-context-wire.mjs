@@ -21,6 +21,8 @@ export async function captureWire(protocol, { fresh = false, instanceId = "codex
     let value;
     if (pathname === "/api/orchestration/turn-result") value = init.method === "POST" ? result : capabilities;
     else if (pathname === "/api/orchestration/dispatch") { apply(body); value = { sequence: wire.length }; }
+    // KRA-9781: continue resolves the thread's workspace; a hire root gets no guard.
+    else if (pathname === "/api/orchestration/snapshot" || pathname === "/api/orchestration/shell") value = { schemaVersion: 2, projects: [{ id: "project", workspaceRoot: "/synthetic-hire" }], threads: [] };
     else {
       const thread = threads.get("12345678-1111-4111-8111-111111111111");
       if (!thread) return new Response("{}", { status: 404 });

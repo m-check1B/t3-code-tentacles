@@ -722,7 +722,7 @@ export async function continueThread(client, {
   freshProviderContext,
   turnCommandId = randomUUID(),
   messageId = randomUUID(),
-}) {
+}, { prepareTalkWorkspace } = {}) {
   // Partial selection input is refused before any read or dispatch.
   const retained = !requireContinueSelection({ instanceId, model, options, budget });
   let modelSelection = retained ? undefined : resolveModelSelection({ instanceId, model, options, budget });
@@ -734,6 +734,12 @@ export async function continueThread(client, {
   if (!existingMessage) {
     // Keep the retained lab/model and its mandatory safe effort pin.
     if (retained) modelSelection = retainedSelectionPin(detail.thread.modelSelection);
+    if (prepareTalkWorkspace) {
+      // KRA-9781: workspaces from 0.5.0-jack.1..5 predate the guard. A throw aborts before T3.
+      const snapshot = await readOrchestrationSnapshot(client);
+      const project = (Array.isArray(snapshot?.projects) ? snapshot.projects : []).find((entry) => entry?.id === detail.thread.projectId);
+      prepareTalkWorkspace(project?.workspaceRoot);
+    }
     await client.dispatch({
       type: "thread.turn.start",
       commandId: turnCommandId,
