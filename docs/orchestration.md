@@ -13,7 +13,7 @@ client. The public command is `tentacles`; `t3-agent-bridge` is an exact alias.
 
 Keep four facts separate:
 
-1. **Tentacles version and commit.** The `0.5.0-jack.2` source line contains a
+1. **Tentacles version and commit.** The 0.5 source line contains a
    V1/V2 adapter. A package version does not establish installed or running bytes.
 2. **Negotiated protocol.** Selection reads the T3 environment descriptor;
    protocol 1 selects V1, protocol 2 selects V2, and an absent protocol field or

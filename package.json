@@ -38,7 +38,8 @@
     "SECURITY.md",
     "SUPPORT.md",
     "scripts/record-node-path.mjs",
-    "scripts/publish-forgejo-release.mjs"
+    "scripts/stall-watcher.mjs",
+    "scripts/ledger-count-alert.mjs"
   ],
   "bin": {
     "t3-agent-bridge": "./bin/t3-agent-bridge",
