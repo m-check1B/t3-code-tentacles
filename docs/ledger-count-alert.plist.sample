@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- KRA-9690 sample only; not installed. Copy to ~/Library/LaunchAgents, replace USER and paths, then load it yourself. -->
+<!-- KRA-9690 sample only; not installed. Copy to ~/Library/LaunchAgents, replace USER and paths, then load it yourself.
+     launchd does not create directories: create ~/.local/state/tentacles-ledger-alert (and its alerts dir) first. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>

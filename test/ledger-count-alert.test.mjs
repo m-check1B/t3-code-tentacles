@@ -115,3 +115,24 @@ test("the CLI uses HOME for its default path and prints no key or value", () => 
   assert.equal(result.stdout, "LEDGER 820/1000 dev\nWAKE ledger count=820 limit=1000 host=dev\n");
   assert.equal(result.stderr, "");
 });
+
+test("a version-1 state without an originations key counts as 0", () => {
+  const raw = JSON.stringify({ version: 1, startedAt: null, processedMessageIds: [] });
+  assert.deepEqual(harness(null, { raw }).run(), { code: 0, lines: ["LEDGER 0/1000 host-a"] });
+});
+
+test("an in-home name starting with .. is not mistaken for a parent path", () => {
+  const { home, run } = harness();
+  const file = path.join(home, "..cache", "bridge-state.json");
+  fs.mkdirSync(path.dirname(file));
+  fs.writeFileSync(file, JSON.stringify({ originations: { a: {}, b: {} } }));
+  assert.deepEqual(run({ argv: ["--state-file", file] }), { code: 0, lines: ["LEDGER 2/1000 host-a"] });
+});
+
+test("misordered thresholds take the stricter reading", () => {
+  const env = { LEDGER_ALERT_WARN: "900", LEDGER_ALERT_CRITICAL: "800" };
+  const result = harness(850).run({ env });
+  assert.equal(result.code, WAKE_EXIT);
+  assert.equal(result.lines[1], "WAKE ledger count=850 limit=1000 host=host-a CRITICAL");
+  assert.equal(harness(799).run({ env }).code, 0);
+});

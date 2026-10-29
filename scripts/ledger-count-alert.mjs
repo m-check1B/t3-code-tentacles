@@ -14,7 +14,7 @@ const LABEL = /^[A-Za-z0-9._-]{1,80}$/;
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const inside = (home, file) => {
   const relative = path.relative(home, file);
-  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+  return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 };
 
 function threshold(env, name, fallback) {
@@ -60,7 +60,10 @@ export function countOriginations(stateFile, home = os.homedir()) {
   let state;
   // JSON.parse messages quote file content, so the reason stays fixed.
   try { state = JSON.parse(text); } catch { throw new Error("state file is corrupt: invalid JSON"); }
-  if (!isRecord(state) || !isRecord(state.originations)) throw new Error("state file is corrupt: no originations object");
+  if (!isRecord(state)) throw new Error("state file is corrupt: not an object");
+  // A version-1 state has no ledger yet; the bridge migrates it to an empty one.
+  if (state.originations === undefined) return 0;
+  if (!isRecord(state.originations)) throw new Error("state file is corrupt: originations is not an object");
   return Object.keys(state.originations).length;
 }
 
@@ -75,8 +78,9 @@ export function runCheck({ argv = [], env = process.env, home = os.homedir(), ho
   let options, warnAt, criticalAt, count;
   try {
     options = parseArgs(argv, { home, hostname });
-    warnAt = threshold(env, "LEDGER_ALERT_WARN", 800);
     criticalAt = threshold(env, "LEDGER_ALERT_CRITICAL", 950);
+    // Misordered overrides take the stricter reading: WARN drops to CRITICAL.
+    warnAt = Math.min(threshold(env, "LEDGER_ALERT_WARN", 800), criticalAt);
     count = countOriginations(options.stateFile, home);
   } catch (error) { err(`ledger-count-alert: ${error.message}`); return 1; }
   if (count == null) { out("LEDGER missing"); return 0; }
