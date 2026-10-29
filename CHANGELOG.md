@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- KRA-6909: plain `doctor` now takes the DeepSeek default model from the installed provider's non-sensitive `DEEPSEEK_MODEL` (written by `install-deepseek-provider --model`), so an installed non-default model reports ready without a `T3_DEEPSEEK_MODEL` override. `T3_DEEPSEEK_MODEL` still wins; with no bridge-owned DeepSeek provider the built-in default applies.
+
 ## [0.5.0-jack.6] - 2026-10-30
 
 ### Security

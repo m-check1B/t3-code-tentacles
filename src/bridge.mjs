@@ -1157,14 +1157,22 @@ function fullModelCatalog(provider, allModels) {
   return allModels.map((id) => entries.get(id));
 }
 
-function liveDefaultModel(provider, instanceId, allModels) {
+// KRA-6909: an installed DeepSeek provider defaults to its DEEPSEEK_MODEL unless
+// T3_DEEPSEEK_MODEL overrides it; a sensitive entry is never read.
+function installedDeepSeekModel(instance) {
+  if (providerHarness(instance) !== DEEPSEEK_HARNESS_VALUE) return null;
+  const variable = instance.environment.find((entry) => entry?.name === "DEEPSEEK_MODEL" && entry.sensitive === false);
+  return process.env.T3_DEEPSEEK_MODEL || modelLabel(variable?.value);
+}
+
+function liveDefaultModel(provider, instanceId, allModels, instance) {
   const marked = (Array.isArray(provider?.models) ? provider.models : [])
     .find((model) => model?.isDefault === true && normalizedModelSlugs({ models: [model] }).length);
   if (marked) return normalizedModelSlugs({ models: [marked] })[0];
   // Older snapshots can expose the default directly instead of marking a row.
   const declared = modelLabel(provider?.defaultModel);
   if (declared && allModels.includes(declared)) return declared;
-  return defaultModelForLab(instanceId);
+  return installedDeepSeekModel(instance) || defaultModelForLab(instanceId);
 }
 
 function providerEnabled(settings, instanceId, configProvider) {
@@ -1257,7 +1265,7 @@ function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
   const installed = configProvider?.installed === true || configured;
   const kind = labKind(instanceId);
   const allModels = normalizedModelSlugs(configProvider);
-  const defaultModel = liveDefaultModel(configProvider, instanceId, allModels);
+  const defaultModel = liveDefaultModel(configProvider, instanceId, allModels, instance);
   const defaultAvailable = kind === "explicit" ? null : Boolean(defaultModel && allModels.includes(defaultModel));
   const models = modelsMode === "full" ? [...allModels] : allModels.slice(0, DOCTOR_MODEL_LIMIT);
   if (defaultAvailable && !models.includes(defaultModel)) {
