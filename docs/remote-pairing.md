@@ -142,10 +142,11 @@ Exit 0 below the warn threshold or with `LEDGER missing`; exit 3 with a
 above CRITICAL drops to CRITICAL); exit 1 with a
 one-line reason for an unreadable file, invalid JSON or an `originations`
 value that is not an object, or no `originations` key outside a version-1
-state. A version-1 state with no `originations` key counts as 0. With `LEDGER_ALERT_DIR` set to
-an existing directory, each wake also writes a 0600 `<epoch>-ledger.json` with
-only count, limit, host and time. `docs/ledger-count-alert.plist.sample` runs it
-at load and daily at 09:00 (sample only; nothing installs it).
+state. A version-1 state with no `originations` key counts as 0. With
+`LEDGER_ALERT_DIR` set to an existing directory, each wake also writes a
+0600 `<epoch>-ledger.json` with only count, limit, host and time.
+`docs/ledger-count-alert.plist.sample` runs it at load and daily at 09:00
+(sample only; nothing installs it).
 
 On a host without a scheduler of its own, such as the mini, read it over ssh
 from a host that has one, using a checkout already on the mini:

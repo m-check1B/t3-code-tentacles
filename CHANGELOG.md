@@ -12,6 +12,10 @@ All notable changes to this project are documented here.
 
 - `scripts/stall-watcher.mjs` classifies the newest provider error of a stalled thread (KRA-9702): a dead login (`AUTH_DEAD`) or an exhausted 429 retry (`RETRY_EXHAUSTED_429`) gets no nudge and wakes at once with exit 3 and `WAKE <threadId> cause=<CAUSE>`; ordinary stalls keep two nudges and the bare `WAKE <threadId>`. 429 retry-limit stalls that previously got two nudges now wake at once with cause `RETRY_EXHAUSTED_429`. Auth markers only classify errors that are already stall-shaped (a disconnect, reconnect or 429), so an unrelated MCP or tool 401 warning never counts. With `TENTACLES_STALL_ALERT_DIR` set, each wake writes a 0600 `<epoch>-<threadId>.json` alert (thread id, cause, nudges, last event time; no title) into that existing directory.
 
+### Fixed
+
+- `scripts/ledger-count-alert.mjs` counts a state without `originations` as 0 only when it is version 1, as the bridge does. Operator-visible: `{}` or any non-version-1 state without `originations` now exits 1 with a one-line reason instead of printing `LEDGER 0/1000` (KRA-9772).
+
 ## [0.5.0-jack.3] - 2026-10-28
 
 ### Added
@@ -33,7 +37,6 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
-- `scripts/ledger-count-alert.mjs` counts a state without `originations` as 0 only when it is version 1, as the bridge does; `{}` or a version-2 state without the ledger now exits 1 with a one-line reason instead of `LEDGER 0/1000` (KRA-9772).
 - `originate` no longer refuses every hire when the idempotency ledger reaches 1000 keys: at the cap it saves one rolling backup (`<state>.rotated`, mode 0600), prunes the oldest keys down to 900 and keeps the current key; it warns on stderr from 800 entries (KRA-9686).
 - `orchestrate` names the queried T3 and adds "Wrong computer? Pass --computer <name> for a thread on another host; thread ids must be full UUIDs" when a continue target is not projected (KRA-9673).
 - `report` and `observe` mark a turn whose newest activity is a stream disconnect or reconnect warning (seen after HTTP 429) as "stalled", with a reason and a last-error summary, once it has been idle past `TENTACLES_STALL_IDLE_MINUTES` (default 10), instead of "generating" forever (KRA-9494).
