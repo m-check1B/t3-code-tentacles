@@ -162,7 +162,7 @@ flowchart TB
 
 | Evidence | Meaning |
 | --- | --- |
-| Tentacles version | This source line is `0.5.0-jack.2`; identify the exact commit as well as the package version. It does not identify the installed or running build. |
+| Tentacles version | This is the 0.5 source line; identify the exact commit as well as the package version. It does not identify the installed or running build. |
 | Negotiated protocol | The T3 environment descriptor selects V1 or V2. An absent protocol field or descriptor selects V1; an unknown protocol refuses. Tentacles 0.5 can still use V1. |
 | Required patched T3 extensions | V2 turns require `orchestration.dispatchMessageWithMode` to accept mode and message atomically. Local Talk also requires the patched `turn-result` contract with exact command/message/run correlation. A V2 descriptor alone proves neither extension. |
 | Staged runtime proof | Verify exact installed/running T3 and Tentacles builds, selected protocol, extensions, and real flows on each host through the authorized rollout gates. Source tests and a ready lab row do not prove a cutover. |
