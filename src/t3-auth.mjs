@@ -116,7 +116,8 @@ export function resolveT3Bin({ t3Bin, t3Home, pathEnv = process.env.PATH || "" }
     const candidate = path.join(t3Home, "runtime", "versions", version[0], "t3");
     let real;
     try { real = fs.realpathSync(candidate); } catch { continue; }
-    if (real.startsWith(home + path.sep) && executableFile(real)) return candidate;
+    // Return what was checked: executing the candidate would re-resolve a swappable symlink.
+    if (real.startsWith(home + path.sep) && executableFile(real)) return real;
   }
   return null;
 }
@@ -136,9 +137,13 @@ export function createAutoReauth({
   if (["0", "false", "off", "no"].includes(String(env.TENTACLES_T3_AUTO_REAUTH ?? "").toLowerCase())) return null;
   return ({ tokenFile }) => {
     const resolved = resolveT3Bin({ t3Bin, t3Home, pathEnv: env.PATH || "" });
-    const action = ["tentacles reauth --t3-bin", resolved ? shellQuote(resolved) : '"$(command -v t3)"', "--t3-home", shellQuote(t3Home),
+    const shown = resolved ?? t3Bin;
+    const action = ["tentacles reauth --t3-bin", shown ? shellQuote(shown) : '"$(command -v t3)"', "--t3-home", shellQuote(t3Home),
       ...(tokenFile === DEFAULT_TOKEN_FILE ? [] : ["--token-file", shellQuote(tokenFile)])].join(" ");
     const fail = reason => Object.assign(new Error(reason), { action });
+    if (!resolved && t3Bin) {
+      throw fail(`automatic reauthentication rejected TENTACLES_T3_BIN ${t3Bin}: ${path.isAbsolute(t3Bin) ? "not an executable file" : "not an absolute path"}`);
+    }
     if (!resolved) throw fail(`automatic reauthentication found no executable T3 CLI (TENTACLES_T3_BIN, PATH or ${path.join(t3Home, "runtime", "versions")})`);
     try {
       reauthenticate({ t3Bin: resolved, t3Home, tokenFile, spawnImpl });

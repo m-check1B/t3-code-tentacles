@@ -58,7 +58,7 @@ test("401 reauthenticates through the newest colocated T3 CLI and retries the co
   assert.equal(h.calls[0].body, h.calls[1].body);
   assert.equal(h.calls[1].headers.authorization, `Bearer ${NEW}`);
   assert.equal(h.spawned.length, 1);
-  assert.equal(h.spawned[0].bin, path.join(h.t3Home, "runtime", "versions", "0.0.46", "t3"));
+  assert.equal(h.spawned[0].bin, fs.realpathSync(path.join(h.t3Home, "runtime", "versions", "0.0.46", "t3")));
   assert.deepEqual(h.spawned[0].args.slice(0, 5), ["auth", "session", "issue", "--base-dir", h.t3Home]);
   assert.equal(fs.readFileSync(h.tokenFile, "utf8"), `${NEW}\n`);
   assert.equal(h.logs.length, 1);
@@ -67,7 +67,7 @@ test("401 reauthenticates through the newest colocated T3 CLI and retries the co
 
 test("a second 401 after reauth fails with the exact manual command and no further issuance", async t => {
   const h = harness(t, { responses: () => new Response(OLD, { status: 401 }) });
-  const bin = path.join(h.t3Home, "runtime", "versions", "0.0.46", "t3");
+  const bin = fs.realpathSync(path.join(h.t3Home, "runtime", "versions", "0.0.46", "t3"));
   await assert.rejects(h.client.snapshot(), error => {
     assert.ok(error instanceof T3AuthError);
     assert.equal(error.action, `tentacles reauth --t3-bin '${bin}' --t3-home '${h.t3Home}' --token-file '${h.tokenFile}'`);
@@ -77,7 +77,12 @@ test("a second 401 after reauth fails with the exact manual command and no furth
     return true;
   });
   assert.equal(h.calls.length, 2);
-  await assert.rejects(h.client.snapshot(), T3AuthError);
+  // An operator rotation retried after the shared attempt is reported as such (PR 40 P3-3).
+  fs.writeFileSync(h.tokenFile, "synthetic-operator-bearer-3333\n", { mode: 0o600 });
+  await assert.rejects(h.client.snapshot(), error => error instanceof T3AuthError
+    && /The replaced bearer in the token file was also rejected/.test(error.message) && !/newly issued/.test(error.message));
+  assert.equal(h.calls.length, 4);
+  assert.equal(h.calls[3].headers.authorization, "Bearer synthetic-operator-bearer-3333");
   assert.equal(h.spawned.length, 1, "a client never issues a second session");
   assert.deepEqual(tokens(h.logs.join("\n")), []);
 });
@@ -110,7 +115,7 @@ test("failed issuance preserves the bearer and reports the resolved manual comma
   let calls = 0;
   const client = new T3Client({ orchestrationProtocol: 1, tokenFile: f.tokenFile, reauth, fetchImpl: async () => { calls++; return new Response(OLD, { status: 401 }); } });
   await assert.rejects(client.snapshot(), error => /Automatic reauthentication failed: T3 session issuance failed/.test(error.message)
-    && error.action.includes(`--t3-bin '${path.join(f.t3Home, "runtime", "versions", "0.0.46", "t3")}'`) && tokens(error.message).length === 0);
+    && error.action.includes(`--t3-bin '${fs.realpathSync(path.join(f.t3Home, "runtime", "versions", "0.0.46", "t3"))}'`) && tokens(error.message).length === 0);
   assert.equal(calls, 1);
   assert.equal(fs.readFileSync(f.tokenFile, "utf8"), OLD);
 });
@@ -135,11 +140,41 @@ test("symlinks escaping the T3 home are ignored; explicit and PATH binaries win 
   fs.mkdirSync(path.join(f.t3Home, "runtime", "versions", "9.9.9"));
   fs.symlinkSync(path.join(outside, "t3"), path.join(f.t3Home, "runtime", "versions", "9.9.9", "t3"));
   fs.symlinkSync(outside, path.join(f.t3Home, "runtime", "versions", "9.9.8"));
-  const inHome = path.join(f.t3Home, "runtime", "versions", "0.0.40", "t3");
+  const inHome = fs.realpathSync(path.join(f.t3Home, "runtime", "versions", "0.0.40", "t3"));
   assert.equal(resolveT3Bin({ t3Home: f.t3Home, pathEnv: "" }), inHome);
   assert.equal(resolveT3Bin({ t3Home: f.t3Home, pathEnv: outside }), fs.realpathSync(path.join(outside, "t3")));
   assert.equal(resolveT3Bin({ t3Bin: inHome, t3Home: f.t3Home, pathEnv: outside }), inHome);
   assert.equal(resolveT3Bin({ t3Bin: path.join(f.dir, "missing"), t3Home: f.t3Home, pathEnv: outside }), null, "a bad explicit path never falls through");
+});
+
+test("a home symlink resolves to the checked real path, which is what runs (PR 40 P3-1)", t => {
+  const f = fixture(t, ["0.0.40"]);
+  fs.mkdirSync(path.join(f.t3Home, "runtime", "versions", "0.0.50"));
+  const link = path.join(f.t3Home, "runtime", "versions", "0.0.50", "t3");
+  fs.symlinkSync(path.join(f.t3Home, "runtime", "versions", "0.0.40", "t3"), link);
+  const resolved = resolveT3Bin({ t3Home: f.t3Home, pathEnv: "" });
+  assert.equal(resolved, fs.realpathSync(path.join(f.t3Home, "runtime", "versions", "0.0.40", "t3")));
+  assert.notEqual(resolved, link);
+  const spawned = [];
+  const reauth = createAutoReauth({ env: { PATH: "" }, t3Home: f.t3Home, log: () => {},
+    spawnImpl: bin => { spawned.push(bin); return { status: 0, stdout: `${NEW}\n` }; } });
+  reauth({ tokenFile: f.tokenFile });
+  assert.deepEqual(spawned, [resolved]);
+});
+
+test("an invalid explicit TENTACLES_T3_BIN is named as rejected and kept in the manual command (PR 40 P3-4)", t => {
+  const f = fixture(t);
+  for (const [t3Bin, why] of [["relative/t3", "not an absolute path"], [path.join(f.dir, "missing"), "not an executable file"]]) {
+    const reauth = createAutoReauth({ env: { PATH: "" }, t3Bin, t3Home: f.t3Home, log: () => assert.fail("no success log"),
+      spawnImpl: () => assert.fail("never issues") });
+    assert.throws(() => reauth({ tokenFile: f.tokenFile }), error => {
+      assert.equal(error.message, `automatic reauthentication rejected TENTACLES_T3_BIN ${t3Bin}: ${why}`);
+      assert.ok(error.action.startsWith(`tentacles reauth --t3-bin '${t3Bin}' --t3-home`));
+      assert.ok(!error.action.includes("command -v"));
+      return true;
+    });
+  }
+  assert.equal(fs.readFileSync(f.tokenFile, "utf8"), OLD);
 });
 
 test("opt-out disables automatic reauthentication", async t => {
@@ -158,6 +193,7 @@ test("CLI doctor reauthenticates through a synthetic T3 home and never prints a 
   const f = fixture(t, []);
   const marker = path.join(f.dir, "issued");
   const bin = addBin(f.t3Home, "0.0.46", { body: `#!/bin/sh\necho "$@" > '${marker}'\necho ${NEW}\n` });
+  const real = fs.realpathSync(bin);
   // The environment descriptor is public in T3; every authenticated route rejects.
   const server = createServer((req, res) => { res.writeHead(req.url.startsWith("/.well-known/") ? 404 : 401); res.end(OLD); });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -171,7 +207,7 @@ test("CLI doctor reauthenticates through a synthetic T3 home and never prints a 
     assert.equal(error.code, 1);
     const report = JSON.parse(error.stdout);
     assert.equal(report.t3.auth.status, "invalid");
-    assert.ok(report.t3.auth.action.startsWith(`tentacles reauth --t3-bin '${bin}' --t3-home '${f.t3Home}'`));
+    assert.ok(report.t3.auth.action.startsWith(`tentacles reauth --t3-bin '${real}' --t3-home '${f.t3Home}'`));
     assert.match(error.stderr, /issued a new session with/);
     assert.deepEqual(tokens(error.stdout + error.stderr), []);
   }
