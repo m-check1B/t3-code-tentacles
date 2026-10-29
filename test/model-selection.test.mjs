@@ -809,6 +809,8 @@ test("repeated --option flags with the same ID fail before any dispatch", async 
 function retainedThreadClient(modelSelection, { messages = [] } = {}) {
   const client = recordingClient();
   client.threads.set("retained", { id: "retained", projectId: "p1", modelSelection, messages: [...messages] });
+  // A paired continue refuses a thread whose workspace cannot be resolved (PR 45 B3).
+  client.projects.set("p1", { id: "p1", workspaceRoot: "/synthetic-hire" });
   return client;
 }
 
