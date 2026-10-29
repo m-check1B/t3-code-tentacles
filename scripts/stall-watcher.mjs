@@ -17,6 +17,9 @@ export const WAKE_EXIT = 3;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LOG_EVENT = /^\[[^\]]*\]\s+(NTIVE|CANON):\s+(\{.*\})\s*$/;
 const STALL_TEXT = /Reconnecting\.\.\.\s*\d+\/\d+|exceeded retry limit|429 Too Many Requests/;
+// KRA-9702: a dead Codex login and an exhausted 429 retry both end a turn that no nudge can resume.
+const AUTH_TEXT = /refresh token was already used|Please log out and sign in again|unauthori[sz]ed|\b401\b|token[ _-]?expired/i;
+const RETRY_429 = /exceeded retry limit.*last status:?\s*429/i;
 // Turn activity: turn and item events (tool, command, assistant message), raw or canonical.
 const NTIVE_ACTIVITY = /^(turn|item)\//;
 const CANON_ACTIVITY = /^(turn|item|content|tool)\./;
@@ -29,10 +32,11 @@ const isRecord = (value) => value !== null && typeof value === "object" && !Arra
  * or 429. The same text inside commands, output or assistant text never counts.
  */
 export function stallEvent(line) {
-  return lineKind(line) === "stall";
+  const kind = lineKind(line);
+  return kind != null && kind !== "activity";
 }
 
-/** "stall", "activity" or null (anything else, including unparseable lines). */
+/** "activity", a stall cause ("NONE", "AUTH_DEAD", "RETRY_EXHAUSTED_429") or null (anything else, including unparseable lines). */
 function lineKind(line) {
   const match = LOG_EVENT.exec(line);
   if (!match) return null;
@@ -41,15 +45,20 @@ function lineKind(line) {
   if (!isRecord(event)) return null;
   const name = match[1] === "NTIVE" ? event.method : event.type;
   if (typeof name === "string" && (match[1] === "NTIVE" ? NTIVE_ACTIVITY : CANON_ACTIVITY).test(name)) return "activity";
-  return isStallError(match[1], event) ? "stall" : null;
+  return errorCause(match[1], event);
 }
 
-function isStallError(tag, event) {
-  if (tag === "NTIVE" ? event.method !== "error" : !["runtime.warning", "runtime.error"].includes(event.type)) return false;
+/** Stall cause of an error event, or null when it is no disconnect, reconnect or 429 error. */
+function errorCause(tag, event) {
+  if (tag === "NTIVE" ? event.method !== "error" : !["runtime.warning", "runtime.error"].includes(event.type)) return null;
   const body = [event.payload, event.params].find(isRecord) ?? {};
   const error = [body.detail?.error, body.error, event.error].find(isRecord) ?? {};
-  if (isRecord(error.codexErrorInfo) && error.codexErrorInfo.responseStreamDisconnected != null) return true;
-  return [event.message, body.message, error.message, error.additionalDetails].some((text) => typeof text === "string" && STALL_TEXT.test(text));
+  const texts = [event.message, body.message, error.message, error.additionalDetails].filter((text) => typeof text === "string");
+  const disconnect = isRecord(error.codexErrorInfo) ? error.codexErrorInfo.responseStreamDisconnected : null;
+  if (disconnect == null && !texts.some((text) => STALL_TEXT.test(text))) return null;
+  // Auth markers only classify stall-shaped errors, so an unrelated MCP or tool 401 warning never counts.
+  if (texts.some((text) => AUTH_TEXT.test(text)) || (isRecord(disconnect) && disconnect.httpStatusCode === 401)) return "AUTH_DEAD";
+  return texts.some((text) => RETRY_429.test(text)) ? "RETRY_EXHAUSTED_429" : "NONE";
 }
 
 /**
@@ -58,11 +67,20 @@ function isStallError(tag, event) {
  * a stall; any turn activity after it (a recovered stream) is not.
  */
 export function stalledTail(text) {
+  return tailCause(text) != null;
+}
+
+/**
+ * KRA-9702: the cause of the newest stall error ("NONE" for an ordinary stall,
+ * "AUTH_DEAD", "RETRY_EXHAUSTED_429"), or null when the tail is no stall. Only
+ * the newest error counts; turn activity after any error clears it.
+ */
+export function tailCause(text) {
   for (const line of text.split("\n").reverse()) {
     const kind = lineKind(line);
-    if (kind) return kind === "stall";
+    if (kind) return kind === "activity" ? null : kind;
   }
-  return false;
+  return null;
 }
 
 function readTail(file) {
@@ -109,6 +127,13 @@ export function codexConcurrency(activeTurns) {
   return Object.fromEntries(counts);
 }
 
+// Owner alert without AI: one small file per wake. Never creates the directory.
+function writeAlert(dir, t, alert, log) {
+  try {
+    fs.writeFileSync(path.join(dir, `${Math.floor(t / 1000)}-${alert.threadId}.json`), JSON.stringify(alert) + "\n", { mode: 0o600, flag: "wx" });
+  } catch (error) { log("alert-failed", { threadId: alert.threadId, code: typeof error.code === "string" ? error.code : "error" }); }
+}
+
 function writeState(file, state) {
   const temporary = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(temporary, JSON.stringify(state, null, 2) + "\n", { mode: 0o600 });
@@ -125,11 +150,14 @@ export function tentaclesCli(bin = "tentacles") {
 }
 
 /**
- * One watcher pass. Returns the exit code: WAKE_EXIT when, after its last allowed
- * nudge, a thread's log tail is a stall idle past `idleMs`, 1 when observe fails, else 0.
+ * One watcher pass. Returns the exit code: WAKE_EXIT when a thread's log tail is a
+ * stall idle past `idleMs` and either its newest error is a dead login or an
+ * exhausted 429 retry (no nudge) or its last allowed nudge did not help;
+ * 1 when observe fails, else 0.
  */
 export async function runPass({ logDir, stateDir, dryRun = false, idleMs = IDLE_MS, now = Date.now,
-  cli = tentaclesCli(), out = (line) => process.stdout.write(`${line}\n`) }) {
+  cli = tentaclesCli(), out = (line) => process.stdout.write(`${line}\n`),
+  alertDir = process.env.TENTACLES_STALL_ALERT_DIR || null }) {
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const stateFile = path.join(stateDir, "stall-watcher.state.json");
   const t = now();
@@ -147,15 +175,22 @@ export async function runPass({ logDir, stateDir, dryRun = false, idleMs = IDLE_
     const file = path.join(logDir, `events.${threadId}.log`);
     let stat;
     try { stat = fs.statSync(file); } catch (error) { if (error.code === "ENOENT") { log("no-log", { threadId }); continue; } throw error; }
-    if (t - stat.mtimeMs <= idleMs || !stalledTail(readTail(file))) continue;
+    if (t - stat.mtimeMs <= idleMs) continue;
+    const cause = tailCause(readTail(file));
+    if (!cause) continue;
     const entry = state.threads[threadId] ??= { nudges: [] };
     const last = entry.nudges.at(-1);
+    const wakeOwner = (wakeCause) => {
+      entry.wokeAt = t; wake.push({ threadId, cause: wakeCause }); log("wake", { threadId, cause: wakeCause });
+      if (alertDir && !dryRun) writeAlert(alertDir, t, { threadId, cause: wakeCause, nudges: entry.nudges.length,
+        lastEventAt: new Date(stat.mtimeMs).toISOString() }, log);
+    };
+    // A dead login or an exhausted 429 retry only answers a nudge with another 429 (KRA-9702).
+    if (cause !== "NONE") { if (entry.wokeAt == null) wakeOwner(cause); continue; }
     if (entry.nudges.length >= MAX_NUDGES) {
       // Reaching here means the tail is a stall and idle past the window, whether or
       // not the log moved since the last nudge (a nudged turn that disconnected again).
-      if (t - last.at >= idleMs && entry.wokeAt == null) {
-        entry.wokeAt = t; wake.push(threadId); log("wake", { threadId });
-      }
+      if (t - last.at >= idleMs && entry.wokeAt == null) wakeOwner("STALLED_AFTER_NUDGES");
       continue;
     }
     // After a 429 the provider needs time; never nudge one thread sooner than BACKOFF_MS.
@@ -170,7 +205,8 @@ export async function runPass({ logDir, stateDir, dryRun = false, idleMs = IDLE_
     log(result.code === 0 ? "nudge" : "nudge-failed", { threadId, nudge: entry.nudges.length, code: result.code });
   }
   if (!dryRun) writeState(stateFile, state);
-  for (const threadId of wake) out(`WAKE ${threadId}`);
+  // Ordinary wakes keep the bare "WAKE <threadId>" line; classified ones append the cause.
+  for (const { threadId, cause } of wake) out(cause === "STALLED_AFTER_NUDGES" ? `WAKE ${threadId}` : `WAKE ${threadId} cause=${cause}`);
   return wake.length ? WAKE_EXIT : 0;
 }
 

@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- `scripts/stall-watcher.mjs` classifies the newest provider error of a stalled thread (KRA-9702): a dead login (`AUTH_DEAD`) or an exhausted 429 retry (`RETRY_EXHAUSTED_429`) gets no nudge and wakes at once with exit 3 and `WAKE <threadId> cause=<CAUSE>`; ordinary stalls keep two nudges and the bare `WAKE <threadId>`. 429 retry-limit stalls that previously got two nudges now wake at once with cause `RETRY_EXHAUSTED_429`. Auth markers only classify errors that are already stall-shaped (a disconnect, reconnect or 429), so an unrelated MCP or tool 401 warning never counts. With `TENTACLES_STALL_ALERT_DIR` set, each wake writes a 0600 `<epoch>-<threadId>.json` alert (thread id, cause, nudges, last event time; no title) into that existing directory.
+
 ## [0.5.0-jack.3] - 2026-10-28
 
 ### Added

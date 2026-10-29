@@ -1,0 +1,8 @@
+[2026-10-28T09:40:00.000Z] NTIVE: {"method":"turn/started","payload":{"turn":{"status":"inProgress"}}}
+[2026-10-28T09:40:01.000Z] NTIVE: {"method":"error","payload":{"willRetry":true,"error":{"message":"stream disconnected before completion: WebSocket protocol error: Connection reset without closing handshake","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":null}}}}}
+[2026-10-28T09:40:02.000Z] NTIVE: {"method":"error","payload":{"willRetry":true,"error":{"message":"stream disconnected before completion: WebSocket protocol error: Connection reset without closing handshake","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":null}}}}}
+[2026-10-28T09:40:03.000Z] NTIVE: {"method":"error","payload":{"willRetry":true,"error":{"message":"stream disconnected before completion: WebSocket protocol error: Connection reset without closing handshake","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":null}}}}}
+[2026-10-28T09:40:04.000Z] NTIVE: {"method":"error","payload":{"willRetry":true,"error":{"message":"stream disconnected before completion: WebSocket protocol error: Connection reset without closing handshake","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":null}}}}}
+[2026-10-28T09:40:05.000Z] NTIVE: {"method":"error","payload":{"willRetry":true,"error":{"message":"stream disconnected before completion","additionalDetails":"exceeded retry limit, last status: 429 Too Many Requests","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}}}}}
+[2026-10-28T09:41:00.000Z] NTIVE: {"method":"turn/started","payload":{"turn":{"status":"inProgress"}}}
+[2026-10-28T09:41:05.000Z] NTIVE: {"method":"item/completed","payload":{"item":{"type":"commandExecution","status":"completed"}}}
