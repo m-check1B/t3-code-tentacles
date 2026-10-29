@@ -39,7 +39,7 @@
   <!-- 2 tentacles -->
   <text x="290" y="140" class="sans k">2 · TENTACLES CHAIR CLI</text>
   <rect x="290" y="152" width="330" height="262" rx="8" fill="#f3f2ee" stroke="#1a1a1a" stroke-width="1.5"/>
-  <text x="310" y="186" class="serif h">Tentacles 0.5.0-jack.2 source</text>
+  <text x="310" y="186" class="serif h">Tentacles 0.5 source</text>
   <text x="310" y="218" class="mono m">doctor --json</text>
   <text x="462" y="218" class="sans n">which labs are ready here</text>
   <text x="310" y="246" class="mono m">originate</text>
