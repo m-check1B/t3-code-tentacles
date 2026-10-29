@@ -9,7 +9,9 @@ import {
   DEFAULT_BRIDGE_STATE_FILE,
   DEFAULT_CODEX_APP_INSTANCE_ID,
   DEFAULT_DEEPSEEK_INSTANCE_ID,
+  BUILT_IN_DEEPSEEK_MODEL,
   DEFAULT_DEEPSEEK_MODEL,
+  deepseekModelOverride,
   DEFAULT_HERMES_PROFILE,
   DEFAULT_HERMES_URL,
   DEFAULT_INSTANCE_ID,
@@ -1157,14 +1159,32 @@ function fullModelCatalog(provider, allModels) {
   return allModels.map((id) => entries.get(id));
 }
 
-function liveDefaultModel(provider, instanceId, allModels) {
+// KRA-6909: the one lab default shared by doctor and originate without --model.
+// DeepSeek: T3_DEEPSEEK_MODEL, then the installed provider's DEEPSEEK_MODEL, then
+// the built-in model. A sensitive or redacted entry is never read. The lab id, not
+// the harness, routes here, so a DeepSeek harness at another id keeps that lab's default.
+export function labDefaultModel(instanceId, instance) {
+  if (baseLabId(instanceId) !== "deepseek") return defaultModelForLab(instanceId);
+  const variable = providerHarness(instance) === DEEPSEEK_HARNESS_VALUE
+    ? instance.environment.find((entry) => entry?.name === "DEEPSEEK_MODEL" && entry.sensitive !== true && entry.valueRedacted !== true)
+    : null;
+  return deepseekModelOverride() || modelLabel(variable?.value) || BUILT_IN_DEEPSEEK_MODEL;
+}
+
+export async function originateDefaultModel(client, instanceId) {
+  if (baseLabId(instanceId) !== "deepseek") return defaultModelForLab(instanceId);
+  const settings = await client.getSettings();
+  return labDefaultModel(instanceId, settings?.providerInstances?.[instanceId]);
+}
+
+function liveDefaultModel(provider, instanceId, allModels, instance) {
   const marked = (Array.isArray(provider?.models) ? provider.models : [])
     .find((model) => model?.isDefault === true && normalizedModelSlugs({ models: [model] }).length);
   if (marked) return normalizedModelSlugs({ models: [marked] })[0];
   // Older snapshots can expose the default directly instead of marking a row.
   const declared = modelLabel(provider?.defaultModel);
   if (declared && allModels.includes(declared)) return declared;
-  return defaultModelForLab(instanceId);
+  return labDefaultModel(instanceId, instance);
 }
 
 function providerEnabled(settings, instanceId, configProvider) {
@@ -1257,7 +1277,7 @@ function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
   const installed = configProvider?.installed === true || configured;
   const kind = labKind(instanceId);
   const allModels = normalizedModelSlugs(configProvider);
-  const defaultModel = liveDefaultModel(configProvider, instanceId, allModels);
+  const defaultModel = liveDefaultModel(configProvider, instanceId, allModels, instance);
   const defaultAvailable = kind === "explicit" ? null : Boolean(defaultModel && allModels.includes(defaultModel));
   const models = modelsMode === "full" ? [...allModels] : allModels.slice(0, DOCTOR_MODEL_LIMIT);
   if (defaultAvailable && !models.includes(defaultModel)) {

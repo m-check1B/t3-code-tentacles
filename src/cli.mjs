@@ -18,6 +18,7 @@ import {
   installProvider,
   installPiProvider,
   originate,
+  originateDefaultModel,
   removeDeepSeekProvider,
   removeCodexAppProvider,
   removeKimiProvider,
@@ -348,18 +349,20 @@ async function main() {
   assertNoReservedRemovedInstance(command, instanceId);
   const model = options.model || DEFAULT_MODEL;
   let originateSelection = null;
+  const selectOriginateModel = (labId, labModel) => resolveModelSelection({
+    instanceId: labId,
+    model: labModel,
+    options: parseModelOptionFlags(options.option),
+    budget: options.budget,
+  });
   if (command === "originate") {
     const labInstanceId = requireAdvertisedLab(options.instance || DEFAULT_INSTANCE_ID, "--instance");
+    // Validates --instance/--option early; without --model the real default is resolved after the client exists.
     const labModel = options.model || defaultModelForLab(labInstanceId);
     if (!labModel) {
       throw new Error(`${labInstanceId} is an explicit lab; pass --model with a model T3 currently advertises`);
     }
-    originateSelection = resolveModelSelection({
-      instanceId: labInstanceId,
-      model: labModel,
-      options: parseModelOptionFlags(options.option),
-      budget: options.budget,
-    });
+    originateSelection = selectOriginateModel(labInstanceId, labModel);
   }
 
   if (command === "capabilities") {
@@ -580,6 +583,11 @@ async function main() {
   }
   if (command === "originate") {
     const runtimeMode = requireExplicitRuntimeMode(options["runtime-mode"], "--runtime-mode");
+    // KRA-6909: without --model, use the same default doctor reports for this lab.
+    if (!options.model) {
+      const { instanceId: labInstanceId } = originateSelection;
+      originateSelection = selectOriginateModel(labInstanceId, await originateDefaultModel(client, labInstanceId));
+    }
     if (originateSelection.instanceId === "hermes") {
       requireRequestedProviderConstructable(originateSelection.model);
     }
