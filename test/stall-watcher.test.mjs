@@ -325,15 +325,33 @@ test("tailCause classifies only the newest error (KRA-9702)", () => {
   assert.equal(tailCause(fixture("recovered-after-429.log")), null, "an old 429 followed by normal events");
   assert.equal(tailCause(fixture("stalled-429.log")), "NONE", "ordinary reconnect stall");
   assert.equal(tailCause(fixture("healthy.log")), null);
-  assert.equal(tailCause(errorLine({ message: "unauthorized" })), "AUTH_DEAD");
-  assert.equal(tailCause(errorLine({ message: "token_expired" })), "AUTH_DEAD");
+  const dropped = { codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: null } } };
+  assert.equal(tailCause(errorLine({ ...dropped, message: "unauthorized" })), "AUTH_DEAD");
+  assert.equal(tailCause(errorLine({ ...dropped, message: "token_expired" })), "AUTH_DEAD");
   assert.equal(tailCause(errorLine({ codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 401 } } })), "AUTH_DEAD");
   assert.equal(tailCause(errorLine({ additionalDetails: "exceeded retry limit, last status: 429 Too Many Requests", message: "Please log out and sign in again" })),
     "AUTH_DEAD", "an auth marker wins over the 429");
   assert.equal(tailCause(errorLine({ additionalDetails: "exceeded retry limit, last status: 500" })), "NONE", "retry limit without 429");
+  assert.equal(tailCause(errorLine({ message: "exceeded retry limit, last status: 429 Too Many Requests" })), "RETRY_EXHAUSTED_429",
+    "the retry-limit text in message counts too");
   assert.equal(tailCause(`${fixture("stalled-retry-exhausted-429.log")}${errorLine({ message: "Reconnecting... 1/5" })}\n`), "NONE",
     "a newer ordinary reconnect replaces the older 429");
   assert.equal(stalledTail(fixture("stalled-auth-dead.log")), true);
+});
+
+test("auth words only classify stall-shaped errors (KRA-9702 B3 P2-1)", async (t) => {
+  const warning = (message) => `[2026-10-28T09:41:00.000Z] CANON: ${JSON.stringify({ type: "runtime.warning", payload: { message } })}`;
+  const disconnect = errorLine({ codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: null } } });
+  assert.equal(tailCause(`${disconnect}\n${warning("MCP server linear: 401 Unauthorized")}\n`), "NONE",
+    "an MCP 401 warning after a disconnect stays an ordinary stall");
+  assert.equal(tailCause(warning("tool returned unauthorized")), null, "a lone auth warning is no stall");
+  const h = harness([A]); t.after(h.cleanup);
+  h.setLog(A, "stalled-429.log", T0 - 11 * MIN);
+  h.appendLog(A, T0 - 11 * MIN, warning("MCP server linear: 401 Unauthorized"));
+  await h.pass(); h.clock.t = T0 + 10 * MIN; await h.pass();
+  assert.equal(h.sends().length, 2, "two nudges as for any ordinary stall");
+  h.clock.t = T0 + 20 * MIN; assert.equal(await h.pass(), WAKE_EXIT);
+  assert.deepEqual(h.out, [`WAKE ${A}`]);
 });
 
 test("an exhausted 429 retry (4 resets then 429) wakes at once with no nudge (KRA-9702)", async (t) => {
@@ -390,13 +408,13 @@ test("TENTACLES_STALL_ALERT_DIR gets one 0600 alert file per wake; unset writes 
   assert.deepEqual(fs.readdirSync(alerts), [path.basename(file)]);
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")),
-    { threadId: A, cause: "RETRY_EXHAUSTED_429", nudges: 0, lastEventAt: new Date(T0 - 11 * MIN).toISOString(), title: "t" });
+    { threadId: A, cause: "RETRY_EXHAUSTED_429", nudges: 0, lastEventAt: new Date(T0 - 11 * MIN).toISOString() });
   // B is an ordinary stall: two nudges, then a wake whose alert says so.
   h.clock.t = T0 + 10 * MIN; await h.pass(); h.clock.t = T0 + 20 * MIN;
   assert.equal(await h.pass(), WAKE_EXIT);
   assert.deepEqual(h.out, [`WAKE ${A} cause=RETRY_EXHAUSTED_429`, `WAKE ${B}`]);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(alerts, `${(T0 + 20 * MIN) / 1000}-${B}.json`), "utf8")),
-    { threadId: B, cause: "STALLED_AFTER_NUDGES", nudges: 2, lastEventAt: new Date(T0 - 11 * MIN).toISOString(), title: "t" });
+    { threadId: B, cause: "STALLED_AFTER_NUDGES", nudges: 2, lastEventAt: new Date(T0 - 11 * MIN).toISOString() });
 
   delete process.env.TENTACLES_STALL_ALERT_DIR;
   const quiet = harness([A]); t.after(quiet.cleanup);

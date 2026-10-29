@@ -48,16 +48,17 @@ function lineKind(line) {
   return errorCause(match[1], event);
 }
 
-/** Stall cause of an error event, or null when it is no disconnect, reconnect, 429 or auth error. */
+/** Stall cause of an error event, or null when it is no disconnect, reconnect or 429 error. */
 function errorCause(tag, event) {
   if (tag === "NTIVE" ? event.method !== "error" : !["runtime.warning", "runtime.error"].includes(event.type)) return null;
   const body = [event.payload, event.params].find(isRecord) ?? {};
   const error = [body.detail?.error, body.error, event.error].find(isRecord) ?? {};
   const texts = [event.message, body.message, error.message, error.additionalDetails].filter((text) => typeof text === "string");
   const disconnect = isRecord(error.codexErrorInfo) ? error.codexErrorInfo.responseStreamDisconnected : null;
-  if (texts.some((text) => AUTH_TEXT.test(text)) || (isRecord(disconnect) && disconnect.httpStatusCode === 401)) return "AUTH_DEAD";
   if (disconnect == null && !texts.some((text) => STALL_TEXT.test(text))) return null;
-  return typeof error.additionalDetails === "string" && RETRY_429.test(error.additionalDetails) ? "RETRY_EXHAUSTED_429" : "NONE";
+  // Auth markers only classify stall-shaped errors, so an unrelated MCP or tool 401 warning never counts.
+  if (texts.some((text) => AUTH_TEXT.test(text)) || (isRecord(disconnect) && disconnect.httpStatusCode === 401)) return "AUTH_DEAD";
+  return texts.some((text) => RETRY_429.test(text)) ? "RETRY_EXHAUSTED_429" : "NONE";
 }
 
 /**
@@ -170,8 +171,7 @@ export async function runPass({ logDir, stateDir, dryRun = false, idleMs = IDLE_
   log("concurrency", { codex: codexConcurrency(activeTurns) });
   const state = readState(stateFile, { t, dryRun, log });
   const wake = [];
-  for (const turn of activeTurns.filter((turn) => typeof turn?.threadId === "string" && UUID.test(turn.threadId))) {
-    const { threadId } = turn;
+  for (const threadId of activeTurns.map((turn) => turn?.threadId).filter((id) => typeof id === "string" && UUID.test(id))) {
     const file = path.join(logDir, `events.${threadId}.log`);
     let stat;
     try { stat = fs.statSync(file); } catch (error) { if (error.code === "ENOENT") { log("no-log", { threadId }); continue; } throw error; }
@@ -183,7 +183,7 @@ export async function runPass({ logDir, stateDir, dryRun = false, idleMs = IDLE_
     const wakeOwner = (wakeCause) => {
       entry.wokeAt = t; wake.push({ threadId, cause: wakeCause }); log("wake", { threadId, cause: wakeCause });
       if (alertDir && !dryRun) writeAlert(alertDir, t, { threadId, cause: wakeCause, nudges: entry.nudges.length,
-        lastEventAt: new Date(stat.mtimeMs).toISOString(), ...(typeof turn.title === "string" ? { title: turn.title } : {}) }, log);
+        lastEventAt: new Date(stat.mtimeMs).toISOString() }, log);
     };
     // A dead login or an exhausted 429 retry only answers a nudge with another 429 (KRA-9702).
     if (cause !== "NONE") { if (entry.wokeAt == null) wakeOwner(cause); continue; }
