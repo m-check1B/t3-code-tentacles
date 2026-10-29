@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { reauthenticate } from "./t3-auth.mjs";
+import { createAutoReauth, reauthenticate } from "./t3-auth.mjs";
 import { COMPUTER_COMMANDS, ensureForward, loadComputer, remoteIssueSpawn } from "./computers.mjs";
 import { requireFullThreadId, T3Client } from "./t3-client.mjs";
 import {
@@ -288,6 +288,9 @@ Environment:
   TENTACLES_COMPUTER        default for --computer NAME (doctor, observe, report, act, orchestrate, originate, reauth):
                             run against the T3 environment on that computer through an SSH loopback forward
   TENTACLES_COMPUTERS_FILE  default <state dir>/computers.json
+  TENTACLES_T3_AUTO_REAUTH  0 disables the local one-time reauth + retry on a T3 401 (default on)
+  TENTACLES_T3_BIN          T3 CLI for that reauth (default: t3 on PATH, else newest <T3 home>/runtime/versions/*/t3)
+  TENTACLES_T3_HOME         T3 home for that reauth (default ~/.t3)
   TENTACLES_STALL_IDLE_MINUTES  default 10: idle window before report/observe call a disconnected turn stalled
   T3_HERMES_TOKEN_FILE      default ~/.local/state/t3-hermes-bridge/t3.token
   T3_HERMES_MODEL           default deepseek:deepseek-v4-flash
@@ -366,7 +369,7 @@ async function main() {
     if (options["no-labs"] !== true) {
       try {
         doctorReport = await Promise.race([
-          doctor(new T3Client(), { pairStateFile: DEFAULT_PAIR_STATE_FILE }),
+          doctor(new T3Client({ reauth: createAutoReauth() }), { pairStateFile: DEFAULT_PAIR_STATE_FILE }),
           delay(10_000).then(() => null),
         ]);
       } catch {
@@ -425,7 +428,7 @@ async function main() {
     return;
   }
   if (computer) await ensureForward(computer);
-  const client = computer ? new T3Client({ baseUrl: computer.t3Url, tokenFile: computer.tokenFile }) : new T3Client();
+  const client = computer ? new T3Client({ baseUrl: computer.t3Url, tokenFile: computer.tokenFile }) : new T3Client({ reauth: createAutoReauth() });
 
   if (command === "doctor") {
     const result = await doctor(client, {

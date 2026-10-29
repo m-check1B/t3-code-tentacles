@@ -455,6 +455,15 @@ connects to loopback T3/Hermes origins.
 T3 rejects expired, revoked or mismatched bearer sessions with 401. Tentacles
 re-reads its private token file on 401 and retries once only if an operator has
 rotated that file. It never retries a network error or an ambiguous server failure.
+
+If the file was not rotated, local CLI commands (not `--computer`) run the
+`reauth` flow below once per process and retry the rejected request once (a 401
+means T3 acted on nothing). The T3 CLI is `TENTACLES_T3_BIN`, else `t3` on PATH,
+else the newest semantic version under `<T3 home>/runtime/versions/*/t3`
+(`TENTACLES_T3_HOME`, default `~/.t3`; symlinks leaving the T3 home are ignored).
+A missing CLI, a failed issuance or a second 401 fails as before, naming the
+exact manual command with the resolved paths. Set `TENTACLES_T3_AUTO_REAUTH=0`
+to disable it. Library `T3Client` instances do this only with a `reauth` hook.
 Explicit in-memory bearers are not replaced from disk. `doctor` reports
 `t3.auth.status` as `valid` or `invalid`; invalid auth exits nonzero, prints the
 recovery action, and produces no ready lab matrix.
@@ -476,8 +485,8 @@ The parent directory must be owner-controlled and private (0700).
 `reauth` invokes `t3 auth session issue --base-dir ... --ttl 30d --token-only`,
 captures all output privately, validates and atomically replaces the 0600 bearer
 file, and prints only a success receipt. Failed issuance, unsafe files, malformed
-output or concurrent replacement preserve the existing file. It runs only when
-explicitly requested; normal 401 handling never issues a new privileged session.
+output or concurrent replacement preserve the existing file. Besides an explicit
+`tentacles reauth`, it runs only as the one-time local 401 recovery above.
 
 Stock v0.0.42 and the exact V2 nightly v0.0.46-nightly.20261003.2610 expose the
 same session-issue flags and no local refresh grant (source comparison). This is

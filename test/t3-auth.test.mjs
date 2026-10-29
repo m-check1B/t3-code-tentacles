@@ -129,7 +129,7 @@ test("doctor CLI emits structured invalid auth and a nonzero exit", async t => {
   t.after(() => server.close());
   const address = server.address();
   try {
-    await promisify(execFile)(process.execPath, ["src/cli.mjs", "doctor", "--json"], { env: { ...process.env, T3_URL: `http://127.0.0.1:${address.port}`, T3_HERMES_TOKEN_FILE: f.tokenFile } });
+    await promisify(execFile)(process.execPath, ["src/cli.mjs", "doctor", "--json"], { env: { ...process.env, T3_URL: `http://127.0.0.1:${address.port}`, T3_HERMES_TOKEN_FILE: f.tokenFile, TENTACLES_T3_AUTO_REAUTH: "0" } });
     assert.fail("expected nonzero exit");
   } catch (error) {
     assert.equal(error.code, 1);
