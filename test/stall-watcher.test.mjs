@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { codexConcurrency, NUDGE_TEXT, runPass, stalledTail, WAKE_EXIT } from "../scripts/stall-watcher.mjs";
+import { codexConcurrency, NUDGE_TEXT, runPass, stalledTail, tailCause, WAKE_EXIT } from "../scripts/stall-watcher.mjs";
 
 const FIXTURES = path.join(import.meta.dirname, "fixtures", "stall-watcher");
 const A = "aaaaaaaa-1111-4111-8111-111111111111";
@@ -313,4 +313,104 @@ test("observe failure exits 1; non-UUID ids never become paths", async (t) => {
   const failing = await runPass({ logDir: h.stateDir, stateDir: h.stateDir, now: () => T0, cli: async () => ({ code: 2, stdout: "" }), out: () => {} });
   assert.equal(failing, 1);
   assert.deepEqual(h.actions().map((entry) => entry.action), ["observe-failed"]);
+});
+
+// KRA-9702: classify the newest error; a dead login or an exhausted 429 retry wakes the owner without a nudge.
+const fixture = (name) => fs.readFileSync(path.join(FIXTURES, name), "utf8");
+const errorLine = (error) => `[2026-10-28T09:40:00.000Z] NTIVE: ${JSON.stringify({ method: "error", payload: { willRetry: true, error } })}`;
+
+test("tailCause classifies only the newest error (KRA-9702)", () => {
+  assert.equal(tailCause(fixture("stalled-retry-exhausted-429.log")), "RETRY_EXHAUSTED_429", "4 resets then the 429");
+  assert.equal(tailCause(fixture("stalled-auth-dead.log")), "AUTH_DEAD");
+  assert.equal(tailCause(fixture("recovered-after-429.log")), null, "an old 429 followed by normal events");
+  assert.equal(tailCause(fixture("stalled-429.log")), "NONE", "ordinary reconnect stall");
+  assert.equal(tailCause(fixture("healthy.log")), null);
+  assert.equal(tailCause(errorLine({ message: "unauthorized" })), "AUTH_DEAD");
+  assert.equal(tailCause(errorLine({ message: "token_expired" })), "AUTH_DEAD");
+  assert.equal(tailCause(errorLine({ codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 401 } } })), "AUTH_DEAD");
+  assert.equal(tailCause(errorLine({ additionalDetails: "exceeded retry limit, last status: 429 Too Many Requests", message: "Please log out and sign in again" })),
+    "AUTH_DEAD", "an auth marker wins over the 429");
+  assert.equal(tailCause(errorLine({ additionalDetails: "exceeded retry limit, last status: 500" })), "NONE", "retry limit without 429");
+  assert.equal(tailCause(`${fixture("stalled-retry-exhausted-429.log")}${errorLine({ message: "Reconnecting... 1/5" })}\n`), "NONE",
+    "a newer ordinary reconnect replaces the older 429");
+  assert.equal(stalledTail(fixture("stalled-auth-dead.log")), true);
+});
+
+test("an exhausted 429 retry (4 resets then 429) wakes at once with no nudge (KRA-9702)", async (t) => {
+  const h = harness([A]); t.after(h.cleanup);
+  h.setLog(A, "stalled-retry-exhausted-429.log", T0 - 11 * MIN);
+  assert.equal(await h.pass(), WAKE_EXIT);
+  assert.deepEqual(h.sends(), []);
+  assert.deepEqual(h.out, [`WAKE ${A} cause=RETRY_EXHAUSTED_429`]);
+  assert.deepEqual(h.actions().map((entry) => [entry.action, entry.cause]), [["wake", "RETRY_EXHAUSTED_429"]]);
+  h.clock.t = T0 + 60 * MIN; assert.equal(await h.pass(), 0, "WAKE fires once");
+  assert.deepEqual(h.sends(), []);
+});
+
+test("an auth-dead error wakes with no nudge and never logs provider text (KRA-9702)", async (t) => {
+  const h = harness([A]); t.after(h.cleanup);
+  h.setLog(A, "stalled-auth-dead.log", T0 - 11 * MIN);
+  assert.equal(await h.pass(), WAKE_EXIT);
+  assert.deepEqual(h.sends(), []);
+  assert.deepEqual(h.out, [`WAKE ${A} cause=AUTH_DEAD`]);
+  assert.doesNotMatch(fs.readFileSync(path.join(h.stateDir, "stall-watcher.log"), "utf8"), /refresh token|sign in/i);
+});
+
+test("an old 429 followed by normal events is never nudged or woken (KRA-9702)", async (t) => {
+  const h = harness([A]); t.after(h.cleanup);
+  h.setLog(A, "recovered-after-429.log", T0 - 30 * MIN);
+  assert.equal(await h.pass(), 0);
+  assert.deepEqual(h.sends(), []);
+  assert.deepEqual(h.out, []);
+});
+
+test("a 429 after the first nudge wakes instead of a second nudge (KRA-9702)", async (t) => {
+  const h = harness([A]); t.after(h.cleanup);
+  h.setLog(A, "stalled-429.log", T0 - 11 * MIN);
+  await h.pass();
+  assert.equal(h.sends().length, 1);
+  h.appendLog(A, T0 + MIN, errorLine({ additionalDetails: "exceeded retry limit, last status: 429 Too Many Requests",
+    codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 429 } } }));
+  h.clock.t = T0 + 12 * MIN; assert.equal(await h.pass(), WAKE_EXIT);
+  assert.deepEqual(h.out, [`WAKE ${A} cause=RETRY_EXHAUSTED_429`]);
+  for (const at of [30, 60]) { h.clock.t = T0 + at * MIN; assert.equal(await h.pass(), 0); }
+  assert.equal(h.sends().length, 1, "never a second nudge");
+});
+
+test("TENTACLES_STALL_ALERT_DIR gets one 0600 alert file per wake; unset writes none (KRA-9702)", async (t) => {
+  const saved = process.env.TENTACLES_STALL_ALERT_DIR;
+  t.after(() => { if (saved === undefined) delete process.env.TENTACLES_STALL_ALERT_DIR; else process.env.TENTACLES_STALL_ALERT_DIR = saved; });
+  const h = harness([A, B]); t.after(h.cleanup);
+  const alerts = path.join(h.stateDir, "..", "alerts"); fs.mkdirSync(alerts);
+  process.env.TENTACLES_STALL_ALERT_DIR = alerts;
+  h.setLog(A, "stalled-retry-exhausted-429.log", T0 - 11 * MIN);
+  h.setLog(B, "stalled-429.log", T0 - 11 * MIN);
+  assert.equal(await h.pass(), WAKE_EXIT);
+  const file = path.join(alerts, `${T0 / 1000}-${A}.json`);
+  assert.deepEqual(fs.readdirSync(alerts), [path.basename(file)]);
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")),
+    { threadId: A, cause: "RETRY_EXHAUSTED_429", nudges: 0, lastEventAt: new Date(T0 - 11 * MIN).toISOString(), title: "t" });
+  // B is an ordinary stall: two nudges, then a wake whose alert says so.
+  h.clock.t = T0 + 10 * MIN; await h.pass(); h.clock.t = T0 + 20 * MIN;
+  assert.equal(await h.pass(), WAKE_EXIT);
+  assert.deepEqual(h.out, [`WAKE ${A} cause=RETRY_EXHAUSTED_429`, `WAKE ${B}`]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(alerts, `${(T0 + 20 * MIN) / 1000}-${B}.json`), "utf8")),
+    { threadId: B, cause: "STALLED_AFTER_NUDGES", nudges: 2, lastEventAt: new Date(T0 - 11 * MIN).toISOString(), title: "t" });
+
+  delete process.env.TENTACLES_STALL_ALERT_DIR;
+  const quiet = harness([A]); t.after(quiet.cleanup);
+  quiet.setLog(A, "stalled-auth-dead.log", T0 - 11 * MIN);
+  assert.equal(await quiet.pass(), WAKE_EXIT);
+  assert.deepEqual(fs.readdirSync(path.join(quiet.stateDir, "..")).sort(), ["logs", "state"], "no alert file anywhere");
+});
+
+test("a missing alert directory is never created; the wake still happens (KRA-9702)", async (t) => {
+  const h = harness([A]); t.after(h.cleanup);
+  const missing = path.join(h.stateDir, "..", "no-such-dir");
+  h.setLog(A, "stalled-auth-dead.log", T0 - 11 * MIN);
+  assert.equal(await h.pass({ alertDir: missing }), WAKE_EXIT);
+  assert.equal(fs.existsSync(missing), false);
+  assert.deepEqual(h.actions().map((entry) => [entry.action, entry.code]), [["wake", undefined], ["alert-failed", "ENOENT"]]);
+  assert.deepEqual(h.out, [`WAKE ${A} cause=AUTH_DEAD`]);
 });
