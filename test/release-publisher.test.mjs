@@ -56,6 +56,23 @@ test("checksum mismatch and missing CHANGELOG entry fail before publication", as
   await assert.rejects(publishRelease({ ...f, runGh }), /checksum/);
 });
 
+test("a heading-only CHANGELOG entry fails naming the version; a normal entry publishes the whole section", async (t) => {
+  const f = fixture(t);
+  const runGh = async () => assert.fail("must not publish");
+  for (const changelog of [
+    "# Changelog\n\n## [0.4.1-jack.2] - 2026-10-24\n## [0.4.1]\n\nOlder notes.\n",
+    "# Changelog\n\n## [0.4.1-jack.2] - 2026-10-24\n\n \n\t\n## [0.4.1]\n\nOlder notes.\n",
+    "# Changelog\n\n## [0.4.1-jack.2] - 2026-10-24",
+  ]) {
+    fs.writeFileSync(path.join(f.cwd, "CHANGELOG.md"), changelog);
+    await assert.rejects(publishRelease({ ...f, runGh }), /Empty CHANGELOG\.md entry for 0\.4\.1-jack\.2/);
+  }
+  fs.writeFileSync(path.join(f.cwd, "CHANGELOG.md"), "# Changelog\n\n## [0.4.1-jack.2] - 2026-10-24\n\nExact release notes.\n\n## [0.4.1]\n\nOlder notes.\n");
+  let notes;
+  await publishRelease({ ...f, runGh: async (args) => { notes = fs.readFileSync(args[args.indexOf("--notes-file") + 1], "utf8"); } });
+  assert.equal(notes, "## [0.4.1-jack.2] - 2026-10-24\n\nExact release notes.\n\n");
+});
+
 test("gh errors are suppressed and temporary notes are removed", async (t) => {
   const f = fixture(t);
   let notesFile;

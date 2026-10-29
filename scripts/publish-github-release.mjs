@@ -32,7 +32,9 @@ export async function publishRelease({ environment = process.env, cwd = process.
   const changelog = fs.readFileSync(path.join(cwd, "CHANGELOG.md"), "utf8");
   const sections = changelog.split(/(?=^## \[)/m);
   const notes = sections.find((section) => section.startsWith(`## [${metadata.version}]`));
-  if (!notes?.trim()) throw new Error("Missing version entry in CHANGELOG.md");
+  if (!notes) throw new Error("Missing version entry in CHANGELOG.md");
+  // The heading alone is not release notes; only the body counts.
+  if (!notes.replace(/^.*\n?/, "").trim()) throw new Error(`Empty CHANGELOG.md entry for ${metadata.version}`);
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles-release-notes-"));
   const notesFile = path.join(temporary, "notes.md");
   try {
