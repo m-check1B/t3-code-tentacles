@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.5.0-jack.4] - 2026-10-29
+
 ### Added
 
 - No-AI origination-ledger counter `scripts/ledger-count-alert.mjs` with `docs/ledger-count-alert.plist.sample` (KRA-9690): read-only, never takes the state lock or prints keys; prints `LEDGER <count>/1000 <host>` and at 800 keys (950: ` CRITICAL`) exits 3 with `WAKE ledger count=<n> limit=1000 host=<host>`; optional 0600 alert file in `LEDGER_ALERT_DIR`. `docs/remote-pairing.md` adds the mini ssh-read note and the manual rotation runbook. Source checkout only.
