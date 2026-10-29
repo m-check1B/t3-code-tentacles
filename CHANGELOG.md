@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.5.0-jack.6] - 2026-10-30
+
+### Security
+
+- 0.5.0-jack.1 to 0.5.0-jack.5 created Local Talk workspaces without the instruction guard, so a Local turn could load the owner's home `CLAUDE.md`, `AGENTS.md` or user memory. This release guards new workspaces on originate (KRA-7502) and existing ones on their next paired `continue` (KRA-9781).
+
 ### Fixed
 
 - `scripts/publish-github-release.mjs` rejects a CHANGELOG section that is only its version heading (or a heading plus blank lines) with `Empty CHANGELOG.md entry for <version>`, instead of publishing a heading-only release note. A normal section is published unchanged.
