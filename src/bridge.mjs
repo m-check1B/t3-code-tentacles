@@ -1161,11 +1161,11 @@ function fullModelCatalog(provider, allModels) {
 
 // KRA-6909: the one lab default shared by doctor and originate without --model.
 // DeepSeek: T3_DEEPSEEK_MODEL, then the installed provider's DEEPSEEK_MODEL, then
-// the built-in model. A sensitive or redacted entry is never read.
+// the built-in model. A sensitive or redacted entry is never read. The lab id, not
+// the harness, routes here, so a DeepSeek harness at another id keeps that lab's default.
 export function labDefaultModel(instanceId, instance) {
-  const deepseek = providerHarness(instance) === DEEPSEEK_HARNESS_VALUE;
-  if (!deepseek && baseLabId(instanceId) !== "deepseek") return defaultModelForLab(instanceId);
-  const variable = deepseek
+  if (baseLabId(instanceId) !== "deepseek") return defaultModelForLab(instanceId);
+  const variable = providerHarness(instance) === DEEPSEEK_HARNESS_VALUE
     ? instance.environment.find((entry) => entry?.name === "DEEPSEEK_MODEL" && entry.sensitive !== true && entry.valueRedacted !== true)
     : null;
   return deepseekModelOverride() || modelLabel(variable?.value) || BUILT_IN_DEEPSEEK_MODEL;

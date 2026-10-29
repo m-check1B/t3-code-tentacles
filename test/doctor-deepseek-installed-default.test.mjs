@@ -11,25 +11,25 @@ import { doctor, installDeepSeekProvider, originateDefaultModel } from "../src/b
 const INSTALLED = "synthetic/deepseek-installed";
 const BUILT_IN = "deepseek/deepseek-v4-flash";
 
-async function installedInstance(model = INSTALLED) {
+async function installedInstance(model = INSTALLED, instanceId = "deepseek") {
   let providerInstances;
   await installDeepSeekProvider({
     getSettings: async () => ({ providerInstances: {} }),
     updateSettings: async (patch) => { providerInstances = patch.providerInstances; },
     refreshProvider: async () => {},
-  }, { wrapperPath: "/synthetic/deepseek-acp", model });
-  return providerInstances.deepseek;
+  }, { wrapperPath: "/synthetic/deepseek-acp", model, instanceId });
+  return providerInstances[instanceId];
 }
 
-async function deepseekRow(t, instance, models) {
+async function deepseekRow(t, instance, models, instanceId = "deepseek") {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-kra6909-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const openrouterTokenFile = path.join(directory, "openrouter-token");
   fs.writeFileSync(openrouterTokenFile, "synthetic-openrouter-value\n", { mode: 0o600 });
-  const provider = { instanceId: "deepseek", driver: "grok", status: "ready", installed: true, enabled: true, models: models.map((slug) => (typeof slug === "string" ? { slug } : slug)) };
+  const provider = { instanceId, driver: "grok", status: "ready", installed: true, enabled: true, models: models.map((slug) => (typeof slug === "string" ? { slug } : slug)) };
   const client = {
     snapshot: async () => ({ projects: [], threads: [] }),
-    getSettings: async () => ({ providerInstances: instance ? { deepseek: instance } : {} }),
+    getSettings: async () => ({ providerInstances: instance ? { [instanceId]: instance } : {} }),
     rpc: async () => ({ environment: { serverVersion: "0.0.42-test" }, providers: [provider] }),
     refreshProvider: async () => {},
     request: async () => ({ talkTurnResult: "v1" }),
@@ -41,7 +41,7 @@ async function deepseekRow(t, instance, models) {
     hermesHome: directory,
     refreshDirectory: path.join(directory, "refresh"),
   });
-  return { report, row: report.labs.find((entry) => entry.instanceId === "deepseek") };
+  return { report, row: report.labs.find((entry) => entry.instanceId === instanceId) };
 }
 
 function withEnv(t, value) {
@@ -63,8 +63,8 @@ test("an installed DeepSeek model is doctor's default without a CLI override", a
   assert.equal(row.ready, true);
 });
 
-function settingsClient(instance) {
-  return { getSettings: async () => ({ providerInstances: instance ? { deepseek: instance } : {} }) };
+function settingsClient(instance, instanceId = "deepseek") {
+  return { getSettings: async () => ({ providerInstances: instance ? { [instanceId]: instance } : {} }) };
 }
 
 test("originate without --model selects the installed DeepSeek model doctor reports", async (t) => {
@@ -73,6 +73,25 @@ test("originate without --model selects the installed DeepSeek model doctor repo
   assert.equal(await originateDefaultModel(settingsClient(instance), "deepseek"), INSTALLED);
   const { row } = await deepseekRow(t, instance, [INSTALLED]);
   assert.equal(row.defaultModel, INSTALLED);
+});
+
+// A DeepSeek harness installed at a non-deepseek lab id keeps that lab's built-in
+// default, so doctor reports it unavailable instead of a false ready.
+test("doctor and originate agree on the default for every lab id the installer accepts", async (t) => {
+  withEnv(t, undefined);
+  for (const lab of ["deepseek", "deepseek-noweb", "grok"]) {
+    const instance = await installedInstance(INSTALLED, lab);
+    const { row } = await deepseekRow(t, instance, [INSTALLED], lab);
+    assert.equal(row.defaultModel, await originateDefaultModel(settingsClient(instance, lab), lab), lab);
+  }
+  const { row } = await deepseekRow(t, await installedInstance(INSTALLED, "grok"), [INSTALLED], "grok");
+  assert.equal(row.defaultModel, defaultModelForLab("grok"));
+  assert.equal(row.code, "default_model_unavailable");
+  assert.equal(row.ready, false);
+  for (const lab of ["deepseek", "deepseek-noweb"]) {
+    const { row: deepseek } = await deepseekRow(t, await installedInstance(INSTALLED, lab), [INSTALLED], lab);
+    assert.equal(deepseek.defaultModel, INSTALLED, lab);
+  }
 });
 
 // Guards precedence only; on main the env already won in a real process, so this

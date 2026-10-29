@@ -357,6 +357,7 @@ async function main() {
   });
   if (command === "originate") {
     const labInstanceId = requireAdvertisedLab(options.instance || DEFAULT_INSTANCE_ID, "--instance");
+    // Validates --instance/--option early; without --model the real default is resolved after the client exists.
     const labModel = options.model || defaultModelForLab(labInstanceId);
     if (!labModel) {
       throw new Error(`${labInstanceId} is an explicit lab; pass --model with a model T3 currently advertises`);
