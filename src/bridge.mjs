@@ -1455,11 +1455,12 @@ async function withinDoctorDeadline(signal, operation) {
 export async function probeTalkCapabilities(client, { signal = AbortSignal.timeout(DOCTOR_TIMEOUT_MS) } = {}) {
   let payload;
   let code = "t3_not_patched";
+  let reauthAction = T3_REAUTH_ACTION;
   try {
     payload = await withinDoctorDeadline(signal, () => client.request("/api/orchestration/turn-result", { signal }));
   } catch (error) {
     if (signal.aborted) code = "t3_capability_timeout";
-    else if (error instanceof T3HttpError && error.status === 401) code = "t3_reauth_required";
+    else if (error instanceof T3HttpError && error.status === 401) { code = "t3_reauth_required"; reauthAction = error.action ?? T3_REAUTH_ACTION; }
     else if (!(error instanceof T3HttpError && [404, 405].includes(error.status))) code = "t3_capability_unavailable";
   }
   const supported = isPlainObject(payload) && Object.keys(payload).length === 1 && payload.talkTurnResult === "v1";
@@ -1474,7 +1475,7 @@ export async function probeTalkCapabilities(client, { signal = AbortSignal.timeo
       status: code === "t3_not_patched" ? "missing" : "unavailable",
       code,
       action: code === "t3_not_patched" ? "This Mac's T3 Code lacks Local Talk support; update T3 to the approved patched build."
-        : code === "t3_reauth_required" ? T3_REAUTH_ACTION
+        : code === "t3_reauth_required" ? reauthAction
           : "Check the local T3 connection, then rerun doctor to verify Local Talk support.",
     },
   };
@@ -1514,10 +1515,11 @@ async function doctorReport(client, {
     config = await withinDoctorDeadline(signal, () => client.rpc("server.getConfig", {}, { signal }));
   } catch (error) {
     if (!(error instanceof T3HttpError) || error.status !== 401) throw error;
+    const action = error.action ?? T3_REAUTH_ACTION;
     return {
       product: "Tentacles",
       capabilities: { talkTurnResult: null, turnInterrupt: null },
-      t3: { reachable: true, auth: { status: "invalid", code: "t3_reauth_required", action: T3_REAUTH_ACTION }, talk: { status: "unavailable", code: "t3_reauth_required", action: T3_REAUTH_ACTION } },
+      t3: { reachable: true, auth: { status: "invalid", code: "t3_reauth_required", action }, talk: { status: "unavailable", code: "t3_reauth_required", action } },
       pairing: readPairPresence(pairStateFile),
       labs: [],
     };

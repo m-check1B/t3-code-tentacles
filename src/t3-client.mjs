@@ -74,6 +74,8 @@ export class T3Client {
     responseMaxBytes = 32 * 1024 * 1024,
     // 1 | 2 pins the T3 orchestration protocol; auto reads the environment descriptor.
     orchestrationProtocol = process.env.T3_ORCHESTRATION_PROTOCOL || "auto",
+    // Optional 401 recovery hook (t3-auth.mjs createAutoReauth); runs at most once per client.
+    reauth = null,
   } = {}) {
     this.baseUrl = requireLoopbackUrl(baseUrl, "T3_URL");
     this.tokenFile = token === undefined ? tokenFile : null;
@@ -82,6 +84,8 @@ export class T3Client {
     this.WebSocketImpl = WebSocketImpl;
     this.requestTimeoutMs = requestTimeoutMs;
     this.responseMaxBytes = responseMaxBytes;
+    this.reauth = reauth;
+    this.reauthAttempt = null;
     if (!["auto", "1", "2", 1, 2].includes(orchestrationProtocol)) {
       throw new Error("T3_ORCHESTRATION_PROTOCOL must be auto, 1 or 2");
     }
@@ -130,15 +134,23 @@ export class T3Client {
     });
     if (response.status === 401) {
       // An unauthenticated request has not executed. Retry the same command only
-      // when an operator has replaced the owner-controlled token file.
+      // when the owner-controlled token file was replaced (by an operator or reauth).
       try { await response.body?.cancel(); } catch { /* 401 diagnostics never reflect a body error */ }
-      if (!retried && this.tokenFile) {
+      const rotated = () => {
         let current;
         try { current = readToken(this.tokenFile); } catch { /* fail closed below */ }
-        if (current && current !== usedToken) {
-          this.token = current;
-          return this.request(pathname, { method, body, signal }, true);
-        }
+        if (current && current !== usedToken) this.token = current;
+        return current && current !== usedToken;
+      };
+      if (!retried && this.tokenFile && rotated()) return this.request(pathname, { method, body, signal }, true);
+      if (this.reauth && this.tokenFile && (!retried || this.reauthAttempt)) {
+        // Concurrent 401s share one issuance; a failed or exhausted attempt is never repeated.
+        this.reauthAttempt ??= Promise.resolve().then(() => this.reauth({ tokenFile: this.tokenFile }))
+          .then(result => ({ action: result?.action }), error => ({ action: error.action, reason: error.message }));
+        const { action, reason } = await this.reauthAttempt;
+        // Safe to retry once even for dispatches: a 401 means T3 rejected the request before acting.
+        if (!retried && !reason && rotated()) return this.request(pathname, { method, body, signal }, true);
+        throw new T3AuthError({ method, pathname, action, reason: reason ?? (retried ? "a newly issued session was also rejected" : undefined) });
       }
       throw new T3AuthError({ method, pathname });
     }
@@ -342,11 +354,11 @@ export class T3HttpError extends Error {
 export const T3_REAUTH_ACTION = 'tentacles reauth --t3-bin "$(command -v t3)" --t3-home "$HOME/.t3"';
 
 export class T3AuthError extends T3HttpError {
-  constructor({ method, pathname }) {
+  constructor({ method, pathname, action = T3_REAUTH_ACTION, reason }) {
     super({ method, pathname, status: 401 });
     this.name = "T3AuthError";
     this.code = "t3_reauth_required";
-    this.action = T3_REAUTH_ACTION;
-    this.message = `T3 authentication rejected (401); the bearer expired, was revoked, or belongs to another T3 home. Re-authenticate using the colocated T3 CLI: ${this.action}`;
+    this.action = action;
+    this.message = `T3 authentication rejected (401); the bearer expired, was revoked, or belongs to another T3 home.${reason ? ` ${reason[0].toUpperCase()}${reason.slice(1)}.` : ""} Re-authenticate using the colocated T3 CLI: ${this.action}`;
   }
 }

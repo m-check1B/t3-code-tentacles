@@ -6,6 +6,7 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- On a T3 401 that a rotated token file does not explain, local CLI commands re-authenticate once through the colocated T3 CLI and retry the rejected request once (KRA-8199). The CLI is `TENTACLES_T3_BIN`, else `t3` on PATH, else the newest semver `<T3 home>/runtime/versions/*/t3` (`TENTACLES_T3_HOME`, default `~/.t3`), so the Pro's off-PATH runtime binary is found. A missing CLI, failed issuance or second 401 fails with the exact manual `tentacles reauth` command for the resolved paths. Opt out with `TENTACLES_T3_AUTO_REAUTH=0`; `--computer` targets keep the manual flow.
 - The npm tarball now ships `scripts/stall-watcher.mjs` and `scripts/ledger-count-alert.mjs`, so the bundled `docs/*.plist.sample` files point at scripts the package contains (both use Node built-ins only). It no longer ships the retired `scripts/publish-forgejo-release.mjs`, which stays in the source checkout (Forgejo is a read-only backup, KRA-8749).
 - `docs/orchestration.md` and `docs/orchestration-loop.svg` name the 0.5 source line instead of the stale `0.5.0-jack.2` pin.
 - `README.md` names the 0.5 source line instead of the stale `0.5.0-jack.2` pin.
