@@ -7,6 +7,7 @@ import { continueThread } from "../src/bridge.mjs";
 import { ensureLocalTalkWorkspace } from "../src/local-talk-workspace.mjs";
 import { LoopbackRuntimeAdapter } from "../src/outbound-pairer.mjs";
 import { GUARD_FILE, instructionExcludes } from "../src/talk-instruction-guard.mjs";
+import { freshCapability } from "./helpers/fresh-context-wire.mjs";
 
 // KRA-9781: a continued turn guards a Talk workspace created before the guard existed.
 const threadId = "11111111-2222-4333-8444-555555555555";
@@ -20,15 +21,20 @@ function fixture(t) {
   return { home, talk };
 }
 
-function fakeT3(workspaceRoot, onDispatch) {
-  const messages = [];
+function fakeT3(workspaceRoot, onDispatch, { snapshot, thread = {}, messages = [] } = {}) {
   const commands = [];
+  const reads = [];
   return {
     commands,
+    reads,
+    async request(pathname) { reads.push(pathname); return freshCapability; },
     async thread() {
-      return { thread: { id: threadId, projectId: "project", messages, modelSelection: { instanceId: "codex", model: "gpt-5.5" } } };
+      return { thread: { id: threadId, projectId: "project", messages, modelSelection: { instanceId: "codex", model: "gpt-5.5" }, ...thread } };
     },
-    async snapshot() { return { projects: [{ id: "other", workspaceRoot: "/elsewhere" }, { id: "project", workspaceRoot }] }; },
+    async snapshot() {
+      reads.push("snapshot");
+      return snapshot ? snapshot() : { projects: [{ id: "other", workspaceRoot: "/elsewhere" }, { id: "project", workspaceRoot }] };
+    },
     async dispatch(command) {
       onDispatch?.(command);
       commands.push(command);
@@ -95,4 +101,52 @@ test("a hire workspace gets no guard on continue", async (t) => {
   await adapter(client, home).continue(input);
   assert.equal(client.commands.length, 1);
   assert.equal(fs.existsSync(path.join(hire, ".claude")), false);
+});
+
+// PR 45 B3: every path that cannot resolve the thread's workspace fails closed before T3.
+const unresolved = /could not be resolved/;
+for (const [name, snapshot, refusal] of [
+  // The read's own error surfaces, so a swallowed read is visible.
+  ["a failed snapshot read", async () => { throw new Error("synthetic snapshot failure"); }, /synthetic snapshot failure/],
+  ["a snapshot without a projects array", async () => ({}), unresolved],
+  ["a snapshot without the thread's project", async () => ({ projects: [{ id: "other", workspaceRoot: "/elsewhere" }] }), unresolved],
+  ["a project without a string workspaceRoot", async () => ({ projects: [{ id: "project", workspaceRoot: null }] }), unresolved],
+]) {
+  test(`${name} refuses the continue before T3`, async (t) => {
+    const { home, talk } = fixture(t);
+    const client = fakeT3(talk, undefined, { snapshot });
+    await assert.rejects(adapter(client, home).continue(input), refusal);
+    assert.equal(client.commands.length, 0);
+    assert.equal(fs.existsSync(guardOf(talk)), false);
+  });
+}
+
+test("a fresh-context continue guards the Talk workspace before the T3 turn", async (t) => {
+  const { home, talk } = fixture(t);
+  let guardedAtDispatch = false;
+  const client = fakeT3(talk, () => { guardedAtDispatch = fs.existsSync(guardOf(talk)); });
+  await adapter(client, home).continue({ ...input, instanceId: "codex", model: "gpt-5.6-sol", freshProviderContext: true });
+  assert.equal(client.commands.length, 1);
+  assert.equal(client.commands[0].freshProviderContext, true);
+  assert.equal(guardedAtDispatch, true);
+});
+
+test("a thread worktreePath under the Talk root is guarded instead of the project root", async (t) => {
+  const { home, talk } = fixture(t);
+  const hire = path.join(home, "github", "current", "products", "repo");
+  fs.mkdirSync(hire, { recursive: true });
+  const client = fakeT3(hire, undefined, { thread: { worktreePath: talk } });
+  await adapter(client, home).continue(input);
+  assert.equal(client.commands.length, 1);
+  assert.equal(fs.existsSync(guardOf(talk)), true);
+  assert.equal(fs.existsSync(path.join(hire, ".claude")), false);
+});
+
+test("an idempotent replay reads no snapshot, writes no guard and dispatches nothing", async (t) => {
+  const { home, talk } = fixture(t);
+  const client = fakeT3(talk, undefined, { messages: [{ id: "replayed", text: "again" }] });
+  await adapter(client, home).continue({ ...input, messageId: "replayed" });
+  assert.deepEqual(client.reads, []);
+  assert.equal(client.commands.length, 0);
+  assert.equal(fs.existsSync(guardOf(talk)), false);
 });

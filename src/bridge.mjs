@@ -736,9 +736,15 @@ export async function continueThread(client, {
     if (retained) modelSelection = retainedSelectionPin(detail.thread.modelSelection);
     if (prepareTalkWorkspace) {
       // KRA-9781: workspaces from 0.5.0-jack.1..5 predate the guard. A throw aborts before T3.
-      const snapshot = await readOrchestrationSnapshot(client);
-      const project = (Array.isArray(snapshot?.projects) ? snapshot.projects : []).find((entry) => entry?.id === detail.thread.projectId);
-      prepareTalkWorkspace(project?.workspaceRoot);
+      // T3 runs a thread in its worktreePath when set, else in the project root; unresolvable fails closed.
+      let workspace = detail.thread.worktreePath;
+      if (typeof workspace !== "string") {
+        const snapshot = await readOrchestrationSnapshot(client);
+        const project = (Array.isArray(snapshot?.projects) ? snapshot.projects : []).find((entry) => entry?.id === detail.thread.projectId);
+        workspace = project?.workspaceRoot;
+      }
+      if (typeof workspace !== "string") throw new Error("Thread workspace could not be resolved; continue refused before T3");
+      await prepareTalkWorkspace(workspace);
     }
     await client.dispatch({
       type: "thread.turn.start",
