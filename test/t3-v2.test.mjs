@@ -58,6 +58,17 @@ test("V2 reads map to the V1 thread shape the report and waits use", () => {
   assert.throws(() => shellToV1({ schemaVersion: 2, threads: [{ ...thread, status: "brand-new" }] }), /does not know thread status/);
 });
 
+// PR 47 B3 P3: pin the mapper's empty-string check on its own, not only via the continue guard.
+test("V2 thread branch and worktreePath map empty or non-string to null and keep a non-empty string", () => {
+  const map = (value) => threadDetailToV1({ projection: { thread: { id: "t", projectId: "p", branch: value, worktreePath: value } } }, "t").thread;
+  for (const value of ["", 42, null, undefined]) {
+    assert.equal(map(value).branch, null, `branch ${JSON.stringify(value)}`);
+    assert.equal(map(value).worktreePath, null, `worktreePath ${JSON.stringify(value)}`);
+  }
+  assert.equal(map("/w/talk").branch, "/w/talk");
+  assert.equal(map("/w/talk").worktreePath, "/w/talk");
+});
+
 test("protocol detection: descriptor v2, missing descriptor v1, unknown version refused", async () => {
   const client = (response) => new T3Client({ baseUrl: "http://127.0.0.1:3773", token: "synthetic", fetchImpl: async () => response() });
   assert.equal(await client(() => json({ orchestrationProtocolVersion: 2 })).protocol(), 2);
