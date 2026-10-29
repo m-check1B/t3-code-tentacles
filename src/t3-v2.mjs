@@ -283,6 +283,9 @@ function v1Thread(thread, { status, activeRunId, lastError, pendingKinds, update
     modelSelection: thread.modelSelection ?? null,
     runtimeMode: thread.runtimeMode ?? null,
     interactionMode: thread.interactionMode ?? null,
+    // KRA-9781: the continue guard targets worktreePath when set, as on protocol 1.
+    branch: typeof thread.branch === "string" ? thread.branch : null,
+    worktreePath: typeof thread.worktreePath === "string" ? thread.worktreePath : null,
     archivedAt: thread.archivedAt ?? null,
     settledAt: thread.settledAt ?? null,
     snoozedUntil: thread.snoozedUntil ?? null,

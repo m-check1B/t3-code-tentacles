@@ -6,6 +6,7 @@ import test from "node:test";
 import { continueThread } from "../src/bridge.mjs";
 import { ensureLocalTalkWorkspace } from "../src/local-talk-workspace.mjs";
 import { LoopbackRuntimeAdapter } from "../src/outbound-pairer.mjs";
+import { T3Client } from "../src/t3-client.mjs";
 import { GUARD_FILE, instructionExcludes } from "../src/talk-instruction-guard.mjs";
 import { freshCapability } from "./helpers/fresh-context-wire.mjs";
 
@@ -140,6 +141,38 @@ test("a thread worktreePath under the Talk root is guarded instead of the projec
   assert.equal(client.commands.length, 1);
   assert.equal(fs.existsSync(guardOf(talk)), true);
   assert.equal(fs.existsSync(path.join(hire, ".claude")), false);
+});
+
+// PR 46 B3 P3-A: protocol 2 maps worktreePath through threadDetailToV1, so the guard sees it.
+test("a protocol 2 thread worktreePath under the Talk root is guarded instead of the project root", async (t) => {
+  const { home, talk } = fixture(t);
+  const hire = path.join(home, "github", "current", "products", "repo");
+  fs.mkdirSync(hire, { recursive: true });
+  const messages = [];
+  const commands = [];
+  const thread = { id: threadId, projectId: "project", runtimeMode: "full-access", worktreePath: talk, modelSelection: { instanceId: "codex", model: "gpt-5.5" } };
+  const client = new T3Client({ baseUrl: "http://127.0.0.1:3773", token: "synthetic", orchestrationProtocol: 2, fetchImpl: async (url) => Response.json(
+    new URL(url).pathname === "/api/orchestration/shell"
+      ? { schemaVersion: 2, projects: [{ id: "project", workspaceRoot: hire }], threads: [] }
+      : { projection: { thread, runs: [], messages } }) });
+  client.rpc = async (method, payload, { beforeSend } = {}) => {
+    await beforeSend?.();
+    commands.push(payload);
+    if (payload.type === "message.dispatch") messages.push({ id: payload.messageId, role: "user", text: payload.text });
+    return { sequence: commands.length };
+  };
+  await adapter(client, home).continue(input);
+  assert.equal(commands.at(-1).type, "message.dispatch");
+  assert.equal(fs.existsSync(guardOf(talk)), true);
+  assert.equal(fs.existsSync(path.join(hire, ".claude")), false);
+});
+
+// PR 46 B3 P3-B: an async hook that rejects aborts the continue before T3.
+test("a rejecting async workspace hook rejects the continue and dispatches nothing", async (t) => {
+  const { talk } = fixture(t);
+  const client = fakeT3(talk);
+  await assert.rejects(continueThread(client, input, { prepareTalkWorkspace: async () => { throw new Error("synthetic async guard failure"); } }), /synthetic async guard failure/);
+  assert.equal(client.commands.length, 0);
 });
 
 test("an idempotent replay reads no snapshot, writes no guard and dispatches nothing", async (t) => {
