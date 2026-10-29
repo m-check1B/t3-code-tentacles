@@ -167,6 +167,38 @@ test("a protocol 2 thread worktreePath under the Talk root is guarded instead of
   assert.equal(fs.existsSync(path.join(hire, ".claude")), false);
 });
 
+// PR 47 B3 P2-1: an empty worktreePath falls back to the project root on both protocols.
+test("an empty thread worktreePath guards the Talk project root before the T3 turn", async (t) => {
+  const { home, talk } = fixture(t);
+  let guardedAtDispatch = false;
+  const client = fakeT3(talk, () => { guardedAtDispatch = fs.existsSync(guardOf(talk)); }, { thread: { worktreePath: "" } });
+  await adapter(client, home).continue(input);
+  assert.equal(client.commands.length, 1);
+  assert.equal(guardedAtDispatch, true);
+});
+
+test("a protocol 2 empty thread worktreePath guards the Talk project root before the T3 turn", async (t) => {
+  const { home, talk } = fixture(t);
+  const messages = [];
+  const commands = [];
+  let guardedAtDispatch = false;
+  const thread = { id: threadId, projectId: "project", runtimeMode: "full-access", worktreePath: "", modelSelection: { instanceId: "codex", model: "gpt-5.5" } };
+  const client = new T3Client({ baseUrl: "http://127.0.0.1:3773", token: "synthetic", orchestrationProtocol: 2, fetchImpl: async (url) => Response.json(
+    new URL(url).pathname === "/api/orchestration/shell"
+      ? { schemaVersion: 2, projects: [{ id: "project", workspaceRoot: talk }], threads: [] }
+      : { projection: { thread, runs: [], messages } }) });
+  client.rpc = async (method, payload, { beforeSend } = {}) => {
+    await beforeSend?.();
+    if (payload.type === "message.dispatch") guardedAtDispatch = fs.existsSync(guardOf(talk));
+    commands.push(payload);
+    if (payload.type === "message.dispatch") messages.push({ id: payload.messageId, role: "user", text: payload.text });
+    return { sequence: commands.length };
+  };
+  await adapter(client, home).continue(input);
+  assert.equal(commands.at(-1).type, "message.dispatch");
+  assert.equal(guardedAtDispatch, true);
+});
+
 // PR 46 B3 P3-B: an async hook that rejects aborts the continue before T3.
 test("a rejecting async workspace hook rejects the continue and dispatches nothing", async (t) => {
   const { talk } = fixture(t);
