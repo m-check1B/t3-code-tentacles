@@ -7,6 +7,7 @@ All notable changes to this project are documented here.
 ### Fixed
 
 - `scripts/publish-github-release.mjs` rejects a CHANGELOG section that is only its version heading (or a heading plus blank lines) with `Empty CHANGELOG.md entry for <version>`, instead of publishing a heading-only release note. A normal section is published unchanged.
+- KRA-7502: a Local Talk workspace that 0.5.x creates through `ensureLocalTalkWorkspace` now gets the instruction guard before T3 `project.create`, so a first Local turn from a browser, phone or routine no longer loads the owner's home `CLAUDE.md`, `AGENTS.md` or user memory. `<workspace>/.claude/settings.local.json` (0700/0600, atomic, never through a symlink, other keys kept) lists every ancestor's `*` and `.claude/**` as `claudeMdExcludes` and sets `autoMemoryEnabled: false`. `src/talk-instruction-guard.mjs` is byte-identical to Agent Jack's desktop guard and the 0.4.1 maintenance line.
 
 ## [0.5.0-jack.5] - 2026-10-29
 
