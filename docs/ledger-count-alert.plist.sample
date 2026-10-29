@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- KRA-9690 sample only; not installed. Copy to ~/Library/LaunchAgents, replace USER and paths, then load it yourself.
+     launchd does not create directories: create ~/.local/state/tentacles-ledger-alert (and its alerts dir) first. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.tentacles.ledger-count-alert</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/USER/.local/node/bin/node</string>
+    <string>/Users/USER/path/to/tentacles/scripts/ledger-count-alert.mjs</string>
+    <string>--label</string>
+    <string>HOST</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/USER/.local/node/bin:/usr/bin:/bin</string>
+    <!-- Optional: an existing directory for <epoch>-ledger.json alerts. -->
+    <key>LEDGER_ALERT_DIR</key>
+    <string>/Users/USER/.local/state/tentacles-ledger-alert/alerts</string>
+  </dict>
+  <!-- Once at load and daily at 09:00; the script only reads the state file. -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>9</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/USER/.local/state/tentacles-ledger-alert/stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/USER/.local/state/tentacles-ledger-alert/stderr.log</string>
+</dict>
+</plist>

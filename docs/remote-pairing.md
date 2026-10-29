@@ -119,6 +119,71 @@ or a missed relay heartbeat immediately writes `unpaired` with a closed
 restores the lease.
 
 
+## Origination ledger count alert (KRA-9690)
+
+Hosts on the 0.4.1 line refuse every hire once the ledger reaches 1000 keys
+(0.5.0-jack.3 prunes instead). `scripts/ledger-count-alert.mjs` is a no-AI,
+read-only counter for those hosts: it reads only the key count of
+`originations` in the bridge state file (default
+`~/.local/state/t3-hermes-bridge/bridge-state.json`, or `--state-file` inside
+the home directory; the default is the macOS and Linux path, so on Windows pass
+`--state-file`), never takes the state lock and never prints a key or
+value.
+
+```sh
+node scripts/ledger-count-alert.mjs --label mini
+# LEDGER 812/1000 mini
+# WAKE ledger count=812 limit=1000 host=mini
+```
+
+Exit 0 below the warn threshold or with `LEDGER missing`; exit 3 with a
+`WAKE` line at 800 keys or more, ending in ` CRITICAL` at 950 or more
+(`LEDGER_ALERT_WARN` / `LEDGER_ALERT_CRITICAL` override them; a WARN
+above CRITICAL drops to CRITICAL); exit 1 with a
+one-line reason for an unreadable file, invalid JSON or an `originations`
+value that is not an object. A version-1 state with no `originations` key
+counts as 0. With `LEDGER_ALERT_DIR` set to
+an existing directory, each wake also writes a 0600 `<epoch>-ledger.json` with
+only count, limit, host and time. `docs/ledger-count-alert.plist.sample` runs it
+at load and daily at 09:00 (sample only; nothing installs it).
+
+On a host without a scheduler of its own, such as the mini, read it over ssh
+from a host that has one, using a checkout already on the mini:
+`ssh mini 'PATH=$HOME/.local/node/bin:$PATH node <checkout>/scripts/ledger-count-alert.mjs --label mini'`.
+The exit code and the two lines come back unchanged; nothing is written there
+unless `LEDGER_ALERT_DIR` is set in that command.
+
+### Manual rotation of a host at the cap
+
+As done on dev-workers on 28 Oct 2026 (KRA-9686). Run it only when no hire or
+route pass is in flight, and retry if the state lock is busy. Run it from a
+Tentacles checkout of the same version line as the host:
+
+1. Take the bridge state lock, so no originate or route pass writes meanwhile.
+2. Copy the state file to a dated backup with mode 0600.
+3. Keep the newest 500 originations and save through the validated writer
+   (`writeBridgeState`: validation, `wx` temp file, rename, 0600).
+4. Release the lock, then probe one origination and check
+   `ledger-count-alert.mjs` reports about 501.
+
+```sh
+node --input-type=module -e '
+import fs from "node:fs";
+import { DEFAULT_BRIDGE_STATE_FILE as file } from "./src/config.mjs";
+import { acquireStateLock, readBridgeState, writeBridgeState } from "./src/bridge.mjs";
+const release = acquireStateLock(file);
+if (!release) throw new Error("state lock busy; retry later");
+try {
+  const backup = `${file}.manual-${Date.now()}`;
+  fs.copyFileSync(file, backup, fs.constants.COPYFILE_EXCL); fs.chmodSync(backup, 0o600);
+  const state = readBridgeState(file);
+  const keys = Object.keys(state.originations);
+  state.originations = Object.fromEntries(keys.slice(-500).map((key) => [key, state.originations[key]]));
+  writeBridgeState(state, file);
+  console.log(`kept ${Math.min(keys.length, 500)} of ${keys.length}`);
+} finally { release(); }'
+```
+
 ## Exact Talk turn result extension
 
 New hosts advertise `turn-result`, `thread-events` and `thread-artifact` after
