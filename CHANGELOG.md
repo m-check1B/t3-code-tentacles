@@ -8,6 +8,8 @@ All notable changes to this project are documented here.
 
 - No-AI origination-ledger counter `scripts/ledger-count-alert.mjs` with `docs/ledger-count-alert.plist.sample` (KRA-9690): read-only, never takes the state lock or prints keys; prints `LEDGER <count>/1000 <host>` and at 800 keys (950: ` CRITICAL`) exits 3 with `WAKE ledger count=<n> limit=1000 host=<host>`; optional 0600 alert file in `LEDGER_ALERT_DIR`. `docs/remote-pairing.md` adds the mini ssh-read note and the manual rotation runbook. Source checkout only.
 
+- CI check `scripts/changelog-placement.mjs` (KRA-9774): on pull requests it fails when a line added to `CHANGELOG.md` lands under a released section instead of `## [Unreleased]`; a release PR that turns `[Unreleased]` into a new version passes. Run locally with `node scripts/changelog-placement.mjs [base-ref]` (default `origin/main`; exit 2 when the base ref is missing).
+
 ### Changed
 
 - `scripts/stall-watcher.mjs` classifies the newest provider error of a stalled thread (KRA-9702): a dead login (`AUTH_DEAD`) or an exhausted 429 retry (`RETRY_EXHAUSTED_429`) gets no nudge and wakes at once with exit 3 and `WAKE <threadId> cause=<CAUSE>`; ordinary stalls keep two nudges and the bare `WAKE <threadId>`. 429 retry-limit stalls that previously got two nudges now wake at once with cause `RETRY_EXHAUSTED_429`. Auth markers only classify errors that are already stall-shaped (a disconnect, reconnect or 429), so an unrelated MCP or tool 401 warning never counts. With `TENTACLES_STALL_ALERT_DIR` set, each wake writes a 0600 `<epoch>-<threadId>.json` alert (thread id, cause, nudges, last event time; no title) into that existing directory.
