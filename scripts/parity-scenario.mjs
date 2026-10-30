@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // KRA-8959: parity scenario "grok-bot-vs-jack-csv-pipeline", keyless and $0.
 // The chair runtime (LoopbackRuntimeAdapter: originate, turn-result,
-// thread-events, thread-artifact, interrupt, Local Talk custody) runs against
-// an in-memory synthetic T3 with two scripted labs. No provider, no network,
-// no real T3, no ~/.t3 data. Prints one PASS/FAIL line per step; exit 1 on FAIL.
+// thread-events, thread-artifact, interrupt, Local Talk custody (the
+// non-scratch pass-through only)) runs against an in-memory synthetic T3 with
+// two scripted labs. No provider, no network, no real T3, no ~/.t3 data.
+// Prints one PASS/FAIL line per step; exit 1 on FAIL.
 // Every injection into the chair runtime:
 // - client: the synthetic T3 below (snapshot, dispatch, turn-result rows,
 //   assets.createUrl and the fetchImpl that serves workspace files).
@@ -171,6 +172,8 @@ export async function runParityScenario({ log = (line) => process.stdout.write(`
   fs.mkdirSync(workspace);
   fs.mkdirSync(builderWorkspace);
   fs.writeFileSync(path.join(workspace, "sales.csv"), SALES_CSV);
+  // No checkpoint lists this decoy, so a workspace-scan export fails step 2.
+  fs.writeFileSync(path.join(builderWorkspace, "notes.txt"), "not a checkpoint file\n");
   const stateFile = path.join(root, "bridge-state.json");
   const directory = path.join(root, "thread-events");
   const t3 = new SyntheticT3({ labs: { "lab-one": analysisLab, "lab-two": builderLab } });
