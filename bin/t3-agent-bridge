@@ -12,7 +12,7 @@ done
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$SELF")" && pwd)
 # Accept a candidate only if it is an executable Node.js 22 or newer that prints the token.
 # Each probed candidate costs one Node start, paid per candidate until one passes.
-# The subshell keeps /bin/sh (bash on macOS, dash on Linux) from printing a job-status line for a signal-killed candidate.
+# The subshell keeps /bin/sh (bash on macOS, often dash on Linux) from printing a job-status line for a signal-killed candidate.
 node_ok() {
   [ -x "$1" ] && [ "$( ("$1" -e '+process.versions.node.split(".")[0] >= 22 && process.stdout.write("tentacles-node-ok")' </dev/null; exit $?) 2>/dev/null)" = tentacles-node-ok ]
 }
