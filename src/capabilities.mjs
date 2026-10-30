@@ -597,7 +597,7 @@ export function labsFromDoctor(report) {
     name: typeof lab.name === "string" ? lab.name : null,
     ready: lab.ready === true,
     code: typeof lab.code === "string" ? lab.code : null,
-    fix: typeof lab.action === "string" ? { kind: "lab", command: lab.action } : null,
+    fix: lab.ready !== true && typeof lab.action === "string" ? { kind: "lab", command: lab.action } : null,
   })).filter((lab) => lab.instanceId);
 }
 

@@ -1730,7 +1730,7 @@ async function doctorReport(client, {
     }
     const action = doctorAction(lab);
     if (!lab.ready && action) lab.action = action;
-    else if (originatePicks.has(lab)) lab.action = defaultSourceAction(lab);
+    else if (lab.ready && originatePicks.has(lab)) lab.action = defaultSourceAction(lab);
   }
 
   void instanceId;

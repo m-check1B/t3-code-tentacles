@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { doctor, formatDoctor, installDeepSeekProvider, originateDefaultModel } from "../src/bridge.mjs";
 
@@ -112,4 +113,81 @@ test("a T3 default that matches originate's pick carries no action", async (t) =
   assert.equal(pick, INSTALLED);
   assert.equal(row.defaultSource, "t3-marked");
   assert.equal(row.action, undefined);
+});
+
+test("a not-installed lab with a mismatching T3-marked default carries no action", async () => {
+  // KRA-9785 B3 P2-2: the default-model advisory is for ready rows only.
+  const client = {
+    snapshot: async () => ({ projects: [], threads: [] }),
+    getSettings: async () => ({ providerInstances: {} }),
+    rpc: async () => ({ environment: { serverVersion: "0.0.42-test" }, providers: [{
+      instanceId: "grok", driver: "grok", status: "error", installed: false, enabled: true,
+      models: [{ slug: "synthetic-grok-t3", isDefault: true }],
+    }] }),
+    refreshProvider: async () => {},
+    request: async () => ({ talkTurnResult: "v1" }),
+  };
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-kra9785-"));
+  try {
+    const report = await doctor(client, {
+      fetchImpl: async () => new Response(JSON.stringify({ status: "ok" }), { status: 200 }),
+      pairStateFile: path.join(directory, "pair.json"),
+      openrouterTokenFile: path.join(directory, "absent"),
+      hermesHome: directory,
+      refreshDirectory: path.join(directory, "refresh"),
+    });
+    const row = report.labs.find((entry) => entry.instanceId === "grok");
+    assert.equal(row.ready, false);
+    assert.equal(row.code, "not_installed");
+    assert.equal(row.defaultSource, "t3-marked");
+    assert.equal(row.action, undefined);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("defaultSource for a non-DeepSeek lab: built-in when its model env is unset, env through the codex-app fallback", () => {
+  // Model defaults are fixed at import, so each env runs in a child.
+  const script = `
+    const { doctor } = await import(${JSON.stringify(new URL("../src/bridge.mjs", import.meta.url).href)});
+    const provider = (instanceId) => ({ instanceId, driver: "codex", status: "ready", installed: true, enabled: true, models: [{ slug: "synthetic-model" }] });
+    const client = {
+      snapshot: async () => ({ projects: [], threads: [] }),
+      getSettings: async () => ({ providerInstances: {} }),
+      rpc: async () => ({ environment: { serverVersion: "0.0.42-test" }, providers: [provider("codex"), provider("codex-app")] }),
+      refreshProvider: async () => {},
+      request: async () => ({ talkTurnResult: "v1" }),
+    };
+    const report = await doctor(client, {
+      fetchImpl: async () => new Response(JSON.stringify({ status: "ok" }), { status: 200 }),
+      pairStateFile: process.env.SYNTHETIC_DIR + "/pair.json",
+      openrouterTokenFile: process.env.SYNTHETIC_DIR + "/absent",
+      hermesHome: process.env.SYNTHETIC_DIR,
+      refreshDirectory: process.env.SYNTHETIC_DIR + "/refresh",
+    });
+    const pick = (id) => { const { defaultModel, defaultSource } = report.labs.find((lab) => lab.instanceId === id); return { defaultModel, defaultSource }; };
+    process.stdout.write(JSON.stringify({ codex: pick("codex"), app: pick("codex-app") }));
+  `;
+  const run = (extra) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-kra9785-env-"));
+    try {
+      const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+        encoding: "utf8",
+        env: { PATH: process.env.PATH, HOME: directory, SYNTHETIC_DIR: directory, ...extra },
+      });
+      assert.equal(result.status, 0, result.stderr);
+      return JSON.parse(result.stdout);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  };
+  const builtIn = run({});
+  assert.equal(builtIn.codex.defaultSource, "built-in");
+  assert.equal(builtIn.app.defaultSource, "built-in");
+  const viaFallback = run({ T3_CODEX_MODEL: "synthetic-codex-env" });
+  assert.deepEqual(viaFallback.app, { defaultModel: "synthetic-codex-env", defaultSource: "env" });
+  assert.deepEqual(viaFallback.codex, { defaultModel: "synthetic-codex-env", defaultSource: "env" });
+  // A variable literally named "undefined" must not mark every lab env (B3 P3-1).
+  const stray = run({ undefined: "synthetic-stray" });
+  assert.equal(stray.codex.defaultSource, "built-in");
 });

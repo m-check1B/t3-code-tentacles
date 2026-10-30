@@ -14,6 +14,7 @@ import {
   codexTomlMcpServers,
   formatCapabilities,
   LAB_CONFIG_READERS,
+  labsFromDoctor,
   looksSecret,
   parseVersion,
   probeEnvironment,
@@ -633,4 +634,17 @@ test("a failing scan under rapid relay pings scans at most once per minIntervalM
   clock += 30_000;
   await adapter.refreshCapabilities().catch(() => {});
   assert.equal(scans, 2, "the next interval allows exactly one retry");
+});
+
+test("labsFromDoctor stays readiness-only: a ready lab's advisory action is no fix", () => {
+  // KRA-9785 B3 P2-1: doctor puts the default-model note in a ready row's action.
+  const labs = labsFromDoctor({ labs: [
+    { instanceId: "codex", name: "Codex", ready: true, code: null, action: "T3 marks synthetic-t3 as the codex default, but originate without --model picks synthetic-pick" },
+    { instanceId: "grok", name: "Grok", ready: false, code: "not_installed", action: "synthetic install hint" },
+  ] });
+  assert.deepEqual(labs, [
+    { instanceId: "codex", name: "Codex", ready: true, code: null, fix: null },
+    { instanceId: "grok", name: "Grok", ready: false, code: "not_installed", fix: { kind: "lab", command: "synthetic install hint" } },
+  ]);
+  assert.doesNotMatch(JSON.stringify(labs), /synthetic-t3|synthetic-pick/);
 });
