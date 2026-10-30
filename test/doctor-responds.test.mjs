@@ -22,12 +22,14 @@ function fakeT3(t, behaviour, { failProject = false, noTurnResult = false } = {}
   const turns = new Map();
   const failedReads = new Map();
   const brokenThreads = new Set();
+  const recoverOnce = new Set();
   const client = {
     snapshot: async () => ({ projects: [...projects.values()], threads: [...threads.values()] }),
     thread: async (threadId) => {
       // readfail: originate's own read succeeds, the first probe poll gets a 503.
       const reads = failedReads.get(threadId);
       if (reads !== undefined) failedReads.set(threadId, reads + 1);
+      if (recoverOnce.delete(threadId)) throw new T3HttpError({ method: "GET", pathname: threadId, status: 503, body: "START-CANARY" });
       if (brokenThreads.has(threadId)) throw new T3HttpError({ method: "GET", pathname: threadId, status: 503, body: "START-CANARY" });
       if (reads === 1) throw new T3HttpError({ method: "GET", pathname: threadId, status: 503, body: "READ-CANARY" });
       if (!threads.has(threadId)) throw new T3HttpError({ method: "GET", pathname: threadId, status: 404, body: null });
@@ -42,10 +44,12 @@ function fakeT3(t, behaviour, { failProject = false, noTurnResult = false } = {}
         const thread = threads.get(command.threadId);
         const mode = behaviour[command.modelSelection.instanceId];
         thread.messages.push({ id: command.message.messageId, role: "user", text: command.message.text });
-        turns.set(command.threadId, { state: "pending", turnId: "turn-1" });
+        turns.set(command.threadId, { state: "pending", turnId: "turn-1", messageId: command.message.messageId, turnCommandId: command.commandId });
         if (mode === "readfail") failedReads.set(command.threadId, 0);
         // startfail: every read after the turn start gets a 503, so originate's own wait fails.
         if (mode === "startfail") brokenThreads.add(command.threadId);
+        // startfail-recover: only the first read after the turn start gets a 503.
+        if (mode === "startfail-recover") recoverOnce.add(command.threadId);
         if (mode === "answer") thread.messages.push({ id: "assistant-1", role: "assistant", text: "OK" });
         thread.session = mode === "error"
           ? { status: "error", activeTurnId: null, lastError: "rate limit exceeded SECRET-CANARY" }
@@ -57,10 +61,14 @@ function fakeT3(t, behaviour, { failProject = false, noTurnResult = false } = {}
       }
       return { sequence: commands.length };
     },
-    request: async (route, { body }) => {
+    request: async (route, { body } = {}) => {
       assert.equal(route, "/api/orchestration/turn-result");
       if (noTurnResult) throw new T3HttpError({ method: "POST", pathname: route, status: 404, body: null });
-      return { ...body, ...turns.get(body.threadId) };
+      if (!body) return { talkTurnResult: "v1" };
+      // Like T3, only the exact (threadId, messageId, turnCommandId) tuple names a turn.
+      const { messageId, turnCommandId, ...turn } = turns.get(body.threadId) ?? {};
+      if (messageId !== body.messageId || turnCommandId !== body.turnCommandId) throw new T3HttpError({ method: "POST", pathname: route, status: 404, body: null });
+      return { ...body, ...turn };
     },
   };
   return { client, commands, workspace };
@@ -157,7 +165,7 @@ test("an interrupt that does not stop the probe turn tells the user to stop the 
   const { client, commands, workspace } = fakeT3(t, { codex: "silent" }, { noTurnResult: true });
   const [row] = (await probeResponds(client, labs, { ...options(workspace), select: ["codex"] })).labs;
   assert.equal(row.status, "no_response");
-  assert.notEqual(row.interrupt, "cancelled");
+  assert.equal(row.interrupt, "unsupported", "a T3 that 404s every tuple is not read as no turn accepted");
   assert.equal(commands.some((command) => command.type === "thread.turn.interrupt"), false);
   assert.ok(row.action.includes(`probe turn may still be running; stop thread ${row.threadId} in T3`), row.action);
 });
@@ -260,8 +268,48 @@ test("CLI doctor --responds-timeout without --responds fails before any T3 call 
     FAKE_T3_CONFIG: JSON.stringify({ providers: [{ instanceId: "codex", status: "ready", installed: true, models: [{ slug: "gpt-synthetic", isDefault: true }] }] }),
   };
   delete env.TENTACLES_COMPUTER;
+  // Positive control: the same env records T3 calls when doctor does run (B3 PR 70 F2).
+  const control = spawnSync(process.execPath, ["--import", PRELOAD, CLI, "doctor", "--json"], { encoding: "utf8", env });
+  assert.equal(control.status, 0, control.stderr);
+  assert.match(fs.readFileSync(callsFile, "utf8"), /^getSettings$/m);
+  fs.rmSync(callsFile);
   const spawned = spawnSync(process.execPath, ["--import", PRELOAD, CLI, "doctor", "--responds-timeout", "5"], { encoding: "utf8", env });
   assert.equal(spawned.status, 1, spawned.stdout);
   assert.match(spawned.stderr, /--responds-timeout needs --responds/);
   assert.equal(fs.existsSync(callsFile), false, "no T3 client call was made");
+});
+
+// KRA-9876: B3 PR 70 follow-ups F1 and F3.
+
+test("a T3 fault inside the start that then clears interrupts exactly the started turn (F1)", async (t) => {
+  const { client, commands, workspace } = fakeT3(t, { codex: "startfail-recover", grok: "answer" });
+  const result = await probeResponds(client, labs, { ...options(workspace), select: ["codex", "grok"] });
+  const row = result.labs.find((lab) => lab.instanceId === "codex");
+  const start = commands.find((command) => command.type === "thread.turn.start" && command.modelSelection.instanceId === "codex");
+  assert.equal(row.status, "error");
+  assert.equal(row.t3HttpStatus, 503);
+  assert.equal(row.threadId, start.threadId);
+  assert.equal(row.interrupt, "cancelled");
+  const interrupts = commands.filter((command) => command.type === "thread.turn.interrupt");
+  assert.equal(interrupts.length, 1, "only the faulted probe is interrupted");
+  assert.equal(interrupts[0].threadId, start.threadId);
+  assert.equal(Object.hasOwn(row, "action") && row.action.includes("may still be running"), false);
+  assert.equal(result.labs.find((lab) => lab.instanceId === "grok").status, "responds");
+});
+
+test("a thread create fault reports that no probe turn was accepted, not a turn to stop (F3)", async (t) => {
+  const { client, commands, workspace } = fakeT3(t, { codex: "silent" });
+  const dispatch = client.dispatch;
+  client.dispatch = async (command) => {
+    if (command.type === "thread.create") { commands.push(command); throw new T3HttpError({ method: "POST", pathname: "/api/orchestration/dispatch", status: 500, body: "CREATE-CANARY" }); }
+    return dispatch(command);
+  };
+  const [row] = (await probeResponds(client, labs, { ...options(workspace), select: ["codex"] })).labs;
+  assert.equal(row.status, "error");
+  assert.equal(row.t3HttpStatus, 500);
+  assert.equal(row.interrupt, "target_mismatch");
+  assert.ok(row.action.includes(`no probe turn was accepted on thread ${row.threadId}`), row.action);
+  assert.doesNotMatch(row.action, /may still be running/);
+  assert.equal(commands.some((command) => command.type === "thread.turn.start" || command.type === "thread.turn.interrupt"), false);
+  assert.doesNotMatch(JSON.stringify(row), /CREATE-CANARY/);
 });

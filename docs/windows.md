@@ -57,3 +57,7 @@ WSL lab binaries: paths, signals and PATH lookup differ across that boundary.
    it when `.jack-local-scratch` is a junction (`mklink /J`).
 6. `taskkill /T /F` on the pairer leaves no `node.exe` child behind
    (`tasklist /FI "IMAGENAME eq node.exe"`).
+7. `tentacles doctor --responds all` accepts the default probe workspace under
+   `%LOCALAPPDATA%\t3-hermes-bridge`: its `realpathSync` must equal
+   `path.resolve` despite drive-letter case, 8.3 short names or a redirected
+   profile, and it is refused when a parent is a junction.
