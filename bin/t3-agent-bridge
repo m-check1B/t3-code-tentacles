@@ -19,7 +19,7 @@ case "$NODE_PATH" in
   *) NODE_PATH='' ;;
 esac
 if [ -z "$NODE_PATH" ]; then
-  for CANDIDATE in /opt/homebrew/bin/node /usr/local/bin/node; do
+  for CANDIDATE in /opt/homebrew/bin/node /usr/local/bin/node "${HOME:-}/.local/node/bin/node"; do
     if [ -x "$CANDIDATE" ]; then NODE_PATH=$CANDIDATE; break; fi
   done
 fi
