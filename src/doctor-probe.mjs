@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { ensureProject, originate } from "./bridge.mjs";
+import { ensureProject, startThread } from "./bridge.mjs";
 import { DEFAULT_STATE_DIR, ensurePrivateDirectory } from "./config.mjs";
 import { classifyFailure } from "./failure-codes.mjs";
 import { T3HttpError } from "./t3-client.mjs";
@@ -48,6 +48,10 @@ function privateProbeWorkspace(workspace) {
   refuseLink();
   ensurePrivateDirectory(workspace);
   refuseLink();
+  // A symlinked parent passes lstat; T3 gets only the path that was checked (B3 PR 69 N2).
+  const real = fs.realpathSync(workspace);
+  if (real !== path.resolve(workspace)) throw new Error("Doctor probe workspace must be a real directory, not a symlink");
+  return real;
 }
 
 async function probeLab(client, lab, { workspace, timeoutMs, intervalMs, interrupter }) {
@@ -59,8 +63,12 @@ async function probeLab(client, lab, { workspace, timeoutMs, intervalMs, interru
   let turn;
   let outcome;
   try {
-    turn = await originate(client, {
-      workspace,
+    const { project } = await ensureProject(client, { workspace, title: "Tentacles doctor probe", instanceId: lab.instanceId, model: lab.defaultModel });
+    // Ids exist before the turn starts, so a T3 fault inside the start can still be interrupted (B3 PR 69 N1).
+    turn = { threadId: randomUUID(), messageId: randomUUID(), turnCommandId: randomUUID() };
+    await startThread(client, {
+      ...turn,
+      projectId: project.id,
       title: `Tentacles doctor probe: ${lab.instanceId}`,
       message: PROBE_MESSAGE,
       instanceId: lab.instanceId,
@@ -111,7 +119,7 @@ export async function probeResponds(client, labs, {
   interruptOptions = {},
 } = {}) {
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1) throw new Error("Responds probe timeout must be a positive integer");
-  privateProbeWorkspace(workspace);
+  workspace = privateProbeWorkspace(workspace);
   const interrupter = new TurnInterrupter({
     readTurnResult: (tuple) => client.request("/api/orchestration/turn-result", { method: "POST", body: tuple }),
     readThread: (threadId) => client.thread(threadId),

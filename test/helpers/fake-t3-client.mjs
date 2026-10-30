@@ -1,7 +1,8 @@
 // Preload for spawned CLI tests: replaces T3Client I/O with an in-memory T3.
 // FAKE_T3_SETTINGS is the getSettings result; dispatched commands are appended
 // to FAKE_T3_COMMANDS as JSON lines. FAKE_T3_CONFIG, when set, is the
-// server.getConfig RPC result.
+// server.getConfig RPC result. FAKE_T3_CALLS, when set, gets one line per
+// T3Client method call.
 import fs from "node:fs";
 import { T3Client, T3HttpError } from "../../src/t3-client.mjs";
 
@@ -28,3 +29,14 @@ Object.assign(T3Client.prototype, {
     },
   } : {}),
 });
+
+if (process.env.FAKE_T3_CALLS) {
+  for (const name of Object.getOwnPropertyNames(T3Client.prototype)) {
+    const method = T3Client.prototype[name];
+    if (name === "constructor" || typeof method !== "function") continue;
+    T3Client.prototype[name] = function (...args) {
+      fs.appendFileSync(process.env.FAKE_T3_CALLS, `${name}\n`);
+      return method.apply(this, args);
+    };
+  }
+}
