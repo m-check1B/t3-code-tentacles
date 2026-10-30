@@ -1387,7 +1387,7 @@ function probeTimeoutAction(lab) {
   const hint = labInstallHint(lab.instanceId);
   const install = hint?.startsWith("tentacles ") ? hint : null;
   // Adapter labs run a Tentacles launcher, so reinstalling it is the fix.
-  if (install && ADAPTER_LABS.includes(lab.instanceId)) {
+  if (install && ADAPTER_LABS.includes(baseLabId(lab.instanceId))) {
     return `T3's version check of the ${lab.instanceId} adapter timed out; run \`${install}\` to reinstall its launcher, then rerun doctor`;
   }
   const probe = probeCommands.get(lab);

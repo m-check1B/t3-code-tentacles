@@ -153,3 +153,19 @@ for (const [id, driver] of Object.entries(NOWEB_LAB_DRIVERS)) {
     if (id !== "codex-noweb") assert.match(row(id).action, new RegExp(`T3 ${driver}-driver instance`));
   });
 }
+
+// PR 60 follow-up: deepseek-noweb runs the same adapter launcher as deepseek,
+// so its probe timeout says only to reinstall it; native noweb twins keep theirs.
+test("deepseek-noweb probe timeout names only the adapter reinstall", async (t) => {
+  const message = "DeepSeek Harness is installed but timed out while running `dsh --version`.";
+  const { row } = await run(t, [["deepseek-noweb", lab("deepseek-noweb", { message })]], { token: true });
+  assert.equal(row("deepseek-noweb").code, "provider_probe_timeout");
+  assert.equal(row("deepseek-noweb").action, "T3's version check of the deepseek-noweb adapter timed out; run `tentacles install-deepseek-provider --instance deepseek-noweb` to reinstall its launcher, then rerun doctor");
+});
+
+test("grok-noweb probe timeout keeps the native wording", async (t) => {
+  const message = "Grok CLI is installed but timed out while running `grok --version`.";
+  const { row } = await run(t, [["grok-noweb", lab("grok-noweb", { message })]], { token: true });
+  assert.equal(row("grok-noweb").code, "provider_probe_timeout");
+  assert.equal(row("grok-noweb").action, "T3's `grok --version` check of grok-noweb timed out; run `grok --version` in a terminal and clear whatever stalls it (update check or first-run prompt), then rerun doctor");
+});
