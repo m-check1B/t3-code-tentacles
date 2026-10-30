@@ -62,6 +62,7 @@ import {
   scanCapabilities,
   writeCapabilitiesFile,
 } from "./capabilities.mjs";
+import { probeResponds } from "./doctor-probe.mjs";
 import { DEFAULT_PAIR_STATE_FILE } from "./pair-state.mjs";
 import { redactHomePaths } from "./platform.mjs";
 import {
@@ -211,7 +212,7 @@ Usage:
   tentacles --version | -V
   tentacles reauth --t3-bin /absolute/t3 --t3-home /absolute/.t3 [--token-file /absolute/t3.token]
   tentacles reauth --computer NAME [--t3-bin /remote/t3] [--t3-home /remote/.t3]
-  tentacles doctor [--json] [--models summary|full]
+  tentacles doctor [--json] [--models summary|full] [--responds all|LAB,LAB] [--responds-timeout SECONDS]
   tentacles capabilities scan [--json] [--no-labs]
   tentacles pair --pair-file OWNER_ONLY_JSON --machine-id SPHERE_MACHINE_ID [--pair-state-file PATH]
   tentacles install-provider [--instance hermes] [--profile default] [--model MODEL]
@@ -243,6 +244,10 @@ The legacy t3-hermes command remains an exact compatibility alias.
 Run doctor to print the advertised lab matrix for this machine
 (ready / installed / explicit). Advertised is not proved. Use --json for the
 machine-readable document. Doctor never prints tokens or secrets.
+--responds (opt-in, one model call per lab) sends one no-tools probe turn to
+every ready lab (or the listed labs) in a doctor-probe workspace and reports
+responds / no_response / error with the time to the first model event. A probe
+that gets no answer within --responds-timeout (default 60) is interrupted.
 
 report --thread returns a compact parent-check document (Done | generating |
 ready/idle | blocked | stalled, plus an error-presence marker and a bounded model label)
@@ -439,6 +444,16 @@ async function main() {
       pairStateFile: options["pair-state-file"] || DEFAULT_PAIR_STATE_FILE,
       models: options.models || "summary",
     });
+    if (options.responds) {
+      // The probe workspace is a local path; it does not exist on another computer.
+      if (computer) throw new Error("--responds runs against the local T3 only");
+      const seconds = Number(options["responds-timeout"] ?? 60);
+      if (!Number.isInteger(seconds) || seconds < 1 || seconds > 600) throw new Error("--responds-timeout must be an integer between 1 and 600 seconds");
+      result.responds = await probeResponds(client, result.labs, {
+        select: options.responds === "all" ? null : options.responds.split(",").map((id) => id.trim()).filter(Boolean),
+        timeoutMs: seconds * 1000,
+      });
+    }
     console.log(options.json ? JSON.stringify(result, null, 2) : formatDoctor(result));
     if (result.t3?.auth?.status === "invalid") process.exitCode = 1;
     return;

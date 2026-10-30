@@ -1892,6 +1892,19 @@ export function formatDoctor(result = {}) {
     for (const lab of defaultNotes) lines.push(`  - ${lab.instanceId}  action: ${clipDoctorText(lab.action, 320)}`);
   }
 
+  if (Array.isArray(result.responds?.labs)) {
+    lines.push("");
+    lines.push(`Responds probe (one model call per lab, timeout ${Math.round(result.responds.timeoutMs / 1000)} s):`);
+    for (const lab of result.responds.labs) {
+      const parts = [lab.instanceId || "unknown", lab.status];
+      if (lab.firstEventMs != null) parts.push(`first event ${(lab.firstEventMs / 1000).toFixed(1)} s`);
+      if (lab.code) parts.push(`code=${lab.code}`);
+      if (lab.interrupt) parts.push(`interrupt=${lab.interrupt}`);
+      if (lab.action) parts.push(`action: ${clipDoctorText(lab.action, 320)}`);
+      lines.push(`  - ${parts.join("  ")}`);
+    }
+  }
+
   lines.push("");
   lines.push("Originate a ready lab:");
   lines.push("  tentacles originate --instance <lab> --workspace \"$PWD\" --title \"…\" --message \"…\" --runtime-mode full-access");
