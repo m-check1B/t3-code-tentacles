@@ -10,6 +10,8 @@ import {
   DEFAULT_CODEX_APP_INSTANCE_ID,
   DEFAULT_DEEPSEEK_INSTANCE_ID,
   BUILT_IN_DEEPSEEK_MODEL,
+  BUILT_IN_KIMI_MODEL,
+  BUILT_IN_PI_MODEL,
   DEFAULT_DEEPSEEK_MODEL,
   deepseekModelOverride,
   DEFAULT_HERMES_PROFILE,
@@ -1166,9 +1168,9 @@ function fullModelCatalog(provider, allModels) {
 // redacted entry is never read. The lab id, not the harness, routes here, so a
 // harness at another lab id keeps that lab's default.
 const INSTALLED_MODEL_VARIABLES = Object.freeze({
-  deepseek: [DEEPSEEK_HARNESS_VALUE, "DEEPSEEK_MODEL"],
-  kimi: [KIMI_HARNESS_VALUE, "KIMI_MODEL"],
-  pi: [PI_HARNESS_VALUE, "PI_MODEL"],
+  deepseek: [DEEPSEEK_HARNESS_VALUE, "DEEPSEEK_MODEL", BUILT_IN_DEEPSEEK_MODEL],
+  kimi: [KIMI_HARNESS_VALUE, "KIMI_MODEL", BUILT_IN_KIMI_MODEL],
+  pi: [PI_HARNESS_VALUE, "PI_MODEL", BUILT_IN_PI_MODEL],
 });
 
 export function labDefaultModel(instanceId, instance) {
@@ -1184,13 +1186,13 @@ function labDefault(instanceId, instance) {
   }
   const override = lab === "deepseek" ? deepseekModelOverride() : process.env[LAB_DEFAULT_MODEL_ENV[lab]];
   if (override) return { model: override, source: "env" };
-  const [harness, name] = INSTALLED_MODEL_VARIABLES[lab];
+  const [harness, name, builtIn] = INSTALLED_MODEL_VARIABLES[lab];
   const variable = providerHarness(instance) === harness
     ? instance.environment.find((entry) => entry?.name === name && entry.sensitive !== true && entry.valueRedacted !== true)
     : null;
   const installed = modelLabel(variable?.value);
   if (installed) return { model: installed, source: "installed" };
-  return { model: lab === "deepseek" ? BUILT_IN_DEEPSEEK_MODEL : defaultModelForLab(instanceId), source: "built-in" };
+  return { model: builtIn, source: "built-in" };
 }
 
 export async function originateDefaultModel(client, instanceId) {

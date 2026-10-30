@@ -9,7 +9,8 @@ export const DEFAULT_INSTANCE_ID = "hermes";
 export const DEFAULT_MODEL = process.env.T3_HERMES_MODEL || "deepseek:deepseek-v4-flash";
 export const DEFAULT_PI_INSTANCE_ID = "pi";
 export const DEFAULT_PI_PROVIDER = process.env.T3_PI_PROVIDER || "openai-codex";
-export const DEFAULT_PI_MODEL = process.env.T3_PI_MODEL || "gpt-5.6-terra";
+export const BUILT_IN_PI_MODEL = "gpt-5.6-terra";
+export const DEFAULT_PI_MODEL = process.env.T3_PI_MODEL || BUILT_IN_PI_MODEL;
 export const DEFAULT_DEEPSEEK_INSTANCE_ID = "deepseek";
 export const BUILT_IN_DEEPSEEK_MODEL = "deepseek/deepseek-v4-flash";
 // KRA-6909: the only read of T3_DEEPSEEK_MODEL. It runs at call time so doctor and
@@ -19,7 +20,8 @@ export function deepseekModelOverride() {
 }
 export const DEFAULT_DEEPSEEK_MODEL = deepseekModelOverride() || BUILT_IN_DEEPSEEK_MODEL;
 export const DEFAULT_KIMI_INSTANCE_ID = "kimi";
-export const DEFAULT_KIMI_MODEL = process.env.T3_KIMI_MODEL || "moonshotai/kimi-k3";
+export const BUILT_IN_KIMI_MODEL = "moonshotai/kimi-k3";
+export const DEFAULT_KIMI_MODEL = process.env.T3_KIMI_MODEL || BUILT_IN_KIMI_MODEL;
 export const DEFAULT_CODEX_APP_INSTANCE_ID = "codex-app";
 export const DEFAULT_HERMES_PROFILE = process.env.HERMES_PROFILE || "default";
 export const DEFAULT_STATE_DIR = defaultStateDir();

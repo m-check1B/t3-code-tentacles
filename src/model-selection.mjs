@@ -1,4 +1,4 @@
-import { DEFAULT_DEEPSEEK_MODEL } from "./config.mjs";
+import { BUILT_IN_KIMI_MODEL, BUILT_IN_PI_MODEL, DEFAULT_DEEPSEEK_MODEL } from "./config.mjs";
 
 export const NOWEB_LAB_DRIVERS = Object.freeze({
   "codex-noweb": "codex",
@@ -31,9 +31,9 @@ export const EXPLICIT_LABS = Object.freeze(["cursor"]);
 
 export const LAB_DEFAULT_MODELS = Object.freeze({
   hermes: process.env.T3_HERMES_MODEL || "deepseek:deepseek-v4-flash",
-  pi: process.env.T3_PI_MODEL || "gpt-5.6-terra",
+  pi: process.env.T3_PI_MODEL || BUILT_IN_PI_MODEL,
   deepseek: DEFAULT_DEEPSEEK_MODEL,
-  kimi: process.env.T3_KIMI_MODEL || "moonshotai/kimi-k3",
+  kimi: process.env.T3_KIMI_MODEL || BUILT_IN_KIMI_MODEL,
   grok: process.env.T3_GROK_MODEL || "grok-4.6",
   codex: process.env.T3_CODEX_MODEL || "gpt-5.6-luna",
   "codex-app": process.env.T3_CODEX_APP_MODEL || process.env.T3_CODEX_MODEL || "gpt-5.6-luna",

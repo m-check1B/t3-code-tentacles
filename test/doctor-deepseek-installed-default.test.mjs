@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { defaultModelForLab } from "../src/model-selection.mjs";
+import { baseLabId, defaultModelForLab, ORIGINATE_LABS } from "../src/model-selection.mjs";
 import { doctor, installDeepSeekProvider, originateDefaultModel } from "../src/bridge.mjs";
 
 // KRA-6909: doctor and originate without --model take the DeepSeek default from
@@ -134,7 +134,7 @@ test("a redacted DEEPSEEK_MODEL entry is never read", async (t) => {
 
 test("other labs keep their built-in originate default without a settings read", async () => {
   const client = { getSettings: async () => { throw new Error("settings must not be read"); } };
-  for (const lab of ["hermes", "grok", "codex", "claudeAgent", "opencode", "cursor"]) {
+  for (const lab of ORIGINATE_LABS.filter((id) => !["deepseek", "kimi", "pi"].includes(baseLabId(id)))) {
     assert.equal(await originateDefaultModel(client, lab), defaultModelForLab(lab));
   }
 });

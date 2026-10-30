@@ -6,7 +6,7 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
-- `doctor` and `originate` without `--model` now use the installed Kimi and Pi model as the lab default: `T3_KIMI_MODEL` / `T3_PI_MODEL`, then the installed provider's non-sensitive `KIMI_MODEL` / `PI_MODEL` (written by `install-kimi-provider` / `install-pi-provider --model`), then the built-in model, reported as `defaultSource` `env`, `installed` or `built-in`.
+- KRA-6909: `doctor` and `originate` without `--model` now use the installed Kimi and Pi model as the lab default: `T3_KIMI_MODEL` / `T3_PI_MODEL`, then the installed provider's non-sensitive `KIMI_MODEL` / `PI_MODEL`, then the built-in model, reported as `defaultSource` `env`, `installed` or `built-in`. `install-kimi-provider` and `install-pi-provider` always write that variable (the `--model` value or the default at install time), so an existing install reports `installed` and keeps its install-time model until it is reinstalled.
 
 ## [0.5.0-jack.7] - 2026-10-30
 

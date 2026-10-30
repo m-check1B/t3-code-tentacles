@@ -11,6 +11,7 @@ import { doctor, installKimiProvider, installPiProvider, originateDefaultModel }
 // provider's KIMI_MODEL / PI_MODEL, then the built-in default.
 const CLI = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
 const PRELOAD = fileURLToPath(new URL("./helpers/fake-t3-client.mjs", import.meta.url));
+const BRIDGE = new URL("../src/bridge.mjs", import.meta.url).href;
 const LABS = {
   kimi: { variable: "KIMI_MODEL", env: "T3_KIMI_MODEL", builtIn: "moonshotai/kimi-k3", install: (client, model) => installKimiProvider(client, { wrapperPath: "/synthetic/kimi-acp", kimiBin: "/synthetic/kimi", model }) },
   pi: { variable: "PI_MODEL", env: "T3_PI_MODEL", builtIn: "gpt-5.6-terra", install: (client, model) => installPiProvider(client, { wrapperPath: "/synthetic/pi-acp", piBin: "/synthetic/pi", model }) },
@@ -102,6 +103,37 @@ for (const [lab, { variable, env, builtIn }] of Object.entries(LABS)) {
     assert.equal(row.defaultModel, builtIn);
     assert.equal(row.defaultSource, "built-in");
     assert.equal(pick, builtIn);
+  });
+
+  test(`${lab}: an import-time ${env} is not reported as the built-in default`, (t) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-kimipi-import-"));
+    t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+    fs.writeFileSync(path.join(directory, "openrouter-token"), "synthetic-openrouter-value\n", { mode: 0o600 });
+    // The child imports the bridge with a synthetic env, then deletes it before the call.
+    const script = `
+      const { doctor, originateDefaultModel } = await import(${JSON.stringify(BRIDGE)});
+      delete process.env[${JSON.stringify(env)}];
+      const [lab, builtIn, directory] = process.argv.slice(1);
+      const client = {
+        snapshot: async () => ({ projects: [], threads: [] }),
+        getSettings: async () => ({ providerInstances: {} }),
+        rpc: async () => ({ environment: { serverVersion: "0.0.42-test" }, providers: [{ instanceId: lab, driver: "grok", status: "ready", installed: true, enabled: true, models: [{ slug: builtIn }] }] }),
+        refreshProvider: async () => {},
+        request: async () => ({ talkTurnResult: "v1" }),
+      };
+      const report = await doctor(client, {
+        fetchImpl: async () => new Response(JSON.stringify({ status: "ok" }), { status: 200 }),
+        pairStateFile: directory + "/pair.json",
+        openrouterTokenFile: directory + "/openrouter-token",
+        hermesHome: directory,
+        refreshDirectory: directory + "/refresh",
+      });
+      const row = report.labs.find((entry) => entry.instanceId === lab);
+      console.log(JSON.stringify({ model: row.defaultModel, source: row.defaultSource, pick: await originateDefaultModel(client, lab) }));
+    `;
+    const spawned = spawnSync(process.execPath, ["--input-type=module", "-e", script, lab, builtIn, directory], { encoding: "utf8", env: { ...process.env, HOME: directory, [env]: `synthetic/${lab}-import-env` } });
+    assert.equal(spawned.status, 0, spawned.stderr);
+    assert.deepEqual(JSON.parse(spawned.stdout.trim().split("\n").at(-1)), { model: builtIn, source: "built-in", pick: builtIn });
   });
 
   test(`${lab}: CLI originate without --model sends the installed model`, async (t) => {
