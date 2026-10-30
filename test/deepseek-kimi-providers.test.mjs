@@ -57,6 +57,16 @@ test("installDeepSeekProvider registers a grok-driver instance with harness mark
   assert.equal(env.has("DSH_ACP_BIN"), false);
 });
 
+test("installDeepSeekProvider names the noweb twin from its instance id (KRA-9798)", async () => {
+  const client = settingsClient();
+  await installDeepSeekProvider(client, { wrapperPath: WRAPPER_DEEPSEEK });
+  await installDeepSeekProvider(client, { wrapperPath: WRAPPER_DEEPSEEK, instanceId: "deepseek-noweb" });
+  await installDeepSeekProvider(client, { wrapperPath: WRAPPER_DEEPSEEK, instanceId: "deepseek-lab" });
+  assert.equal(client.instances().deepseek.displayName, "DeepSeek CLI");
+  assert.equal(client.instances()["deepseek-noweb"].displayName, "DeepSeek CLI (noweb)");
+  assert.equal(client.instances()["deepseek-lab"].displayName, "DeepSeek CLI");
+});
+
 test("installDeepSeekProvider stores DSH_ACP_BIN only when an absolute path is provided", async () => {
   const client = settingsClient();
   await installDeepSeekProvider(client, { wrapperPath: WRAPPER_DEEPSEEK, dshAcpBin: "/opt/dsh/bin/dsh-acp", model: "deepseek-v4-pro" });
