@@ -1161,30 +1161,40 @@ function fullModelCatalog(provider, allModels) {
 }
 
 // KRA-6909: the one lab default shared by doctor and originate without --model.
-// DeepSeek: T3_DEEPSEEK_MODEL, then the installed provider's DEEPSEEK_MODEL, then
-// the built-in model. A sensitive or redacted entry is never read. The lab id, not
-// the harness, routes here, so a DeepSeek harness at another id keeps that lab's default.
+// DeepSeek, Kimi and Pi: the lab's model env, then the installed provider's
+// DEEPSEEK_MODEL / KIMI_MODEL / PI_MODEL, then the built-in model. A sensitive or
+// redacted entry is never read. The lab id, not the harness, routes here, so a
+// harness at another lab id keeps that lab's default.
+const INSTALLED_MODEL_VARIABLES = Object.freeze({
+  deepseek: [DEEPSEEK_HARNESS_VALUE, "DEEPSEEK_MODEL"],
+  kimi: [KIMI_HARNESS_VALUE, "KIMI_MODEL"],
+  pi: [PI_HARNESS_VALUE, "PI_MODEL"],
+});
+
 export function labDefaultModel(instanceId, instance) {
   return labDefault(instanceId, instance).model;
 }
 
 // KRA-9785: the default with the branch that picked it (doctor's defaultSource).
 function labDefault(instanceId, instance) {
-  if (baseLabId(instanceId) !== "deepseek") {
+  const lab = baseLabId(instanceId);
+  if (!Object.hasOwn(INSTALLED_MODEL_VARIABLES, lab)) {
     const model = defaultModelForLab(instanceId);
-    return { model, source: model ? (LAB_DEFAULT_MODELS_FROM_ENV.includes(baseLabId(instanceId)) ? "env" : "built-in") : null };
+    return { model, source: model ? (LAB_DEFAULT_MODELS_FROM_ENV.includes(lab) ? "env" : "built-in") : null };
   }
-  const override = deepseekModelOverride();
+  const override = lab === "deepseek" ? deepseekModelOverride() : process.env[LAB_DEFAULT_MODEL_ENV[lab]];
   if (override) return { model: override, source: "env" };
-  const variable = providerHarness(instance) === DEEPSEEK_HARNESS_VALUE
-    ? instance.environment.find((entry) => entry?.name === "DEEPSEEK_MODEL" && entry.sensitive !== true && entry.valueRedacted !== true)
+  const [harness, name] = INSTALLED_MODEL_VARIABLES[lab];
+  const variable = providerHarness(instance) === harness
+    ? instance.environment.find((entry) => entry?.name === name && entry.sensitive !== true && entry.valueRedacted !== true)
     : null;
   const installed = modelLabel(variable?.value);
-  return installed ? { model: installed, source: "installed" } : { model: BUILT_IN_DEEPSEEK_MODEL, source: "built-in" };
+  if (installed) return { model: installed, source: "installed" };
+  return { model: lab === "deepseek" ? BUILT_IN_DEEPSEEK_MODEL : defaultModelForLab(instanceId), source: "built-in" };
 }
 
 export async function originateDefaultModel(client, instanceId) {
-  if (baseLabId(instanceId) !== "deepseek") return defaultModelForLab(instanceId);
+  if (!Object.hasOwn(INSTALLED_MODEL_VARIABLES, baseLabId(instanceId))) return defaultModelForLab(instanceId);
   const settings = await client.getSettings();
   return labDefaultModel(instanceId, settings?.providerInstances?.[instanceId]);
 }

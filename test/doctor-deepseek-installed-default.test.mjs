@@ -134,7 +134,7 @@ test("a redacted DEEPSEEK_MODEL entry is never read", async (t) => {
 
 test("other labs keep their built-in originate default without a settings read", async () => {
   const client = { getSettings: async () => { throw new Error("settings must not be read"); } };
-  for (const lab of ["hermes", "pi", "kimi", "grok", "codex", "claudeAgent", "opencode", "cursor"]) {
+  for (const lab of ["hermes", "grok", "codex", "claudeAgent", "opencode", "cursor"]) {
     assert.equal(await originateDefaultModel(client, lab), defaultModelForLab(lab));
   }
 });
