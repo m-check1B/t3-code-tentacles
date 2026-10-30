@@ -22,3 +22,19 @@ test("recorded absolute Node works for both aliases with a non-interactive PATH"
     }
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+// The shim also probes these fixed paths, so a host that has one cannot prove the missing case.
+const hostNode = ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node", "/bin/node"].find((file) => fs.existsSync(file));
+test("missing Node exits 127 with a clear error when the recorded path is stale", { skip: hostNode && `${hostNode} exists` }, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles shim "));
+  try {
+    fs.mkdirSync(path.join(dir, "bin"));
+    fs.copyFileSync(new URL("../bin/t3-agent-bridge", import.meta.url), path.join(dir, "bin", "t3-agent-bridge"));
+    fs.chmodSync(path.join(dir, "bin", "t3-agent-bridge"), 0o755);
+    fs.writeFileSync(path.join(dir, "bin", "node-path"), `${path.join(dir, "gone", "node")}\n`);
+    const result = spawnSync(path.join(dir, "bin", "t3-agent-bridge"), ["--version"], { env: { PATH: "/usr/bin:/bin" }, encoding: "utf8" });
+    assert.equal(result.status, 127);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /Node\.js 22\+ is missing/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
