@@ -1,6 +1,6 @@
 {
   "name": "tentacles",
-  "version": "0.5.0-jack.6",
+  "version": "0.5.0-jack.7",
   "description": "Tentacles — chair CLI and additive ACP adapters for T3 Code.",
   "type": "module",
   "author": "m-check1B",
