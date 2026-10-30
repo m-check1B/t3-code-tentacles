@@ -62,7 +62,7 @@ import {
   scanCapabilities,
   writeCapabilitiesFile,
 } from "./capabilities.mjs";
-import { probeResponds } from "./doctor-probe.mjs";
+import { probeResponds, respondsRequest } from "./doctor-probe.mjs";
 import { DEFAULT_PAIR_STATE_FILE } from "./pair-state.mjs";
 import { redactHomePaths } from "./platform.mjs";
 import {
@@ -435,6 +435,8 @@ async function main() {
     })));
     return;
   }
+  // Refuse bad probe flags before any forward or doctor round-trip.
+  const responds = command === "doctor" ? respondsRequest(options, computerName) : null;
   if (computer) await ensureForward(computer);
   const client = computer ? new T3Client({ baseUrl: computer.t3Url, tokenFile: computer.tokenFile }) : new T3Client({ reauth: createAutoReauth() });
 
@@ -444,16 +446,7 @@ async function main() {
       pairStateFile: options["pair-state-file"] || DEFAULT_PAIR_STATE_FILE,
       models: options.models || "summary",
     });
-    if (options.responds) {
-      // The probe workspace is a local path; it does not exist on another computer.
-      if (computer) throw new Error("--responds runs against the local T3 only");
-      const seconds = Number(options["responds-timeout"] ?? 60);
-      if (!Number.isInteger(seconds) || seconds < 1 || seconds > 600) throw new Error("--responds-timeout must be an integer between 1 and 600 seconds");
-      result.responds = await probeResponds(client, result.labs, {
-        select: options.responds === "all" ? null : options.responds.split(",").map((id) => id.trim()).filter(Boolean),
-        timeoutMs: seconds * 1000,
-      });
-    }
+    if (responds) result.responds = await probeResponds(client, result.labs, responds);
     console.log(options.json ? JSON.stringify(result, null, 2) : formatDoctor(result));
     if (result.t3?.auth?.status === "invalid") process.exitCode = 1;
     return;

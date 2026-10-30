@@ -1,6 +1,7 @@
 // Preload for spawned CLI tests: replaces T3Client I/O with an in-memory T3.
 // FAKE_T3_SETTINGS is the getSettings result; dispatched commands are appended
-// to FAKE_T3_COMMANDS as JSON lines.
+// to FAKE_T3_COMMANDS as JSON lines. FAKE_T3_CONFIG, when set, is the
+// server.getConfig RPC result.
 import fs from "node:fs";
 import { T3Client, T3HttpError } from "../../src/t3-client.mjs";
 
@@ -20,4 +21,10 @@ Object.assign(T3Client.prototype, {
     if (command.type === "thread.turn.start") threads.get(command.threadId).messages.push({ id: command.message.messageId, role: "user", text: command.message.text });
     return { sequence: 1 };
   },
+  ...(process.env.FAKE_T3_CONFIG ? {
+    rpc: async (tag) => {
+      if (tag === "server.getConfig") return JSON.parse(process.env.FAKE_T3_CONFIG);
+      throw new Error(`Synthetic T3 has no RPC ${tag}`);
+    },
+  } : {}),
 });

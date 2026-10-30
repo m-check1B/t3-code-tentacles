@@ -1881,6 +1881,7 @@ export function formatDoctor(result = {}) {
       const parts = [lab.instanceId || "unknown"];
       if (lab.status) parts.push(`status=${lab.status}`);
       if (lab.code) parts.push(`code=${lab.code}`);
+      if (lab.t3HttpStatus != null) parts.push(`t3 http=${lab.t3HttpStatus}`);
       const action = clipDoctorText(lab.action, 320);
       if (action) parts.push(`action: ${action}`);
       lines.push(`  - ${parts.join("  ")}`);
@@ -1899,6 +1900,7 @@ export function formatDoctor(result = {}) {
       const parts = [lab.instanceId || "unknown", lab.status];
       if (lab.firstEventMs != null) parts.push(`first event ${(lab.firstEventMs / 1000).toFixed(1)} s`);
       if (lab.code) parts.push(`code=${lab.code}`);
+      if (lab.t3HttpStatus != null) parts.push(`t3 http=${lab.t3HttpStatus}`);
       if (lab.interrupt) parts.push(`interrupt=${lab.interrupt}`);
       if (lab.action) parts.push(`action: ${clipDoctorText(lab.action, 320)}`);
       lines.push(`  - ${parts.join("  ")}`);

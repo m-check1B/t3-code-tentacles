@@ -246,9 +246,16 @@ probe costs one model call per lab: it originates one no-tools turn per selected
 lab in a `doctor-probe` workspace under the Tentacles state directory, in threads
 titled `Tentacles doctor probe: <lab>`, and reports `responds`, `no_response` or
 `error` with the time to the first model event. A turn with no answer within
-`--responds-timeout` seconds (default 60) is interrupted through the turn
-interrupt path and gets a next action. Only the message role is read; probe
-replies and provider error text are never printed. It runs on the local T3 only.
+`--responds-timeout` seconds (default 60), or whose T3 read fails, is
+interrupted through the turn interrupt path and gets a next action. On a T3
+without the turn-result route the turn cannot be interrupted; the row then says
+`probe turn may still be running; stop thread <id> in T3`. A T3 HTTP fault is
+reported with its status (`t3 http=503`), not as a provider error. Only message
+roles and the session status are inspected; provider error text is classified
+locally into a typed code, and no probe reply or error text is printed. The
+probe runs with `--runtime-mode full-access`, as real turns do; "no tools" rests
+on the fixed prompt in an empty private (0700) workspace. It runs on the local
+T3 only.
 
 For a picker or another model-list consumer, use
 `tentacles doctor --json --models full`. The default document still limits each

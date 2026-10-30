@@ -6,7 +6,7 @@ All notable changes to this project are documented here.
 
 ### Added
 
-- KRA-9857: `doctor --responds all|LAB,LAB [--responds-timeout SECONDS]` (opt-in, one model call per lab) sends one no-tools probe turn to each ready (or listed) lab and reports `responds`, `no_response` or `error` with the time to the first model event. A probe with no answer within the timeout (default 60 s) is interrupted, and its row says the model accepts requests but never answers. Doctor output without the flag is unchanged.
+- KRA-9857: `doctor --responds all|LAB,LAB [--responds-timeout SECONDS]` (opt-in, one model call per lab) sends one no-tools probe turn to each ready (or listed) lab and reports `responds`, `no_response` or `error` with the time to the first model event. A probe with no answer within the timeout (default 60 s) is interrupted, and its row says the model accepts requests but never answers. On a T3 without the turn-result route the probe turn cannot be interrupted, and the row says to stop that thread in T3. Doctor output without the flag is unchanged.
 
 ## [0.5.0-jack.10] - 2026-10-30
 
