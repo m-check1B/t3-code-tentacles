@@ -41,7 +41,9 @@ test("signed-in antigravity is ready with the live default model", async () => {
   assert.equal(row.code, null);
   assert.equal(row.signedIn, true);
   assert.equal(row.defaultModel, "gemini-3.8-flash-high");
-  assert.equal(Object.hasOwn(row, "action"), false);
+  // KRA-9785: originate has no antigravity default, so the T3 default needs --model.
+  assert.match(row.defaultSource, /^t3-/);
+  assert.equal(row.action, `T3 ${row.defaultSource === "t3-marked" ? "marks" : "declares"} gemini-3.8-flash-high as the antigravity default, but originate without --model has no default for it; pass --model gemini-3.8-flash-high`);
 });
 
 test("installed antigravity with unchecked sign-in stays not ready despite cached models", async () => {

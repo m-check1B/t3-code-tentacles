@@ -180,7 +180,7 @@ test("golden twin doctor row and doctor-status preserve webTools without fabrica
   const row = report.labs.find(row => row.instanceId === "codex-noweb");
   assert.deepEqual(row, {
     instanceId: "codex-noweb", name: "Codex CLI (noweb)", advertised: true, kind: "native", enabled: true, installed: true, ready: true, status: "ready", code: null,
-    modelCount: 1, models: ["gpt-5.6-luna"], modelsTruncated: false, defaultModel: "gpt-5.6-luna", defaultAvailable: true, webTools: { v: 1, state: "off", tools: ["web_search"] },
+    modelCount: 1, models: ["gpt-5.6-luna"], modelsTruncated: false, defaultModel: "gpt-5.6-luna", defaultSource: "t3-marked", defaultAvailable: true, webTools: { v: 1, state: "off", tools: ["web_search"] },
     runtime: { id: "codex-cli", label: "Codex CLI", integration: "t3-native", driver: "codex", transport: "app-server", binarySource: "standalone-cli", configuredBinarySource: "standalone-cli" },
   });
   const shim = new RemoteRpcShim(new LoopbackRuntimeAdapter({ client, doctorImpl: runDoctor }));
