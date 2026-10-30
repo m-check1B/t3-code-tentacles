@@ -409,7 +409,7 @@ export async function installDeepSeekProvider(client, {
     ...current,
     [instanceId]: {
       driver: "grok",
-      displayName: LAB_NAMES.deepseek,
+      displayName: baseLabId(instanceId) === "deepseek" ? labName(instanceId) : LAB_NAMES.deepseek,
       accentColor: "#0EA5E9",
       enabled: true,
       environment,
