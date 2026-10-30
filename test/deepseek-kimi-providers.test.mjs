@@ -13,6 +13,8 @@ import {
   removeDeepSeekProvider,
   removeKimiProvider,
 } from "../src/bridge.mjs";
+// The installers default to these, which honour T3_DEEPSEEK_MODEL / T3_KIMI_MODEL at import.
+import { DEFAULT_DEEPSEEK_MODEL, DEFAULT_KIMI_MODEL } from "../src/config.mjs";
 import {
   buildLaunchPlan,
   deepseekTokenFile,
@@ -47,11 +49,11 @@ test("installDeepSeekProvider registers a grok-driver instance with harness mark
   assert.equal(instance.driver, "grok");
   assert.equal(instance.displayName, "DeepSeek CLI");
   assert.equal(instance.enabled, true);
-  assert.deepEqual(instance.config, { binaryPath: WRAPPER_DEEPSEEK, customModels: ["deepseek/deepseek-v4-flash"] });
+  assert.deepEqual(instance.config, { binaryPath: WRAPPER_DEEPSEEK, customModels: [DEFAULT_DEEPSEEK_MODEL] });
   const env = envMap(instance);
   assert.equal(env.get("T3_HERMES_BRIDGE_OWNER"), "t3-hermes-bridge/v1");
   assert.equal(env.get("T3_HERMES_BRIDGE_HARNESS"), "deepseek");
-  assert.equal(env.get("DEEPSEEK_MODEL"), "deepseek/deepseek-v4-flash");
+  assert.equal(env.get("DEEPSEEK_MODEL"), DEFAULT_DEEPSEEK_MODEL);
   assert.equal(env.has("DSH_ACP_BIN"), false);
 });
 
@@ -113,11 +115,11 @@ test("installKimiProvider registers a grok-driver instance with KIMI_BIN and cus
   const instance = client.instances().kimi;
   assert.equal(instance.driver, "grok");
   assert.equal(instance.displayName, "Kimi CLI");
-  assert.deepEqual(instance.config, { binaryPath: WRAPPER_KIMI, customModels: ["moonshotai/kimi-k3"] });
+  assert.deepEqual(instance.config, { binaryPath: WRAPPER_KIMI, customModels: [DEFAULT_KIMI_MODEL] });
   const env = envMap(instance);
   assert.equal(env.get("T3_HERMES_BRIDGE_HARNESS"), "kimi");
   assert.equal(env.get("KIMI_BIN"), "/opt/kimi/bin/kimi");
-  assert.equal(env.get("KIMI_MODEL"), "moonshotai/kimi-k3");
+  assert.equal(env.get("KIMI_MODEL"), DEFAULT_KIMI_MODEL);
 });
 
 test("installKimiProvider requires an absolute kimiBin and refuses foreign instances", async () => {
