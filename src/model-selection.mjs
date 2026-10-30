@@ -59,6 +59,10 @@ export const LAB_DEFAULT_MODEL_ENV_FALLBACK = Object.freeze({
   "codex-app": "T3_CODEX_MODEL",
 });
 
+// KRA-9785: the labs whose LAB_DEFAULT_MODELS entry came from the environment at load.
+export const LAB_DEFAULT_MODELS_FROM_ENV = Object.freeze(Object.keys(LAB_DEFAULT_MODEL_ENV)
+  .filter((id) => process.env[LAB_DEFAULT_MODEL_ENV[id]] || (LAB_DEFAULT_MODEL_ENV_FALLBACK[id] && process.env[LAB_DEFAULT_MODEL_ENV_FALLBACK[id]])));
+
 export function labKind(instanceId) {
   if (!ORIGINATE_LABS.includes(instanceId)) return "external";
   instanceId = baseLabId(instanceId);

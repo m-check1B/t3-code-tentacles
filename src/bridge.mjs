@@ -32,6 +32,7 @@ import {
   defaultModelForLab,
   LAB_DEFAULT_MODEL_ENV,
   LAB_DEFAULT_MODEL_ENV_FALLBACK,
+  LAB_DEFAULT_MODELS_FROM_ENV,
   labInstallHint,
   labKind,
   ORIGINATE_LABS,
@@ -1164,11 +1165,22 @@ function fullModelCatalog(provider, allModels) {
 // the built-in model. A sensitive or redacted entry is never read. The lab id, not
 // the harness, routes here, so a DeepSeek harness at another id keeps that lab's default.
 export function labDefaultModel(instanceId, instance) {
-  if (baseLabId(instanceId) !== "deepseek") return defaultModelForLab(instanceId);
+  return labDefault(instanceId, instance).model;
+}
+
+// KRA-9785: the default with the branch that picked it (doctor's defaultSource).
+function labDefault(instanceId, instance) {
+  if (baseLabId(instanceId) !== "deepseek") {
+    const model = defaultModelForLab(instanceId);
+    return { model, source: model ? (LAB_DEFAULT_MODELS_FROM_ENV.includes(baseLabId(instanceId)) ? "env" : "built-in") : null };
+  }
+  const override = deepseekModelOverride();
+  if (override) return { model: override, source: "env" };
   const variable = providerHarness(instance) === DEEPSEEK_HARNESS_VALUE
     ? instance.environment.find((entry) => entry?.name === "DEEPSEEK_MODEL" && entry.sensitive !== true && entry.valueRedacted !== true)
     : null;
-  return deepseekModelOverride() || modelLabel(variable?.value) || BUILT_IN_DEEPSEEK_MODEL;
+  const installed = modelLabel(variable?.value);
+  return installed ? { model: installed, source: "installed" } : { model: BUILT_IN_DEEPSEEK_MODEL, source: "built-in" };
 }
 
 export async function originateDefaultModel(client, instanceId) {
@@ -1180,11 +1192,22 @@ export async function originateDefaultModel(client, instanceId) {
 function liveDefaultModel(provider, instanceId, allModels, instance) {
   const marked = (Array.isArray(provider?.models) ? provider.models : [])
     .find((model) => model?.isDefault === true && normalizedModelSlugs({ models: [model] }).length);
-  if (marked) return normalizedModelSlugs({ models: [marked] })[0];
+  if (marked) return { model: normalizedModelSlugs({ models: [marked] })[0], source: "t3-marked" };
   // Older snapshots can expose the default directly instead of marking a row.
   const declared = modelLabel(provider?.defaultModel);
-  if (declared && allModels.includes(declared)) return declared;
-  return labDefaultModel(instanceId, instance);
+  if (declared && allModels.includes(declared)) return { model: declared, source: "t3-declared" };
+  return labDefault(instanceId, instance);
+}
+
+// KRA-9785: originate without --model ignores T3's default, so say when they differ.
+const originatePicks = new WeakMap();
+
+function defaultSourceAction(lab) {
+  const pick = originatePicks.get(lab);
+  const verb = lab.defaultSource === "t3-marked" ? "marks" : "declares";
+  return pick
+    ? `T3 ${verb} ${lab.defaultModel} as the ${lab.instanceId} default, but originate without --model picks ${pick}; pass --model ${lab.defaultModel} or make ${pick} the T3 default`
+    : `T3 ${verb} ${lab.defaultModel} as the ${lab.instanceId} default, but originate without --model has no default for it; pass --model ${lab.defaultModel}`;
 }
 
 function providerEnabled(settings, instanceId, configProvider) {
@@ -1277,7 +1300,7 @@ function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
   const installed = configProvider?.installed === true || configured;
   const kind = labKind(instanceId);
   const allModels = normalizedModelSlugs(configProvider);
-  const defaultModel = liveDefaultModel(configProvider, instanceId, allModels, instance);
+  const { model: defaultModel, source: defaultSource } = liveDefaultModel(configProvider, instanceId, allModels, instance);
   const defaultAvailable = kind === "explicit" ? null : Boolean(defaultModel && allModels.includes(defaultModel));
   const models = modelsMode === "full" ? [...allModels] : allModels.slice(0, DOCTOR_MODEL_LIMIT);
   if (defaultAvailable && !models.includes(defaultModel)) {
@@ -1308,10 +1331,15 @@ function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
     models,
     modelsTruncated: allModels.length > models.length,
     defaultModel,
+    defaultSource,
     defaultAvailable,
     webTools: inspectInstanceWebTools(settings, instanceId),
   };
   if (code === "provider_probe_timeout") probeCommands.set(row, providerProbeTimeout(configProvider.message));
+  if (defaultSource?.startsWith("t3-") && kind !== "external") {
+    const pick = labDefaultModel(instanceId, instance);
+    if (pick !== defaultModel) originatePicks.set(row, pick);
+  }
   if (modelsMode === "full") row.modelCatalog = fullModelCatalog(configProvider, allModels);
   if (instanceId === "codex" || instanceId === "codex-noweb" || instanceId === DEFAULT_CODEX_APP_INSTANCE_ID) {
     const legacyConfig = settings?.providers?.codex;
@@ -1702,6 +1730,7 @@ async function doctorReport(client, {
     }
     const action = doctorAction(lab);
     if (!lab.ready && action) lab.action = action;
+    else if (lab.ready && originatePicks.has(lab)) lab.action = defaultSourceAction(lab);
   }
 
   void instanceId;
@@ -1840,6 +1869,11 @@ export function formatDoctor(result = {}) {
       if (action) parts.push(`action: ${action}`);
       lines.push(`  - ${parts.join("  ")}`);
     }
+  }
+  const defaultNotes = labs.filter((lab) => lab.ready && lab.action);
+  if (defaultNotes.length) {
+    lines.push("Default model:");
+    for (const lab of defaultNotes) lines.push(`  - ${lab.instanceId}  action: ${clipDoctorText(lab.action, 320)}`);
   }
 
   lines.push("");

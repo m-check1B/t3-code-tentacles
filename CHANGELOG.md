@@ -6,6 +6,7 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- KRA-9785: `doctor --json` lab rows carry `defaultSource` (`t3-marked`, `t3-declared`, `env`, `installed` or `built-in`), the branch that picked `defaultModel`. When T3 marks or declares a default that `originate` without `--model` would not pick, a ready row (and the text report, under Default model) carries an action: pass `--model` or make originate's pick the T3 default. Originate is unchanged.
 - KRA-6909: `doctor` and `originate` without `--model` now share one DeepSeek default: `T3_DEEPSEEK_MODEL`, then the installed provider's non-sensitive `DEEPSEEK_MODEL` (written by `install-deepseek-provider --model`), then the built-in model. An installed non-default model reports ready and is the model originate selects, without a CLI override. T3's own marked default still wins in doctor only; originate does not read it yet. A DeepSeek harness installed at a non-deepseek lab id (for example `install-deepseek-provider --instance grok`) keeps that lab's built-in default in both doctor and originate, so doctor reports it `default_model_unavailable` instead of ready. Other labs are unchanged.
 
 ## [0.5.0-jack.6] - 2026-10-30

@@ -65,8 +65,10 @@ test("V2 thread branch and worktreePath map empty or non-string to null and keep
     assert.equal(map(value).branch, null, `branch ${JSON.stringify(value)}`);
     assert.equal(map(value).worktreePath, null, `worktreePath ${JSON.stringify(value)}`);
   }
-  assert.equal(map("/w/talk").branch, "/w/talk");
-  assert.equal(map("/w/talk").worktreePath, "/w/talk");
+  // Distinct values so a mapper that cross-wires the two fields fails.
+  const kept = threadDetailToV1({ projection: { thread: { id: "t", projectId: "p", branch: "kra-branch", worktreePath: "/w/talk" } } }, "t").thread;
+  assert.equal(kept.branch, "kra-branch");
+  assert.equal(kept.worktreePath, "/w/talk");
 });
 
 test("protocol detection: descriptor v2, missing descriptor v1, unknown version refused", async () => {
