@@ -1,9 +1,15 @@
 #!/usr/bin/env node
 // KRA-8959: parity scenario "grok-bot-vs-jack-csv-pipeline", keyless and $0.
 // The chair runtime (LoopbackRuntimeAdapter: originate, turn-result,
-// thread-events, thread-artifact, interrupt) runs unchanged against an
-// in-memory synthetic T3 with two scripted labs. No provider, no network, no
-// real T3, no ~/.t3 data. Prints one PASS/FAIL line per step; exit 1 on FAIL.
+// thread-events, thread-artifact, interrupt, Local Talk custody) runs against
+// an in-memory synthetic T3 with two scripted labs. No provider, no network,
+// no real T3, no ~/.t3 data. Prints one PASS/FAIL line per step; exit 1 on FAIL.
+// Every injection into the chair runtime:
+// - client: the synthetic T3 below (snapshot, dispatch, turn-result rows,
+//   assets.createUrl and the fetchImpl that serves workspace files).
+// - originateImpl: the real originate, with stateFile set to a temp ledger.
+// - threadEventsDirectory: a temp journal directory, not the real state dir.
+// - interruptOptions: shortened waits (2s/2s/5s/10ms, production 4s/14s/22s/200ms).
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -35,6 +41,7 @@ async function analysisLab({ workspace }) {
 }
 
 // Synthetic lab 2: builds out/index.html from the JSON in its message only.
+// Its workspace has no sales.csv, so it cannot read the CSV directly.
 // It writes a partial page first, so an interrupt lands mid-run. It also drops
 // a credential-shaped file to prove the export filter skips it.
 async function builderLab({ workspace, text, signal, holdMs }) {
@@ -160,7 +167,9 @@ const tuple = ({ threadId, messageId, turnCommandId }) => ({ threadId, messageId
 export async function runParityScenario({ log = (line) => process.stdout.write(`${line}\n`) } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles-parity-"));
   const workspace = path.join(root, "workspace");
+  const builderWorkspace = path.join(root, "builder-workspace");
   fs.mkdirSync(workspace);
+  fs.mkdirSync(builderWorkspace);
   fs.writeFileSync(path.join(workspace, "sales.csv"), SALES_CSV);
   const stateFile = path.join(root, "bridge-state.json");
   const directory = path.join(root, "thread-events");
@@ -169,8 +178,6 @@ export async function runParityScenario({ log = (line) => process.stdout.write(`
     client: t3,
     // The real originate, pinned to a temporary ledger instead of ~/.t3 state.
     originateImpl: (client, params) => originate(client, { ...params, stateFile }),
-    // Local Talk custody targets the user's home; the scenario workspace is a temp dir.
-    prepareTalkWorkspaceImpl: () => {},
     threadEventsDirectory: directory,
     interruptOptions: { startWaitMs: 2_000, terminalWaitMs: 2_000, totalBudgetMs: 5_000, intervalMs: 10 },
   });
@@ -204,7 +211,7 @@ export async function runParityScenario({ log = (line) => process.stdout.write(`
 
     await step(2, "builder worker writes out/index.html", async () => {
       check(analysisJson, "no analysis JSON");
-      builder = await chair.originate({ workspace, title: "Parity builder", instanceId: "lab-two", model: "synthetic-1", runtimeMode: "full-access",
+      builder = await chair.originate({ workspace: builderWorkspace, title: "Parity builder", instanceId: "lab-two", model: "synthetic-1", runtimeMode: "full-access",
         idempotencyKey: `parity:${randomUUID()}:builder`, message: `Write out/index.html showing revenue, A and B from this JSON only: ${analysisJson}` });
       check(builder.threadId !== analysis.threadId, "builder reused the analysis thread");
       const userText = (await t3.thread(builder.threadId)).thread.messages[0].text;
@@ -237,6 +244,7 @@ export async function runParityScenario({ log = (line) => process.stdout.write(`
       check(analysis, "no analysis receipt");
       const replay = await chair.originate(analysisParams);
       check(replay.threadId === analysis.threadId && replay.messageId === analysis.messageId, "replay changed the thread");
+      check((await t3.thread(analysis.threadId)).thread.messages.filter((m) => m.role === "user").length === 1, "replay dispatched a second turn");
       const altered = { ...analysisParams, message: `${analysisParams.message.slice(0, -1)}!` };
       let refused = null;
       try { await chair.originate(altered); } catch (error) { refused = error.message; }
@@ -246,11 +254,11 @@ export async function runParityScenario({ log = (line) => process.stdout.write(`
 
     await step(5, "interrupt builder mid-run", async () => {
       check(analysisJson, "no analysis JSON");
-      t3.holdMs = 60_000;
-      const run = await chair.originate({ workspace, title: "Parity builder interrupt", instanceId: "lab-two", model: "synthetic-1", runtimeMode: "full-access",
+      t3.holdMs = 10_000;
+      const run = await chair.originate({ workspace: builderWorkspace, title: "Parity builder interrupt", instanceId: "lab-two", model: "synthetic-1", runtimeMode: "full-access",
         idempotencyKey: `parity:${randomUUID()}:interrupt`, message: `Write out/index.html showing revenue, A and B from this JSON only: ${analysisJson}` });
       await waitFor(async () => (await chair.turnResult(tuple(run))).turnId);
-      check(fs.readFileSync(path.join(workspace, "out", "index.html"), "utf8").includes("partial"), "builder was not mid-run");
+      check(fs.readFileSync(path.join(builderWorkspace, "out", "index.html"), "utf8").includes("partial"), "builder was not mid-run");
       const stop = await chair.interrupt({ requestId: `stop-${randomUUID()}`, ...tuple(run), reason: "user_stop" });
       check(["cancelled", "already_terminal"].includes(stop.status), `interrupt status ${stop.status}`);
       const result = await chair.turnResult(tuple(run));
@@ -269,6 +277,8 @@ export async function runParityScenario({ log = (line) => process.stdout.write(`
       const builderJournal = journal(builder.threadId);
       check(!builderJournal.includes("raw-tool-output:analysis") && !builderJournal.includes("sku,units,price"), "builder journal holds analysis raw output");
       check(!analysisJournal.includes("raw-tool-output:builder") && !analysisJournal.includes("<h1>"), "analysis journal holds builder raw output");
+      check(!/raw-tool-output:/.test(analysisJournal + builderJournal), "a journal holds raw tool output");
+      check(analysisJournal.includes("Synthetic tool ran") && builderJournal.includes("Synthetic tool ran"), "tool summary missing");
       return `journals ${analysis.threadId.slice(0, 8)}/${builder.threadId.slice(0, 8)} hold summaries only`;
     });
   } finally {

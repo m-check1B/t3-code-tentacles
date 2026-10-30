@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { runParityScenario, SCENARIO } from "../scripts/parity-scenario.mjs";
 
-test(`KRA-8959: ${SCENARIO} passes every step on synthetic labs`, async () => {
+test(`KRA-8959: ${SCENARIO} passes every step on synthetic labs`, { timeout: 30_000 }, async () => {
   const lines = [];
   const report = await runParityScenario({ log: (line) => lines.push(line) });
   assert.deepEqual(report.steps.map((step) => step.id), [1, 2, 3, 4, 5, 6]);
