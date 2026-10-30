@@ -10,20 +10,27 @@ while [ -L "$SELF" ]; do
   esac
 done
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$SELF")" && pwd)
+# Accept a candidate only if it is an executable Node.js 22 or newer.
+node_ok() {
+  [ -x "$1" ] && "$1" -e 'process.exit(+process.versions.node.split(".")[0] >= 22 ? 0 : 1)' >/dev/null 2>&1
+}
 NODE_PATH=''
 if [ -f "$SCRIPT_DIR/node-path" ]; then
   IFS= read -r NODE_PATH < "$SCRIPT_DIR/node-path" || true
 fi
 case "$NODE_PATH" in
-  /*) [ -x "$NODE_PATH" ] || NODE_PATH='' ;;
+  /*) node_ok "$NODE_PATH" || NODE_PATH='' ;;
   *) NODE_PATH='' ;;
 esac
 if [ -z "$NODE_PATH" ]; then
-  for CANDIDATE in /opt/homebrew/bin/node /usr/local/bin/node "${HOME:-}/.local/node/bin/node"; do
-    if [ -x "$CANDIDATE" ]; then NODE_PATH=$CANDIDATE; break; fi
+  for CANDIDATE in /opt/homebrew/bin/node /usr/local/bin/node ${HOME:+"$HOME/.local/node/bin/node"}; do
+    if node_ok "$CANDIDATE"; then NODE_PATH=$CANDIDATE; break; fi
   done
 fi
-if [ -z "$NODE_PATH" ]; then NODE_PATH=$(command -v node || true); fi
+if [ -z "$NODE_PATH" ]; then
+  CANDIDATE=$(command -v node || true)
+  if [ -n "$CANDIDATE" ] && node_ok "$CANDIDATE"; then NODE_PATH=$CANDIDATE; fi
+fi
 if [ -z "$NODE_PATH" ]; then
   echo "Tentacles: Node.js 22+ is missing. Record its absolute path in bin/node-path or install Node.js." >&2
   exit 127

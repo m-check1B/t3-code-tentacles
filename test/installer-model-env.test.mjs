@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 // PR 54: the DeepSeek and Kimi installers default to T3_DEEPSEEK_MODEL / T3_KIMI_MODEL,
@@ -22,11 +25,15 @@ console.log(JSON.stringify({
 `;
 
 test("installers default to T3_DEEPSEEK_MODEL and T3_KIMI_MODEL set in the environment", () => {
-  const env = { ...process.env, T3_DEEPSEEK_MODEL: "synthetic/deepseek-env", T3_KIMI_MODEL: "synthetic/kimi-env" };
-  const result = spawnSync(process.execPath, ["--input-type=module", "-e", CHILD], { env, encoding: "utf8" });
-  assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(JSON.parse(result.stdout), {
-    deepseek: [["synthetic/deepseek-env"], "synthetic/deepseek-env"],
-    kimi: [["synthetic/kimi-env"], "synthetic/kimi-env"],
-  });
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tentacles installer env "));
+  try {
+    // Minimal env: no host HOME, NODE_OPTIONS or other T3_* variables reach the child.
+    const env = { PATH: process.env.PATH, HOME: home, T3_DEEPSEEK_MODEL: "synthetic/deepseek-env", T3_KIMI_MODEL: "synthetic/kimi-env" };
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", CHILD], { env, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), {
+      deepseek: [["synthetic/deepseek-env"], "synthetic/deepseek-env"],
+      kimi: [["synthetic/kimi-env"], "synthetic/kimi-env"],
+    });
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });

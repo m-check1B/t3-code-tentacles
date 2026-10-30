@@ -6,7 +6,7 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
-- KRA-6432: the `t3-agent-bridge` / `tentacles` shim now also finds Node.js in `$HOME/.local/node/bin/node` when no recorded path works, so a non-interactive ssh on hosts that keep Node there no longer exits 127.
+- KRA-6432: the `t3-agent-bridge` / `tentacles` shim now also finds Node.js in `$HOME/.local/node/bin/node` when no recorded path works, so a non-interactive ssh on hosts that keep Node there no longer exits 127. Every candidate (recorded path, fixed paths and PATH) must now be Node.js 22 or newer; an older one is skipped, and the shim still exits 127 when none qualifies.
 - KRA-6909: `doctor` and `originate` without `--model` now use the installed Kimi and Pi model as the lab default: `T3_KIMI_MODEL` / `T3_PI_MODEL`, then the installed provider's non-sensitive `KIMI_MODEL` / `PI_MODEL`, then the built-in model, reported as `defaultSource` `env`, `installed` or `built-in`. `install-kimi-provider` and `install-pi-provider` always write that variable (the `--model` value or the default at install time), so an existing install reports `installed` and keeps its install-time model until it is reinstalled.
 
 ## [0.5.0-jack.7] - 2026-10-30
