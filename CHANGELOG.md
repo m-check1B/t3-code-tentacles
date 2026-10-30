@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- `doctor`: when a Kimi, Pi or DeepSeek lab's installed model (`defaultSource` `installed`) is not advertised by T3, the action names that model and says to pass `--model` to `originate` or re-run the lab's installer with `--model`, instead of the generic env-variable hint. The shim comments now say it runs under `/bin/sh` (dash on Linux) and that the Node probe costs one Node start per probed candidate.
+
 ## [0.5.0-jack.8] - 2026-10-30
 
 ### Fixed

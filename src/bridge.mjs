@@ -1419,6 +1419,10 @@ function doctorAction(lab) {
     ? "Enable Cursor in T3, then choose a model shown by doctor"
     : `Enable the ${lab.instanceId} instance in T3`;
   if (lab.code === "default_model_unavailable") {
+    const installer = labInstallHint(lab.instanceId);
+    if (lab.defaultSource === "installed" && installer) {
+      return `${lab.instanceId} no longer offers its installed model ${lab.defaultModel}; pass --model <a model doctor lists> to originate, or re-run \`${installer} --model <a model doctor lists>\`, then rerun doctor`;
+    }
     const variable = LAB_DEFAULT_MODEL_ENV[baseLabId(lab.instanceId)];
     const fallback = LAB_DEFAULT_MODEL_ENV_FALLBACK[baseLabId(lab.instanceId)];
     return variable && lab.defaultModel

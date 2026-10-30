@@ -75,6 +75,16 @@ for (const [lab, { variable, env, builtIn }] of Object.entries(LABS)) {
     assert.equal(pick, INSTALLED);
   });
 
+  test(`${lab}: an unadvertised installed model names it and points at --model or the installer`, async (t) => {
+    withEnv(t, env, undefined);
+    const { row } = await labRow(t, lab, await installedInstance(lab), [builtIn]);
+    assert.equal(row.code, "default_model_unavailable");
+    assert.equal(row.defaultSource, "installed");
+    assert.match(row.action, new RegExp(`installed model ${INSTALLED}`));
+    assert.match(row.action, /pass --model .* to originate/);
+    assert.match(row.action, new RegExp(`re-run \`tentacles install-${lab}-provider --instance ${lab} --model`));
+  });
+
   test(`${lab}: ${env} still wins over the installed model`, async (t) => {
     withEnv(t, env, `synthetic/${lab}-env`);
     const { row, pick } = await labRow(t, lab, await installedInstance(lab), [INSTALLED, `synthetic/${lab}-env`]);

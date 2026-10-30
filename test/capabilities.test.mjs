@@ -12,6 +12,7 @@ import {
   CapabilityCache,
   CAPABILITIES_SCHEMA,
   codexTomlMcpServers,
+  extraSearchDirectories,
   formatCapabilities,
   LAB_CONFIG_READERS,
   labsFromDoctor,
@@ -222,6 +223,12 @@ test("a CLI found only outside PATH is reported with a PATH fix", { skip: !posix
   const [row] = document.clis;
   assert.deepEqual([row.installed, row.onPath, row.where, row.auth], [true, false, "~/.local/bin/fakelocal", "unknown"]);
   assert.deepEqual(row.fix, { kind: "path", command: "Add ~/.local/bin to PATH" });
+});
+
+test("the off-PATH search keeps every Node dir the shim checks", () => {
+  const dirs = extraSearchDirectories({ home: "/home/u", platform: "linux" });
+  const shimDirs = ["/opt/homebrew/bin", "/usr/local/bin", "/home/u/.local/node/bin"];
+  assert.ok(shimDirs.every((dir) => dirs.includes(dir)), dirs.join(":"));
 });
 
 test("gcloud-style stdout probes keep only the signed-in bit, never the account", () => {
