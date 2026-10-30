@@ -85,6 +85,9 @@ export function labInstallHint(instanceId) {
       return "tentacles install-pi-provider --instance pi";
     case "deepseek":
       return "tentacles install-deepseek-provider --instance deepseek";
+    // Explicit, not via baseLabId: other noweb ids (cursor-noweb, codex-noweb) have no installer of their own.
+    case "deepseek-noweb":
+      return "tentacles install-deepseek-provider --instance deepseek-noweb";
     case "kimi":
       return "tentacles install-kimi-provider --instance kimi";
     case "cursor":

@@ -13,27 +13,27 @@ const ENV_MODEL = "synthetic/deepseek-env";
 const T3_MODEL = "synthetic/deepseek-t3";
 const BUILT_IN = "deepseek/deepseek-v4-flash";
 
-async function installedInstance() {
+async function installedInstance(instanceId = "deepseek") {
   let providerInstances;
   await installDeepSeekProvider({
     getSettings: async () => ({ providerInstances: {} }),
     updateSettings: async (patch) => { providerInstances = patch.providerInstances; },
     refreshProvider: async () => {},
-  }, { wrapperPath: "/synthetic/deepseek-acp", model: INSTALLED, instanceId: "deepseek" });
-  return providerInstances.deepseek;
+  }, { wrapperPath: "/synthetic/deepseek-acp", model: INSTALLED, instanceId });
+  return providerInstances[instanceId];
 }
 
-async function deepseekReport(t, { instance, models, defaultModel }) {
+async function deepseekReport(t, { instance, models, defaultModel, instanceId = "deepseek" }) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-kra9785-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const openrouterTokenFile = path.join(directory, "openrouter-token");
   fs.writeFileSync(openrouterTokenFile, "synthetic-openrouter-value\n", { mode: 0o600 });
   const provider = {
-    instanceId: "deepseek", driver: "grok", status: "ready", installed: true, enabled: true,
+    instanceId, driver: "grok", status: "ready", installed: true, enabled: true,
     models: models.map((slug) => (typeof slug === "string" ? { slug } : slug)),
     ...(defaultModel ? { defaultModel } : {}),
   };
-  const settings = { providerInstances: instance ? { deepseek: instance } : {} };
+  const settings = { providerInstances: instance ? { [instanceId]: instance } : {} };
   const client = {
     snapshot: async () => ({ projects: [], threads: [] }),
     getSettings: async () => settings,
@@ -48,7 +48,7 @@ async function deepseekReport(t, { instance, models, defaultModel }) {
     hermesHome: directory,
     refreshDirectory: path.join(directory, "refresh"),
   });
-  return { report, row: report.labs.find((entry) => entry.instanceId === "deepseek"), pick: await originateDefaultModel(client, "deepseek") };
+  return { report, row: report.labs.find((entry) => entry.instanceId === instanceId), pick: await originateDefaultModel(client, instanceId) };
 }
 
 function withEnv(t, value) {
@@ -90,6 +90,16 @@ test("defaultSource installed: the installed provider's DEEPSEEK_MODEL picks the
   assert.equal(row.defaultSource, "installed");
   assert.equal(row.action, undefined);
 });
+
+for (const instanceId of ["deepseek", "deepseek-noweb"]) {
+  test(`defaultSource installed, not advertised: ${instanceId} action names its installer`, async (t) => {
+    withEnv(t, undefined);
+    const { row } = await deepseekReport(t, { instanceId, instance: await installedInstance(instanceId), models: [BUILT_IN] });
+    assert.equal(row.code, "default_model_unavailable");
+    assert.equal(row.defaultSource, "installed");
+    assert.equal(row.action, `${instanceId} no longer offers its installed model ${INSTALLED}; pass --model <a model doctor lists> to originate, or re-run \`tentacles install-deepseek-provider --instance ${instanceId} --model <a model doctor lists>\`, then rerun doctor`);
+  });
+}
 
 test("defaultSource built-in: no T3, env or installed default", async (t) => {
   withEnv(t, undefined);

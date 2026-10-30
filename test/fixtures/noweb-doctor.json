@@ -391,7 +391,8 @@
         "v": 1,
         "state": "unknown",
         "tools": []
-      }
+      },
+      "action": "tentacles install-deepseek-provider --instance deepseek-noweb"
     },
     {
       "instanceId": "antigravity",
