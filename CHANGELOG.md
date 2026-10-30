@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.5.0-jack.10] - 2026-10-30
+
 ### Fixed
 
 - KRA-9798: `install-deepseek-provider --instance deepseek-noweb` now names the T3 instance `DeepSeek CLI (noweb)` instead of `DeepSeek CLI`; `deepseek` and other custom instance ids keep `DeepSeek CLI`.
