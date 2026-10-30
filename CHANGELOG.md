@@ -6,7 +6,7 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
-- `doctor`: when a Kimi, Pi or DeepSeek lab's installed model (`defaultSource` `installed`) is not advertised by T3, the action names that model and says to pass `--model` to `originate` or re-run the lab's installer with `--model`, instead of the generic env-variable hint. The shim comments now say it runs under `/bin/sh` (often dash on Linux) and that the Node probe costs one Node start per probed candidate. A `deepseek-noweb` lab now gets an installer action too (installed model not advertised, absent or binary unavailable), naming `tentacles install-deepseek-provider --instance deepseek-noweb`.
+- `doctor`: when a Kimi, Pi or DeepSeek lab's installed model (`defaultSource` `installed`) is not advertised by T3, the action names that model and says to pass `--model` to `originate` or re-run the lab's installer with `--model`, instead of the generic env-variable hint. The shim comments now say it runs under `/bin/sh` (often dash on Linux) and that the Node probe costs one Node start per probed candidate. A `deepseek-noweb` lab now gets an installer action too (installed model not advertised, absent or binary unavailable), naming `tentacles install-deepseek-provider --instance deepseek-noweb`; its probe timeout (`provider_probe_timeout`) now says to run that command to reinstall the adapter launcher, like `deepseek`, instead of mixing native and adapter wording.
 
 ## [0.5.0-jack.8] - 2026-10-30
 

@@ -46,7 +46,7 @@
       "message": "DeepSeek Harness is installed but timed out while running `dsh --version`.",
       "labs": {
         "deepseek": "run `tentacles install-deepseek-provider --instance deepseek` to reinstall its launcher",
-        "deepseek-noweb": "run `dsh --version`"
+        "deepseek-noweb": "run `tentacles install-deepseek-provider --instance deepseek-noweb` to reinstall its launcher"
       }
     },
     {
