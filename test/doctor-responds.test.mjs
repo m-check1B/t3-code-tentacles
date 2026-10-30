@@ -14,19 +14,21 @@ const PRELOAD = fileURLToPath(new URL("./helpers/fake-t3-client.mjs", import.met
 
 // KRA-9857: a synthetic T3 whose labs answer, stay silent, or fail. No real providers.
 function fakeT3(t, behaviour, { failProject = false, noTurnResult = false } = {}) {
-  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-responds-"));
+  const workspace = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "doctor-responds-")));
   t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
   const projects = new Map();
   const threads = new Map();
   const commands = [];
   const turns = new Map();
   const failedReads = new Map();
+  const brokenThreads = new Set();
   const client = {
     snapshot: async () => ({ projects: [...projects.values()], threads: [...threads.values()] }),
     thread: async (threadId) => {
       // readfail: originate's own read succeeds, the first probe poll gets a 503.
       const reads = failedReads.get(threadId);
       if (reads !== undefined) failedReads.set(threadId, reads + 1);
+      if (brokenThreads.has(threadId)) throw new T3HttpError({ method: "GET", pathname: threadId, status: 503, body: "START-CANARY" });
       if (reads === 1) throw new T3HttpError({ method: "GET", pathname: threadId, status: 503, body: "READ-CANARY" });
       if (!threads.has(threadId)) throw new T3HttpError({ method: "GET", pathname: threadId, status: 404, body: null });
       return { thread: structuredClone(threads.get(threadId)) };
@@ -42,6 +44,8 @@ function fakeT3(t, behaviour, { failProject = false, noTurnResult = false } = {}
         thread.messages.push({ id: command.message.messageId, role: "user", text: command.message.text });
         turns.set(command.threadId, { state: "pending", turnId: "turn-1" });
         if (mode === "readfail") failedReads.set(command.threadId, 0);
+        // startfail: every read after the turn start gets a 503, so originate's own wait fails.
+        if (mode === "startfail") brokenThreads.add(command.threadId);
         if (mode === "answer") thread.messages.push({ id: "assistant-1", role: "assistant", text: "OK" });
         thread.session = mode === "error"
           ? { status: "error", activeTurnId: null, lastError: "rate limit exceeded SECRET-CANARY" }
@@ -207,4 +211,57 @@ test("the probe project uses the first selected ready lab's model selection (P3-
   const [project] = commands.filter((command) => command.type === "project.create");
   assert.equal(project.defaultModelSelection.instanceId, "grok");
   assert.equal(project.defaultModelSelection.model, "grok-synthetic");
+});
+
+// KRA-9874: B3 PR 69 follow-ups N1-N3.
+
+test("a T3 read fault after the probe turn starts still reports the thread and tries to interrupt it (N1)", async (t) => {
+  const { client, commands, workspace } = fakeT3(t, { codex: "startfail" });
+  const [row] = (await probeResponds(client, labs, { ...options(workspace), select: ["codex"] })).labs;
+  const [start] = commands.filter((command) => command.type === "thread.turn.start");
+  assert.ok(start, "the probe turn was started");
+  assert.equal(row.status, "error");
+  assert.equal(row.t3HttpStatus, 503);
+  assert.equal(row.threadId, start.threadId);
+  // T3 still cannot read the thread, so the interrupter refuses to guess and the row names the thread to stop.
+  assert.equal(row.interrupt, "unavailable");
+  assert.ok(row.action.includes(`probe turn may still be running; stop thread ${start.threadId} in T3`), row.action);
+  assert.doesNotMatch(JSON.stringify(row), /START-CANARY/);
+});
+
+test("the probe workspace must resolve to itself, and T3 gets the resolved path (N2)", async (t) => {
+  const { client, commands, workspace } = fakeT3(t, { grok: "answer" });
+  const parentLink = `${workspace}-parent`;
+  fs.symlinkSync(workspace, parentLink);
+  t.after(() => fs.rmSync(parentLink, { force: true }));
+  fs.mkdirSync(path.join(workspace, "probe"), { mode: 0o700 });
+  await assert.rejects(probeResponds(client, labs, { ...options(path.join(parentLink, "probe")), select: ["grok"] }), /probe workspace/);
+  assert.equal(commands.length, 0, "no dispatch through a symlinked parent");
+
+  const cwd = process.cwd();
+  process.chdir(workspace);
+  t.after(() => process.chdir(cwd));
+  await probeResponds(client, labs, { ...options("probe"), select: ["grok"] });
+  const real = path.join(workspace, "probe");
+  assert.equal(commands.find((command) => command.type === "project.create").workspaceRoot, real);
+});
+
+test("CLI doctor --responds-timeout without --responds fails before any T3 call (N3)", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-responds-cli-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const tokenFile = path.join(directory, "token");
+  fs.writeFileSync(tokenFile, "synthetic-fixture-only-token", { mode: 0o600 });
+  const callsFile = path.join(directory, "calls.log");
+  const env = {
+    ...process.env, HOME: directory, T3_URL: "http://127.0.0.1:9", T3_HERMES_TOKEN_FILE: tokenFile, TENTACLES_T3_AUTO_REAUTH: "0",
+    FAKE_T3_CALLS: callsFile,
+    FAKE_T3_COMMANDS: path.join(directory, "commands.jsonl"),
+    FAKE_T3_SETTINGS: JSON.stringify({ providerInstances: { codex: { driver: "codex", enabled: true } } }),
+    FAKE_T3_CONFIG: JSON.stringify({ providers: [{ instanceId: "codex", status: "ready", installed: true, models: [{ slug: "gpt-synthetic", isDefault: true }] }] }),
+  };
+  delete env.TENTACLES_COMPUTER;
+  const spawned = spawnSync(process.execPath, ["--import", PRELOAD, CLI, "doctor", "--responds-timeout", "5"], { encoding: "utf8", env });
+  assert.equal(spawned.status, 1, spawned.stdout);
+  assert.match(spawned.stderr, /--responds-timeout needs --responds/);
+  assert.equal(fs.existsSync(callsFile), false, "no T3 client call was made");
 });
