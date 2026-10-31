@@ -249,7 +249,11 @@ titled `Tentacles doctor probe: <lab>`, and reports `responds`, `no_response` or
 `--responds-timeout` seconds (default 60), or whose T3 read fails, is
 interrupted through the turn interrupt path and gets a next action. On a T3
 without the turn-result route the turn cannot be interrupted; the row then says
-`probe turn may still be running; stop thread <id> in T3`. A T3 HTTP fault is
+`probe turn may still be running; stop thread <id> in T3`, and so does a T3
+whose route check fails. When T3 has the route but no turn for the probe, the
+row says `no probe turn was found for thread <id>`; if the turn start was sent,
+it adds `if one appears, stop thread <id> in T3`, because a start whose reply
+was lost may still land late. A T3 HTTP fault is
 reported with its status (`t3 http=503`), not as a provider error. Only message
 roles and the session status are inspected; provider error text is classified
 locally into a typed code, and no probe reply or error text is printed. The

@@ -13,7 +13,7 @@ const CLI = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
 const PRELOAD = fileURLToPath(new URL("./helpers/fake-t3-client.mjs", import.meta.url));
 
 // KRA-9857: a synthetic T3 whose labs answer, stay silent, or fail. No real providers.
-function fakeT3(t, behaviour, { failProject = false, noTurnResult = false } = {}) {
+function fakeT3(t, behaviour, { failProject = false, noTurnResult = false, capabilityStatus = null } = {}) {
   const workspace = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "doctor-responds-")));
   t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
   const projects = new Map();
@@ -23,6 +23,7 @@ function fakeT3(t, behaviour, { failProject = false, noTurnResult = false } = {}
   const failedReads = new Map();
   const brokenThreads = new Set();
   const recoverOnce = new Set();
+  const calls = { capability: 0 };
   const client = {
     snapshot: async () => ({ projects: [...projects.values()], threads: [...threads.values()] }),
     thread: async (threadId) => {
@@ -63,6 +64,9 @@ function fakeT3(t, behaviour, { failProject = false, noTurnResult = false } = {}
     },
     request: async (route, { body } = {}) => {
       assert.equal(route, "/api/orchestration/turn-result");
+      // The bodyless GET is the capability check; capabilityStatus makes it fail with that HTTP status.
+      if (!body) calls.capability += 1;
+      if (!body && capabilityStatus) throw new T3HttpError({ method: "GET", pathname: route, status: capabilityStatus, body: null });
       if (noTurnResult) throw new T3HttpError({ method: "POST", pathname: route, status: 404, body: null });
       if (!body) return { talkTurnResult: "v1" };
       // Like T3, only the exact (threadId, messageId, turnCommandId) tuple names a turn.
@@ -71,7 +75,7 @@ function fakeT3(t, behaviour, { failProject = false, noTurnResult = false } = {}
       return { ...body, ...turn };
     },
   };
-  return { client, commands, workspace };
+  return { client, commands, workspace, calls };
 }
 
 const labs = [
@@ -83,7 +87,7 @@ const labs = [
 const options = (workspace) => ({ workspace, timeoutMs: 400, intervalMs: 10, interruptOptions: { intervalMs: 10, startWaitMs: 200, terminalWaitMs: 200 } });
 
 test("answering, silent and failing labs map to responds, no_response and error", async (t) => {
-  const { client, commands, workspace } = fakeT3(t, { codex: "silent", grok: "answer", claudeAgent: "error" });
+  const { client, commands, workspace, calls } = fakeT3(t, { codex: "silent", grok: "answer", claudeAgent: "error" });
   const result = await probeResponds(client, labs, options(workspace));
   const row = (id) => result.labs.find((lab) => lab.instanceId === id);
   assert.deepEqual(result.labs.map((lab) => lab.instanceId), ["codex", "grok", "claudeAgent"], "only ready labs by default");
@@ -101,6 +105,7 @@ test("answering, silent and failing labs map to responds, no_response and error"
   assert.equal(interrupts.length, 1, "only the silent probe is interrupted");
   assert.equal(interrupts[0].threadId, row("codex").threadId);
   assert.equal(interrupts[0].turnId, "turn-1");
+  assert.equal(calls.capability, 0, "no capability check after a cancelled or no_response probe (KRA-9878)");
 
   assert.equal(row("claudeAgent").status, "error");
   assert.equal(row("claudeAgent").code, "usage_limit");
@@ -224,7 +229,7 @@ test("the probe project uses the first selected ready lab's model selection (P3-
 // KRA-9874: B3 PR 69 follow-ups N1-N3.
 
 test("a T3 read fault after the probe turn starts still reports the thread and tries to interrupt it (N1)", async (t) => {
-  const { client, commands, workspace } = fakeT3(t, { codex: "startfail" });
+  const { client, commands, workspace, calls } = fakeT3(t, { codex: "startfail" });
   const [row] = (await probeResponds(client, labs, { ...options(workspace), select: ["codex"] })).labs;
   const [start] = commands.filter((command) => command.type === "thread.turn.start");
   assert.ok(start, "the probe turn was started");
@@ -233,6 +238,7 @@ test("a T3 read fault after the probe turn starts still reports the thread and t
   assert.equal(row.threadId, start.threadId);
   // T3 still cannot read the thread, so the interrupter refuses to guess and the row names the thread to stop.
   assert.equal(row.interrupt, "unavailable");
+  assert.equal(calls.capability, 0, "an unavailable interrupt needs no capability check (B3 PR 73 P3-A)");
   assert.ok(row.action.includes(`probe turn may still be running; stop thread ${start.threadId} in T3`), row.action);
   assert.doesNotMatch(JSON.stringify(row), /START-CANARY/);
 });
@@ -282,7 +288,7 @@ test("CLI doctor --responds-timeout without --responds fails before any T3 call 
 // KRA-9876: B3 PR 70 follow-ups F1 and F3.
 
 test("a T3 fault inside the start that then clears interrupts exactly the started turn (F1)", async (t) => {
-  const { client, commands, workspace } = fakeT3(t, { codex: "startfail-recover", grok: "answer" });
+  const { client, commands, workspace, calls } = fakeT3(t, { codex: "startfail-recover", grok: "answer" });
   const result = await probeResponds(client, labs, { ...options(workspace), select: ["codex", "grok"] });
   const row = result.labs.find((lab) => lab.instanceId === "codex");
   const start = commands.find((command) => command.type === "thread.turn.start" && command.modelSelection.instanceId === "codex");
@@ -295,10 +301,11 @@ test("a T3 fault inside the start that then clears interrupts exactly the starte
   assert.equal(interrupts[0].threadId, start.threadId);
   assert.equal(Object.hasOwn(row, "action") && row.action.includes("may still be running"), false);
   assert.equal(result.labs.find((lab) => lab.instanceId === "grok").status, "responds");
+  assert.equal(calls.capability, 0, "a cancelled interrupt needs no capability check (KRA-9878)");
 });
 
-test("a thread create fault reports that no probe turn was accepted, not a turn to stop (F3)", async (t) => {
-  const { client, commands, workspace } = fakeT3(t, { codex: "silent" });
+test("a thread create fault reports that no probe turn was found, not a turn to stop (F3)", async (t) => {
+  const { client, commands, workspace, calls } = fakeT3(t, { codex: "silent" });
   const dispatch = client.dispatch;
   client.dispatch = async (command) => {
     if (command.type === "thread.create") { commands.push(command); throw new T3HttpError({ method: "POST", pathname: "/api/orchestration/dispatch", status: 500, body: "CREATE-CANARY" }); }
@@ -308,8 +315,55 @@ test("a thread create fault reports that no probe turn was accepted, not a turn 
   assert.equal(row.status, "error");
   assert.equal(row.t3HttpStatus, 500);
   assert.equal(row.interrupt, "target_mismatch");
-  assert.ok(row.action.includes(`no probe turn was accepted on thread ${row.threadId}`), row.action);
-  assert.doesNotMatch(row.action, /may still be running/);
+  assert.ok(row.action.includes(`no probe turn was found for thread ${row.threadId}`), row.action);
+  assert.doesNotMatch(row.action, /may still be running|if one appears/, "no start was sent, so there is no turn to stop");
+  assert.equal(calls.capability, 1, "target_mismatch runs exactly one capability check (KRA-9878)");
   assert.equal(commands.some((command) => command.type === "thread.turn.start" || command.type === "thread.turn.interrupt"), false);
   assert.doesNotMatch(JSON.stringify(row), /CREATE-CANARY/);
+});
+
+// KRA-9878: B3 PR 72 P3-2. A failed capability check must fail safe: the route is treated as missing.
+for (const status of [503, 401]) {
+  test(`a capability check that fails with ${status} on a T3 without the turn-result route keeps the stop-thread action (P3-2)`, async (t) => {
+    const { client, commands, workspace, calls } = fakeT3(t, { codex: "silent" }, { noTurnResult: true, capabilityStatus: status });
+    const [row] = (await probeResponds(client, labs, { ...options(workspace), select: ["codex"] })).labs;
+    assert.equal(calls.capability, 1);
+    assert.equal(row.interrupt, "unsupported");
+    assert.ok(row.action.includes(`probe turn may still be running; stop thread ${row.threadId} in T3`), row.action);
+    assert.doesNotMatch(row.action, /no probe turn was found/);
+    assert.equal(commands.some((command) => command.type === "thread.turn.interrupt"), false);
+  });
+}
+
+// KRA-9878: B3 PR 73 P3-A and P3-B.
+
+test("an already_terminal interrupt needs no capability check (P3-A)", async (t) => {
+  const { client, commands, workspace, calls } = fakeT3(t, { codex: "silent" });
+  const request = client.request;
+  // The silent probe turn has already finished by the time the interrupt reads it.
+  client.request = async (route, init = {}) => {
+    const result = await request(route, init);
+    return init.body ? { ...result, state: "succeeded" } : result;
+  };
+  const [row] = (await probeResponds(client, labs, { ...options(workspace), select: ["codex"] })).labs;
+  assert.equal(row.interrupt, "already_terminal");
+  assert.equal(calls.capability, 0, "an already_terminal interrupt needs no capability check");
+  assert.equal(commands.some((command) => command.type === "thread.turn.interrupt"), false);
+});
+
+test("a turn start that times out after T3 took it tells the user to stop the thread if a turn appears (P3-B)", async (t) => {
+  const { client, commands, workspace, calls } = fakeT3(t, { codex: "silent" });
+  const dispatch = client.dispatch;
+  client.dispatch = async (command) => {
+    // The start reaches T3 but the reply is lost, and T3 has not projected the turn yet.
+    if (command.type === "thread.turn.start") { commands.push(command); throw Object.assign(new Error("socket timed out"), { code: "ETIMEDOUT" }); }
+    return dispatch(command);
+  };
+  const [row] = (await probeResponds(client, labs, { ...options(workspace), select: ["codex"] })).labs;
+  assert.equal(row.status, "error");
+  assert.equal(Object.hasOwn(row, "t3HttpStatus"), false);
+  assert.equal(row.interrupt, "target_mismatch");
+  assert.equal(calls.capability, 1);
+  assert.ok(row.action.includes(`no probe turn was found for thread ${row.threadId}; if one appears, stop thread ${row.threadId} in T3`), row.action);
+  assert.equal(commands.some((command) => command.type === "thread.turn.interrupt"), false);
 });
