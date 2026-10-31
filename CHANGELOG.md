@@ -7,6 +7,7 @@ All notable changes to this project are documented here.
 ### Fixed
 
 - KRA-9876: when T3 fails before it accepts the probe turn (for example on thread create), `doctor --responds` now says `no probe turn was accepted on thread <id>` instead of telling you to stop a turn that does not exist; a T3 without the turn-result route still gets the stop-thread action, with interrupt `unsupported`. Clarifies the 0.5.0-jack.11 entry: the probe prompt asks for no tools, but the turn runs in full-access mode in an empty private workspace. `--responds` with `--computer` is refused, and so is `--responds-timeout` without `--responds` or outside 1-600 seconds.
+- KRA-9878: when T3 finds no probe turn, `doctor --responds` now says `no probe turn was found for thread <id>` instead of `no probe turn was accepted`, because a late turn start cannot be ruled out. Tests now pin that a failed turn-result route check (for example 503 or 401) keeps the stop-thread action, and that the check runs only on `target_mismatch`.
 
 ## [0.5.0-jack.11] - 2026-10-30
 

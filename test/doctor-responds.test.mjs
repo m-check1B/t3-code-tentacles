@@ -13,7 +13,7 @@ const CLI = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
 const PRELOAD = fileURLToPath(new URL("./helpers/fake-t3-client.mjs", import.meta.url));
 
 // KRA-9857: a synthetic T3 whose labs answer, stay silent, or fail. No real providers.
-function fakeT3(t, behaviour, { failProject = false, noTurnResult = false } = {}) {
+function fakeT3(t, behaviour, { failProject = false, noTurnResult = false, capabilityStatus = null } = {}) {
   const workspace = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "doctor-responds-")));
   t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
   const projects = new Map();
@@ -23,6 +23,7 @@ function fakeT3(t, behaviour, { failProject = false, noTurnResult = false } = {}
   const failedReads = new Map();
   const brokenThreads = new Set();
   const recoverOnce = new Set();
+  const calls = { capability: 0 };
   const client = {
     snapshot: async () => ({ projects: [...projects.values()], threads: [...threads.values()] }),
     thread: async (threadId) => {
@@ -63,6 +64,9 @@ function fakeT3(t, behaviour, { failProject = false, noTurnResult = false } = {}
     },
     request: async (route, { body } = {}) => {
       assert.equal(route, "/api/orchestration/turn-result");
+      // The bodyless GET is the capability check; capabilityStatus makes it fail with that HTTP status.
+      if (!body) calls.capability += 1;
+      if (!body && capabilityStatus) throw new T3HttpError({ method: "GET", pathname: route, status: capabilityStatus, body: null });
       if (noTurnResult) throw new T3HttpError({ method: "POST", pathname: route, status: 404, body: null });
       if (!body) return { talkTurnResult: "v1" };
       // Like T3, only the exact (threadId, messageId, turnCommandId) tuple names a turn.
@@ -71,7 +75,7 @@ function fakeT3(t, behaviour, { failProject = false, noTurnResult = false } = {}
       return { ...body, ...turn };
     },
   };
-  return { client, commands, workspace };
+  return { client, commands, workspace, calls };
 }
 
 const labs = [
@@ -83,7 +87,7 @@ const labs = [
 const options = (workspace) => ({ workspace, timeoutMs: 400, intervalMs: 10, interruptOptions: { intervalMs: 10, startWaitMs: 200, terminalWaitMs: 200 } });
 
 test("answering, silent and failing labs map to responds, no_response and error", async (t) => {
-  const { client, commands, workspace } = fakeT3(t, { codex: "silent", grok: "answer", claudeAgent: "error" });
+  const { client, commands, workspace, calls } = fakeT3(t, { codex: "silent", grok: "answer", claudeAgent: "error" });
   const result = await probeResponds(client, labs, options(workspace));
   const row = (id) => result.labs.find((lab) => lab.instanceId === id);
   assert.deepEqual(result.labs.map((lab) => lab.instanceId), ["codex", "grok", "claudeAgent"], "only ready labs by default");
@@ -101,6 +105,7 @@ test("answering, silent and failing labs map to responds, no_response and error"
   assert.equal(interrupts.length, 1, "only the silent probe is interrupted");
   assert.equal(interrupts[0].threadId, row("codex").threadId);
   assert.equal(interrupts[0].turnId, "turn-1");
+  assert.equal(calls.capability, 0, "no capability check after a cancelled or no_response probe (KRA-9878)");
 
   assert.equal(row("claudeAgent").status, "error");
   assert.equal(row("claudeAgent").code, "usage_limit");
@@ -282,7 +287,7 @@ test("CLI doctor --responds-timeout without --responds fails before any T3 call 
 // KRA-9876: B3 PR 70 follow-ups F1 and F3.
 
 test("a T3 fault inside the start that then clears interrupts exactly the started turn (F1)", async (t) => {
-  const { client, commands, workspace } = fakeT3(t, { codex: "startfail-recover", grok: "answer" });
+  const { client, commands, workspace, calls } = fakeT3(t, { codex: "startfail-recover", grok: "answer" });
   const result = await probeResponds(client, labs, { ...options(workspace), select: ["codex", "grok"] });
   const row = result.labs.find((lab) => lab.instanceId === "codex");
   const start = commands.find((command) => command.type === "thread.turn.start" && command.modelSelection.instanceId === "codex");
@@ -295,10 +300,11 @@ test("a T3 fault inside the start that then clears interrupts exactly the starte
   assert.equal(interrupts[0].threadId, start.threadId);
   assert.equal(Object.hasOwn(row, "action") && row.action.includes("may still be running"), false);
   assert.equal(result.labs.find((lab) => lab.instanceId === "grok").status, "responds");
+  assert.equal(calls.capability, 0, "a cancelled interrupt needs no capability check (KRA-9878)");
 });
 
-test("a thread create fault reports that no probe turn was accepted, not a turn to stop (F3)", async (t) => {
-  const { client, commands, workspace } = fakeT3(t, { codex: "silent" });
+test("a thread create fault reports that no probe turn was found, not a turn to stop (F3)", async (t) => {
+  const { client, commands, workspace, calls } = fakeT3(t, { codex: "silent" });
   const dispatch = client.dispatch;
   client.dispatch = async (command) => {
     if (command.type === "thread.create") { commands.push(command); throw new T3HttpError({ method: "POST", pathname: "/api/orchestration/dispatch", status: 500, body: "CREATE-CANARY" }); }
@@ -308,8 +314,22 @@ test("a thread create fault reports that no probe turn was accepted, not a turn 
   assert.equal(row.status, "error");
   assert.equal(row.t3HttpStatus, 500);
   assert.equal(row.interrupt, "target_mismatch");
-  assert.ok(row.action.includes(`no probe turn was accepted on thread ${row.threadId}`), row.action);
+  assert.ok(row.action.includes(`no probe turn was found for thread ${row.threadId}`), row.action);
   assert.doesNotMatch(row.action, /may still be running/);
+  assert.equal(calls.capability, 1, "target_mismatch runs exactly one capability check (KRA-9878)");
   assert.equal(commands.some((command) => command.type === "thread.turn.start" || command.type === "thread.turn.interrupt"), false);
   assert.doesNotMatch(JSON.stringify(row), /CREATE-CANARY/);
 });
+
+// KRA-9878: B3 PR 72 P3-2. A failed capability check must fail safe: the route is treated as missing.
+for (const status of [503, 401]) {
+  test(`a capability check that fails with ${status} on a T3 without the turn-result route keeps the stop-thread action (P3-2)`, async (t) => {
+    const { client, commands, workspace, calls } = fakeT3(t, { codex: "silent" }, { noTurnResult: true, capabilityStatus: status });
+    const [row] = (await probeResponds(client, labs, { ...options(workspace), select: ["codex"] })).labs;
+    assert.equal(calls.capability, 1);
+    assert.equal(row.interrupt, "unsupported");
+    assert.ok(row.action.includes(`probe turn may still be running; stop thread ${row.threadId} in T3`), row.action);
+    assert.doesNotMatch(row.action, /no probe turn was found/);
+    assert.equal(commands.some((command) => command.type === "thread.turn.interrupt"), false);
+  });
+}

@@ -104,11 +104,11 @@ async function probeLab(client, lab, { workspace, timeoutMs, intervalMs, interru
     turnCommandId: turn.turnCommandId,
     reason: "user_stop",
   });
-  // The probe thread is fresh and owned, so target_mismatch means T3 answered 404 for its tuple:
-  // no turn was accepted, unless this T3 lacks the turn-result route and 404s every tuple (B3 PR 70 F3).
+  // The probe thread is fresh and owned, so target_mismatch means T3 found no turn for its tuple (a start
+  // may still land late, so this is not proof none was accepted), unless T3 lacks the turn-result route (B3 PR 70 F3).
   if (interrupt === "target_mismatch" && !(await probeTalkCapabilities(client)).capabilities.talkTurnResult) interrupt = "unsupported";
   const next = interrupt === "cancelled" || interrupt === "already_terminal" ? null
-    : interrupt === "target_mismatch" ? `no probe turn was accepted on thread ${turn.threadId}`
+    : interrupt === "target_mismatch" ? `no probe turn was found for thread ${turn.threadId}`
       : `probe turn may still be running; stop thread ${turn.threadId} in T3`;
   const action = [outcome.action, next].filter(Boolean).join("; ") || undefined;
   return { ...row, threadId: turn.threadId, ...outcome, interrupt, ...(action ? { action } : {}) };
