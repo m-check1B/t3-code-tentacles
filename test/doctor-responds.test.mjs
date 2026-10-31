@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { formatDoctor } from "../src/bridge.mjs";
 import { probeResponds, respondsRequest } from "../src/doctor-probe.mjs";
-import { T3HttpError } from "../src/t3-client.mjs";
+import { T3Client, T3HttpError } from "../src/t3-client.mjs";
 
 const CLI = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
 const PRELOAD = fileURLToPath(new URL("./helpers/fake-t3-client.mjs", import.meta.url));
@@ -366,4 +366,23 @@ test("a turn start that times out after T3 took it tells the user to stop the th
   assert.equal(calls.capability, 1);
   assert.ok(row.action.includes(`no probe turn was found for thread ${row.threadId}; if one appears, stop thread ${row.threadId} in T3`), row.action);
   assert.equal(commands.some((command) => command.type === "thread.turn.interrupt"), false);
+});
+
+test("a failed reauth inside the probe start is not repeated by the poll and interrupt (KRA-9886)", async (t) => {
+  const { workspace } = fakeT3(t, {});
+  const tokenFile = path.join(workspace, "t3.token");
+  fs.writeFileSync(tokenFile, "synthetic-expired-bearer", { mode: 0o600 });
+  let reauthCalls = 0;
+  const client = new T3Client({
+    orchestrationProtocol: 1,
+    tokenFile,
+    fetchImpl: async () => new Response("", { status: 401 }),
+    reauth: async () => { reauthCalls += 1; throw new Error("synthetic reauth failed"); },
+  });
+  // The session is still valid for the project; it expires once startThread reads the thread.
+  client.snapshot = async () => ({ projects: [{ id: "probe-project", workspaceRoot: workspace }], threads: [] });
+  const [row] = (await probeResponds(client, labs, { ...options(workspace), select: ["codex"] })).labs;
+  assert.equal(row.status, "error");
+  assert.ok(row.threadId);
+  assert.equal(reauthCalls, 1, "a failed reauth runs at most once per client");
 });
