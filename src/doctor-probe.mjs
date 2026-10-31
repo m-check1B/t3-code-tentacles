@@ -68,10 +68,15 @@ async function probeLab(client, lab, { workspace, timeoutMs, intervalMs, interru
     // Ids exist before the turn starts, so a T3 fault inside the start can still be interrupted (B3 PR 69 N1).
     turn = { threadId: randomUUID(), messageId: randomUUID(), turnCommandId: randomUUID() };
     // A start whose reply is lost may still run, so remember that it was sent (B3 PR 73 P3-B).
-    const startClient = Object.create(client, { dispatch: { value: (command) => {
-      if (command.type === "thread.turn.start") startSent = true;
-      return client.dispatch(command);
-    } } });
+    // Methods run bound to the real client, so reauth state and rotated tokens stay on one object (KRA-9886).
+    const startClient = new Proxy(client, { get: (target, key) => {
+      if (key === "dispatch") return (command) => {
+        if (command.type === "thread.turn.start") startSent = true;
+        return client.dispatch(command);
+      };
+      const value = Reflect.get(target, key);
+      return typeof value === "function" ? value.bind(target) : value;
+    } });
     await startThread(startClient, {
       ...turn,
       projectId: project.id,
