@@ -229,7 +229,7 @@ test("the probe project uses the first selected ready lab's model selection (P3-
 // KRA-9874: B3 PR 69 follow-ups N1-N3.
 
 test("a T3 read fault after the probe turn starts still reports the thread and tries to interrupt it (N1)", async (t) => {
-  const { client, commands, workspace } = fakeT3(t, { codex: "startfail" });
+  const { client, commands, workspace, calls } = fakeT3(t, { codex: "startfail" });
   const [row] = (await probeResponds(client, labs, { ...options(workspace), select: ["codex"] })).labs;
   const [start] = commands.filter((command) => command.type === "thread.turn.start");
   assert.ok(start, "the probe turn was started");
@@ -238,6 +238,7 @@ test("a T3 read fault after the probe turn starts still reports the thread and t
   assert.equal(row.threadId, start.threadId);
   // T3 still cannot read the thread, so the interrupter refuses to guess and the row names the thread to stop.
   assert.equal(row.interrupt, "unavailable");
+  assert.equal(calls.capability, 0, "an unavailable interrupt needs no capability check (B3 PR 73 P3-A)");
   assert.ok(row.action.includes(`probe turn may still be running; stop thread ${start.threadId} in T3`), row.action);
   assert.doesNotMatch(JSON.stringify(row), /START-CANARY/);
 });
@@ -315,7 +316,7 @@ test("a thread create fault reports that no probe turn was found, not a turn to 
   assert.equal(row.t3HttpStatus, 500);
   assert.equal(row.interrupt, "target_mismatch");
   assert.ok(row.action.includes(`no probe turn was found for thread ${row.threadId}`), row.action);
-  assert.doesNotMatch(row.action, /may still be running/);
+  assert.doesNotMatch(row.action, /may still be running|if one appears/, "no start was sent, so there is no turn to stop");
   assert.equal(calls.capability, 1, "target_mismatch runs exactly one capability check (KRA-9878)");
   assert.equal(commands.some((command) => command.type === "thread.turn.start" || command.type === "thread.turn.interrupt"), false);
   assert.doesNotMatch(JSON.stringify(row), /CREATE-CANARY/);
@@ -333,3 +334,36 @@ for (const status of [503, 401]) {
     assert.equal(commands.some((command) => command.type === "thread.turn.interrupt"), false);
   });
 }
+
+// KRA-9878: B3 PR 73 P3-A and P3-B.
+
+test("an already_terminal interrupt needs no capability check (P3-A)", async (t) => {
+  const { client, commands, workspace, calls } = fakeT3(t, { codex: "silent" });
+  const request = client.request;
+  // The silent probe turn has already finished by the time the interrupt reads it.
+  client.request = async (route, init = {}) => {
+    const result = await request(route, init);
+    return init.body ? { ...result, state: "succeeded" } : result;
+  };
+  const [row] = (await probeResponds(client, labs, { ...options(workspace), select: ["codex"] })).labs;
+  assert.equal(row.interrupt, "already_terminal");
+  assert.equal(calls.capability, 0, "an already_terminal interrupt needs no capability check");
+  assert.equal(commands.some((command) => command.type === "thread.turn.interrupt"), false);
+});
+
+test("a turn start that times out after T3 took it tells the user to stop the thread if a turn appears (P3-B)", async (t) => {
+  const { client, commands, workspace, calls } = fakeT3(t, { codex: "silent" });
+  const dispatch = client.dispatch;
+  client.dispatch = async (command) => {
+    // The start reaches T3 but the reply is lost, and T3 has not projected the turn yet.
+    if (command.type === "thread.turn.start") { commands.push(command); throw Object.assign(new Error("socket timed out"), { code: "ETIMEDOUT" }); }
+    return dispatch(command);
+  };
+  const [row] = (await probeResponds(client, labs, { ...options(workspace), select: ["codex"] })).labs;
+  assert.equal(row.status, "error");
+  assert.equal(Object.hasOwn(row, "t3HttpStatus"), false);
+  assert.equal(row.interrupt, "target_mismatch");
+  assert.equal(calls.capability, 1);
+  assert.ok(row.action.includes(`no probe turn was found for thread ${row.threadId}; if one appears, stop thread ${row.threadId} in T3`), row.action);
+  assert.equal(commands.some((command) => command.type === "thread.turn.interrupt"), false);
+});

@@ -62,11 +62,17 @@ async function probeLab(client, lab, { workspace, timeoutMs, intervalMs, interru
   if (!lab.defaultModel) return { ...row, status: "error", firstEventMs: null, code: "lab_not_ready", action: NO_MODEL_ACTION };
   let turn;
   let outcome;
+  let startSent = false;
   try {
     const { project } = await ensureProject(client, { workspace, title: "Tentacles doctor probe", instanceId: lab.instanceId, model: lab.defaultModel });
     // Ids exist before the turn starts, so a T3 fault inside the start can still be interrupted (B3 PR 69 N1).
     turn = { threadId: randomUUID(), messageId: randomUUID(), turnCommandId: randomUUID() };
-    await startThread(client, {
+    // A start whose reply is lost may still run, so remember that it was sent (B3 PR 73 P3-B).
+    const startClient = Object.create(client, { dispatch: { value: (command) => {
+      if (command.type === "thread.turn.start") startSent = true;
+      return client.dispatch(command);
+    } } });
+    await startThread(startClient, {
       ...turn,
       projectId: project.id,
       title: `Tentacles doctor probe: ${lab.instanceId}`,
@@ -108,7 +114,7 @@ async function probeLab(client, lab, { workspace, timeoutMs, intervalMs, interru
   // may still land late, so this is not proof none was accepted), unless T3 lacks the turn-result route (B3 PR 70 F3).
   if (interrupt === "target_mismatch" && !(await probeTalkCapabilities(client)).capabilities.talkTurnResult) interrupt = "unsupported";
   const next = interrupt === "cancelled" || interrupt === "already_terminal" ? null
-    : interrupt === "target_mismatch" ? `no probe turn was found for thread ${turn.threadId}`
+    : interrupt === "target_mismatch" ? `no probe turn was found for thread ${turn.threadId}${startSent ? `; if one appears, stop thread ${turn.threadId} in T3` : ""}`
       : `probe turn may still be running; stop thread ${turn.threadId} in T3`;
   const action = [outcome.action, next].filter(Boolean).join("; ") || undefined;
   return { ...row, threadId: turn.threadId, ...outcome, interrupt, ...(action ? { action } : {}) };
