@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { ensureProject, startThread } from "./bridge.mjs";
+import { ensureProject, probeTalkCapabilities, startThread } from "./bridge.mjs";
 import { DEFAULT_STATE_DIR, ensurePrivateDirectory } from "./config.mjs";
 import { classifyFailure } from "./failure-codes.mjs";
 import { T3HttpError } from "./t3-client.mjs";
@@ -97,17 +97,20 @@ async function probeLab(client, lab, { workspace, timeoutMs, intervalMs, interru
     outcome = { status: "error", firstEventMs: null, ...failureFields(error) };
     if (!turn) return { ...row, ...outcome };
   }
-  const { status: interrupt } = await interrupter.interrupt({
+  let { status: interrupt } = await interrupter.interrupt({
     requestId: `doctor-probe:${randomUUID()}`,
     threadId: turn.threadId,
     messageId: turn.messageId,
     turnCommandId: turn.turnCommandId,
     reason: "user_stop",
   });
-  // Without the turn-result route (or on any other refusal) nothing was interrupted.
-  const action = interrupt === "cancelled" || interrupt === "already_terminal"
-    ? outcome.action
-    : [outcome.action, `probe turn may still be running; stop thread ${turn.threadId} in T3`].filter(Boolean).join("; ");
+  // The probe thread is fresh and owned, so target_mismatch means T3 answered 404 for its tuple:
+  // no turn was accepted, unless this T3 lacks the turn-result route and 404s every tuple (B3 PR 70 F3).
+  if (interrupt === "target_mismatch" && !(await probeTalkCapabilities(client)).capabilities.talkTurnResult) interrupt = "unsupported";
+  const next = interrupt === "cancelled" || interrupt === "already_terminal" ? null
+    : interrupt === "target_mismatch" ? `no probe turn was accepted on thread ${turn.threadId}`
+      : `probe turn may still be running; stop thread ${turn.threadId} in T3`;
+  const action = [outcome.action, next].filter(Boolean).join("; ") || undefined;
   return { ...row, threadId: turn.threadId, ...outcome, interrupt, ...(action ? { action } : {}) };
 }
 
