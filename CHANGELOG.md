@@ -2,16 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
-
-### Fixed
-
-- Release signer: replace the protected-branch requirement, which GitHub Free
-  refuses for private repositories, with $0 fail-closed checks through the
-  GitHub API: the signed commit is the release branch tip, reached along first
-  parents with no force-push or rewrite, by a push after the B3 receipt. B3
-  receipts now pin the PR body hash; `--founder-ok` is documented as a label;
-  the key-source helper drops the obsolete Forgejo item (KRA-8810).
+## [0.4.1-jack.4] - 2026-11-01
 
 ### Added
 
@@ -25,6 +16,15 @@ All notable changes to this project are documented here.
   `not_signed_in`. Unknown sign-in or readiness stays not ready, even when
   cached models exist. Source-only refresh; installed/runtime compatibility
   remains separately verified.
+
+### Fixed
+
+- Release signer: replace the protected-branch requirement, which GitHub Free
+  refuses for private repositories, with $0 fail-closed checks through the
+  GitHub API: the signed commit is the release branch tip, reached along first
+  parents with no force-push or rewrite, by a push after the B3 receipt. B3
+  receipts now pin the PR body hash; `--founder-ok` is documented as a label;
+  the key-source helper drops the obsolete Forgejo item (KRA-8810).
 
 ## [0.4.1-jack.3] - 2026-10-24
 
