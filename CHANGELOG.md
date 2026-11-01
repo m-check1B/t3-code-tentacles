@@ -2,7 +2,20 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [0.4.1-jack.4] - 2026-11-01
+
+### Added
+
+- Antigravity (Gemini) lab (KRA-6725): doctor advertises T3's native
+  `antigravity` instance as "Antigravity (Gemini)". T3 owns the ACP agent
+  download and the Google sign-in; Tentacles never handles Google credentials.
+  The row adds `signedIn` and a fixed `setupUrl`
+  (`t3code://app/settings/providers?instanceId=antigravity`). Its codes name
+  the fix: `t3_update_required`, `disabled`, `not_installed`,
+  `sign_in_unchecked` (installed, no models before the first session) and
+  `not_signed_in`. Unknown sign-in or readiness stays not ready, even when
+  cached models exist. Source-only refresh; installed/runtime compatibility
+  remains separately verified.
 
 ### Fixed
 
