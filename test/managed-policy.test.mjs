@@ -160,7 +160,7 @@ test("policy with allowedDrivers and a ceiling: doctor, capabilities, originate 
 
 test("loaded and installed fingerprints differ: mismatch with the restart fix", () => {
   const stale = SHOW_INSTALLED("The running server (pid 1, started x) loaded no policy. Restart T3 Code to apply the installed policy.");
-  assert.deepEqual(parsePolicyShow(stale), { installed: "0123456789ab", loaded: null });
+  assert.deepEqual(parsePolicyShow(stale), { installed: "0123456789ab", loaded: null, restart: false });
   const other = SHOW_INSTALLED("The running server (pid 1, started x) loaded Example Corp's policy from /etc/t3code/policy.json (fingerprint ba9876543210). Restart T3 Code to apply the installed policy.");
   const report = managedPolicyReport({ config: config("0.1.7", POLICY), serverVersion: "0.1.7", policyShow: other });
   assert.equal(report.installedFingerprint, "0123456789ab");
@@ -174,18 +174,20 @@ test("loaded and installed fingerprints differ: mismatch with the restart fix", 
   assert.equal(same.loadedFingerprint, "0123456789ab");
   // A server that does not say what it loaded is unknown, not a mismatch.
   assert.equal(managedPolicyReport({ config: config("0.1.7", POLICY), serverVersion: "0.1.7", policyShow: SHOW_INSTALLED("No T3 Code server is running from this T3 home. The installed policy applies when one starts.") }).mismatch, false);
+  // A running server that cannot say what it loaded gets upstream's restart advice.
+  const silent = managedPolicyReport({ config: config("0.1.7", POLICY), serverVersion: "0.1.7", policyShow: SHOW_INSTALLED("The running server (pid 1, started x) does not report which policy it loaded. Restart it to apply the installed policy.") });
+  assert.equal(silent.mismatch, false);
+  assert.equal(silent.action, POLICY_RESTART_ACTION);
 });
 
-test("T3 denial strings map to policy_refused and show T3's sentence", async () => {
+test("T3 denial strings map to policy_refused and show only T3's sentence", async () => {
   assert.equal(policyDenialText('{"_tag":"Failure","cause":{"message":"Example Corp limits threads to Auto. Switch this thread\'s mode to continue."}}'), "Example Corp limits threads to Auto.");
-  assert.equal(policyDenialText("T3 thread x entered error: Example Corp's policy does not allow webhook tasks."), "Example Corp's policy does not allow webhook tasks.");
   assert.equal(policyDenialText("a provider said the policy is fine"), null);
-  assert.deepEqual(classifyFailure({ error: "Example Corp limits threads to Supervised." }), {
-    code: "policy_refused", message: "The T3 managed policy refused this request; see policyMessage. There is no fallback.", policyMessage: "Example Corp limits threads to Supervised.",
-  });
-  const blocked = projectThreadReport({ id: THREAD_ID, session: { status: "error", lastError: "Example Corp limits threads to Auto. Switch this thread's mode to continue." } }, THREAD_ID);
-  assert.equal(blocked.code, "policy_refused");
-  assert.equal(blocked.policyMessage, "Example Corp limits threads to Auto.");
+  // Upstream disallowedProviderMessage, with no organization set.
+  assert.equal(policyDenialText('{"message":"Your organization policy does not allow the cursor provider."}'), "Your organization policy does not allow the cursor provider.");
+  // An inner dot does not end the sentence.
+  assert.equal(policyDenialText('{"message":"Example Corp\'s policy does not allow T3 Connect, so the server cannot listen on 0.0.0.0."}'),
+    "Example Corp's policy does not allow T3 Connect, so the server cannot listen on 0.0.0.0.");
   // A T3 RPC refusal carrying the denial is a rejected receipt, not unconfirmed.
   const denied = fakeClient(config("0.0.45"), { dispatchError: new PolicyRefusedError("Example Corp limits threads to Auto.") });
   await assert.rejects(applyIntent(denied, { action: "thread.set-runtime-mode", threadId: THREAD_ID, runtimeMode: "full-access" }), (error) => {
@@ -196,36 +198,86 @@ test("T3 denial strings map to policy_refused and show T3's sentence", async () 
   });
 });
 
+test("junk before the organization never rides along with the sentence", () => {
+  const body = JSON.stringify({ cause: { message: "request id 7f3 user=bob token abc Example Corp's policy does not allow webhook tasks." } });
+  // Keyed on the organization from server.getConfig: only the sentence survives.
+  assert.equal(policyDenialText(body, { organization: "Example Corp" }), "Example Corp's policy does not allow webhook tasks.");
+  // Without it the sentence must fill its own JSON value or line, so this is no match.
+  assert.equal(policyDenialText(body), null);
+  assert.equal(policyDenialText("T3 thread x entered error: Example Corp's policy does not allow webhook tasks."), null);
+  // A different organization's sentence is not this policy's refusal.
+  assert.equal(policyDenialText('{"message":"Other Inc\'s policy does not allow webhook tasks."}', { organization: "Example Corp" }), null);
+});
+
+test("provider and session text with policy words keeps its own code", () => {
+  assert.equal(classifyFailure({ error: new Error("upstream 429: Your organization's policy does not allow use of this model."), httpStatus: 429 }).code, "usage_limit");
+  assert.notEqual(classifyFailure({ error: "Example Corp limits threads to Supervised." }).code, "policy_refused");
+  const blocked = projectThreadReport({ id: THREAD_ID, session: { status: "error", lastError: "Example Corp limits threads to Auto. Switch this thread's mode to continue." } }, THREAD_ID);
+  assert.notEqual(blocked.code, "policy_refused");
+  assert.equal(blocked.policyMessage, undefined);
+});
+
+test("originate and act resolve the driver like doctor and never use the instance id", async () => {
+  const policy = config("0.1.7", { organization: "Example Corp", lockedSettings: [], limits: { providers: { allowedDrivers: ["codex"] } } });
+  // Absent from the provider registry, named in settings: refused on the settings driver.
+  const fromSettings = { ...fakeClient(policy), getSettings: async () => ({ providerInstances: { "my-claude": { driver: "claudeAgent" } } }) };
+  await assert.rejects(enforceManagedPolicy(fromSettings, { instanceId: "my-claude", runtimeMode: "full-access" }),
+    /does not allow the claudeAgent driver \(instance my-claude\)/);
+  // Absent from both: the driver is unknown, so Tentacles leaves it to T3.
+  assert.equal(await enforceManagedPolicy(fakeClient(policy), { instanceId: "my-claude", runtimeMode: "full-access" }), undefined);
+});
+
 test("clients without remote warns when Tentacles reaches this host over the tailnet", async (t) => {
   const serverConfig = config("0.1.7", POLICY);
   assert.deepEqual((await doctorWith(t, serverConfig)).managedPolicy.warnings, []);
   for (const options of [{ paired: true }, { remoteAccess: true }]) {
     const report = await doctorWith(t, serverConfig, options);
     assert.equal(report.managedPolicy.warnings[0]?.code, "policy_clients_without_remote");
-    assert.match(formatDoctor(report), /Warning \(policy_clients_without_remote\): .*drops Tailscale Serve routes and signs out paired devices/);
+    assert.match(formatDoctor(report), /Warning \(policy_clients_without_remote\): .*drops Tailscale Serve routes and signs out paired devices, so devices that reach this T3 over the tailnet lose access/);
   }
   const remoteAllowed = config("0.1.7", { ...POLICY, limits: { ...POLICY.limits, clients: ["desktop", "remote"] } });
   assert.deepEqual((await doctorWith(t, remoteAllowed, { paired: true })).managedPolicy.warnings, []);
 });
 
-test("a T3 RPC Exit carrying a policy denial keeps only T3's sentence", async () => {
-  class DenyingWebSocket {
+function scriptedSocket(exits) {
+  return class ScriptedWebSocket {
     constructor() { this.listeners = new Map(); queueMicrotask(() => this.emit("open")); }
     addEventListener(type, listener) { this.listeners.set(type, listener); }
     send(payload) {
       const { id } = JSON.parse(payload);
-      queueMicrotask(() => this.emit("message", { data: JSON.stringify({ _tag: "Exit", requestId: id,
-        exit: { _tag: "Failure", token: "rpc-token-leak", cause: { message: "Example Corp limits threads to Auto. Switch this thread's mode to continue." } } }) }));
+      const exit = exits.shift();
+      queueMicrotask(() => this.emit("message", { data: JSON.stringify({ _tag: "Exit", requestId: id, exit }) }));
     }
     close() {}
     emit(type, event = {}) { this.listeners.get(type)?.(event); }
-  }
-  const client = new T3Client({ orchestrationProtocol: 1, token: "test-token", WebSocketImpl: DenyingWebSocket,
-    fetchImpl: async () => new Response(JSON.stringify({ ticket: "ticket" }), { status: 200 }) });
+  };
+}
+const rpcClient = (exits) => new T3Client({ orchestrationProtocol: 1, token: "test-token", WebSocketImpl: scriptedSocket(exits),
+  fetchImpl: async () => new Response(JSON.stringify({ ticket: "ticket" }), { status: 200 }) });
+
+test("a T3 RPC Exit carrying a policy denial keeps only T3's sentence", async () => {
+  const client = rpcClient([{ _tag: "Failure", token: "rpc-token-leak", cause: { message: "Example Corp limits threads to Auto. Switch this thread's mode to continue." } }]);
   await assert.rejects(client.rpc("orchestration.dispatchCommand"), (error) => {
     assert.ok(error instanceof PolicyRefusedError);
     assert.equal(error.policyMessage, "Example Corp limits threads to Auto.");
     assert.doesNotMatch(`${error.message} ${JSON.stringify(error)}`, /rpc-token-leak/);
     return true;
   });
+});
+
+test("after server.getConfig the RPC refusal is keyed on the policy organization", async () => {
+  const client = rpcClient([
+    { _tag: "Success", value: { managedPolicy: POLICY } },
+    { _tag: "Failure", cause: { message: "request id 7f3 user=bob token abc Example Corp's policy does not allow webhook tasks." } },
+  ]);
+  await client.rpc("server.getConfig");
+  await assert.rejects(client.rpc("orchestration.dispatchCommand"), (error) => {
+    assert.ok(error instanceof PolicyRefusedError);
+    assert.equal(error.policyMessage, "Example Corp's policy does not allow webhook tasks.");
+    assert.doesNotMatch(`${error.message} ${JSON.stringify(error)}`, /7f3|bob|token abc/);
+    return true;
+  });
+  // Without a known organization the same body stays redacted.
+  await assert.rejects(rpcClient([{ _tag: "Failure", cause: { message: "request id 7f3 user=bob token abc Example Corp's policy does not allow webhook tasks." } }])
+    .rpc("orchestration.dispatchCommand"), (error) => !(error instanceof PolicyRefusedError) && /\[redacted error body\]/.test(error.message));
 });

@@ -310,11 +310,16 @@ export class T3Client {
         }
         if (message?._tag !== "Exit" || message.requestId !== id) return;
         if (message.exit?._tag === "Success") {
+          // KRA-8715: remember the policy organization so a later refusal is matched on that exact name.
+          if (tag === "server.getConfig") {
+            const organization = message.exit.value?.managedPolicy?.organization;
+            this.policyOrganization = typeof organization === "string" ? organization : null;
+          }
           finish(resolve, message.exit.value);
         } else {
           // KRA-8715: T3's managed-policy sentence is the one part of a refusal that is shown.
           let denial = null;
-          try { denial = policyDenialText(JSON.stringify(message.exit ?? null)); } catch { /* unserializable exit */ }
+          try { denial = policyDenialText(JSON.stringify(message.exit ?? null), { organization: this.policyOrganization }); } catch { /* unserializable exit */ }
           finish(reject, denial ? new PolicyRefusedError(denial, { rpcTag: tag }) : new T3RpcRejectedError(tag, safeErrorBody(message.exit)));
         }
       });

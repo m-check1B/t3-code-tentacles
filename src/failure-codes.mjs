@@ -45,20 +45,35 @@ const TEXT_PATTERNS = [
   ["cancelled", /\b(?:cancel(?:l)?ed|interrupted|aborted by user)\b/i],
 ];
 
-// KRA-8715: upstream `managedPolicyDeniedMessage` and
-// `managedRuntimeModeCeilingMessage`. Only the matched sentence is kept.
-const POLICY_DENIAL_PATTERNS = [
-  /[^\n"\\:]{1,120}?'s policy does not allow [^\n"\\.]{1,120}\./,
-  /[^\n"\\:]{1,120}? limits threads to (?:Supervised|Auto-accept edits|Auto|Full access)\./,
-];
+// KRA-8715: upstream `managedPolicyDeniedMessage`,
+// `managedRuntimeModeCeilingMessage` and `disallowedProviderMessage`. Only the
+// matched sentence is kept. With the organization from `server.getConfig` the
+// match starts at that exact name; without it the sentence must fill a whole
+// JSON string value or line, so no text before it can ride along.
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// A sentence ends at a dot followed by the end, a quote, whitespace or a JSON escape.
+const SENTENCE = String.raw`[^\n"\\]{1,200}?\.(?=$|["\s\\])`;
+const MODE = String.raw`(?:Supervised|Auto-accept edits|Auto|Full access)\.(?=$|["\s\\])`;
+const OWN_VALUE = String.raw`(?:^|(?<=["\n]))`;
+const VALUE_END = String.raw`(?: Switch this thread's mode to continue\.)?(?=$|["\n]|\\n)`;
+
+function policyDenialPatterns(organization) {
+  const orgless = new RegExp(String.raw`(?<=^|["\s])(Your organization policy does not allow ${SENTENCE})`);
+  if (typeof organization === "string" && organization.trim()) {
+    const org = escapeRegExp(organization.trim());
+    return [new RegExp(String.raw`(?<=^|["\s])(${org}(?:'s policy does not allow ${SENTENCE}| limits threads to ${MODE}))`), orgless];
+  }
+  const org = String.raw`[^\n"\\:=]{1,120}?`;
+  return [new RegExp(String.raw`${OWN_VALUE}(${org}(?:'s policy does not allow ${SENTENCE}| limits threads to ${MODE}))${VALUE_END}`), orgless];
+}
 
 /** The policy sentence T3 used to refuse something, or null. */
-export function policyDenialText(text) {
+export function policyDenialText(text, { organization } = {}) {
   if (typeof text !== "string") return null;
   const bounded = text.slice(0, MAX_CLASSIFIED_TEXT);
-  for (const pattern of POLICY_DENIAL_PATTERNS) {
+  for (const pattern of policyDenialPatterns(organization)) {
     const match = pattern.exec(bounded);
-    if (match) return match[0].trim();
+    if (match) return match[1].trim();
   }
   return null;
 }
@@ -97,6 +112,8 @@ export function classifyFailure({
 } = {}) {
   if (hasPendingApprovals === true || hasPendingUserInput === true) return failure("approval_required");
   if (state === "cancelled" || state === "interrupted" || sessionStatus === "interrupted") return failure("cancelled");
+  // KRA-8715: only a T3-originated refusal (PolicyRefusedError) is policy_refused;
+  // provider or session text with policy words keeps its own code.
   if (error instanceof Error && error.failure?.code === "policy_refused") {
     return typeof error.policyMessage === "string" ? { ...failure("policy_refused"), policyMessage: error.policyMessage } : failure("policy_refused");
   }
@@ -104,9 +121,6 @@ export function classifyFailure({
   if (error instanceof Error && error.name === "TimeoutError") return failure("timeout");
   if (error instanceof Error && error.name === "AbortError") return failure("cancelled");
   const status = Number.isInteger(httpStatus) ? httpStatus : (Number.isInteger(error?.status) ? error.status : null);
-  // T3's own policy sentence is shown as is; it names the organization and the limit.
-  const policyMessage = policyDenialText(errorText(error));
-  if (policyMessage) return { ...failure("policy_refused"), policyMessage };
   if (status === 429) return failure("usage_limit");
   if (status === 409) return failure("session_busy");
   if (status === 408 || status === 504) return failure("timeout");

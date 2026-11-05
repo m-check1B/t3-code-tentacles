@@ -94,8 +94,19 @@ export async function enforceManagedPolicy(client, { instanceId, runtimeMode } =
   try { config = await client.rpc("server.getConfig", {}); } catch { return; }
   const summary = policySummary(config);
   if (!summary) return;
-  const provider = Array.isArray(config.providers) ? config.providers.find((entry) => entry?.instanceId === instanceId) : null;
-  const driver = instanceId === undefined ? undefined : (typeof provider?.driver === "string" ? provider.driver : instanceId);
+  // Same order as doctor: the provider registry, then settings, else unknown.
+  // An unknown driver is not refused here; T3 marks such an instance unavailable.
+  let driver;
+  if (instanceId !== undefined) {
+    const provider = Array.isArray(config.providers) ? config.providers.find((entry) => entry?.instanceId === instanceId) : null;
+    driver = typeof provider?.driver === "string" ? provider.driver : undefined;
+    if (driver === undefined && typeof client.getSettings === "function") {
+      try {
+        const instance = (await client.getSettings())?.providerInstances?.[instanceId];
+        if (typeof instance?.driver === "string") driver = instance.driver;
+      } catch { /* settings unreadable: leave the driver to T3 */ }
+    }
+  }
   assertPolicyAllows(summary, { instanceId, driver, runtimeMode });
 }
 
@@ -104,7 +115,7 @@ export async function enforceManagedPolicy(client, { instanceId, runtimeMode } =
  * limits it prints are discarded. `undefined` means unknown, null means none.
  */
 export function parsePolicyShow(stdout) {
-  if (typeof stdout !== "string") return { installed: undefined, loaded: undefined };
+  if (typeof stdout !== "string") return { installed: undefined, loaded: undefined, restart: false };
   let installed;
   if (/^No managed policy on this machine\./m.test(stdout)) installed = null;
   else installed = /^Managed by .*\(.*, fingerprint ([0-9a-f]{12})\)\.$/m.exec(stdout)?.[1];
@@ -112,7 +123,9 @@ export function parsePolicyShow(stdout) {
   if (/^The running server .* loaded this policy\.$/m.test(stdout)) loaded = installed;
   else if (/^The running server .* (?:runs without a policy, as installed|loaded no policy)\./m.test(stdout)) loaded = null;
   else loaded = /^The running server .* loaded .*\(fingerprint ([0-9a-f]{12})\)\. Restart/m.exec(stdout)?.[1];
-  return { installed, loaded };
+  // An older running server cannot say what it loaded; upstream says to restart it.
+  const restart = /^The running server .* does not report which policy it loaded\./m.test(stdout);
+  return { installed, loaded, restart };
 }
 
 /** Run the local `t3 policy show`; null when no binary or it fails. */
@@ -141,12 +154,12 @@ export function managedPolicyReport({ config, serverVersion, policyShow = null, 
     limits: summary ? policyLimits(summary) : null,
     warnings: [],
   };
-  if (report.mismatch) report.action = POLICY_RESTART_ACTION;
+  if (report.mismatch || show.restart) report.action = POLICY_RESTART_ACTION;
   const clients = report.limits?.clients;
   if (remoteAccess && clients && !clients.includes("remote")) {
     report.warnings.push({
       code: "policy_clients_without_remote",
-      message: `${report.organization}'s policy allows clients ${clients.join(", ")} without remote; T3 drops Tailscale Serve routes and signs out paired devices, so tailnet pairing to this host stops working`,
+      message: `${report.organization}'s policy allows clients ${clients.join(", ")} without remote; T3 drops Tailscale Serve routes and signs out paired devices, so devices that reach this T3 over the tailnet lose access`,
     });
   }
   return report;
