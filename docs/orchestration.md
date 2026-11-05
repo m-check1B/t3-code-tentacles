@@ -216,11 +216,11 @@ generating, ready/idle and `Done` entries carry neither field.
 | `session_busy` | HTTP 409; busy session/state, or another turn already running | The session is busy with another turn; retry after it finishes. |
 | `lab_not_ready` | lab, provider, harness, adapter or model text saying not ready, not found, not installed, not configured, unavailable or missing; `harness_not_found` | The lab or provider is not ready; check tentacles doctor. |
 | `provider_error` | context-length, context-window or token-limit overflow text; any other failure | The provider reported an error; details stay on the owner surface. |
-| `policy_refused` | a Tentacles managed-policy refusal before dispatch; T3's own policy sentence (`<org>'s policy does not allow …` or `<org> limits threads to …`) | The T3 managed policy refused this request; see policyMessage. There is no fallback. |
+| `policy_refused` | a Tentacles managed-policy refusal before dispatch; a T3 RPC refusal carrying T3's policy sentence (`<org>'s policy does not allow …`, `<org> limits threads to …`, `Your organization policy does not allow …`). Never provider or session text | The T3 managed policy refused this request; see policyMessage. There is no fallback. |
 
 Structured signals win over text, in this order: pending requests, cancelled
-state, a code already attached by Tentacles, error class, a T3 policy
-sentence (`policy_refused`, whose `policyMessage` is that sentence), HTTP status, then
+state, a code already attached by Tentacles (including `policy_refused`
+from a T3 RPC refusal, whose `policyMessage` is T3's sentence), error class, HTTP status, then
 text patterns in the order context/token overflow (`provider_error`), usage
 limit, timeout, busy, not ready, cancelled.
 Provider text (`session.lastError`, an optional upstream turn-result `error`
@@ -251,9 +251,20 @@ and never the file.
   the driver or mode and the allowed list or ceiling. The `act` receipt is
   `rejected`. Tentacles never falls back to another instance, model, driver
   or runtime mode.
-- When T3 itself refuses (an RPC exit, or a session `lastError`), the receipt
-  or report gets `policy_refused` and `policyMessage` is T3's own sentence.
-  Only that sentence is kept; the rest of a T3 error body stays redacted.
+- When T3 itself refuses over RPC, the receipt gets `policy_refused` and
+  `policyMessage` is T3's own sentence. Once the client has read
+  `server.getConfig`, the match starts at that exact organization name.
+  Without it, the sentence must fill a whole JSON string value or line.
+  Either way only the sentence is kept and the rest of the T3 error body stays
+  redacted. Shortcut: without a known organization, text in the same JSON
+  value before the sentence, made only of name-like characters (no `:`, `=`,
+  quotes or newlines), is taken as part of the name. Provider text and session
+  `lastError` never map to `policy_refused`, so a provider's own "policy" 429
+  stays `usage_limit`. A turn T3 refuses later (a resumed run above the
+  ceiling) reports its usual code.
+- The driver of the requested instance is resolved like doctor: the provider
+  registry, then settings `providerInstances`. An instance with neither is not
+  refused by Tentacles; T3 marks it unavailable.
 - Every originate runs `full-access`, so a `maxRuntimeMode` below
   `full-access` refuses every originate on that host. That is intended.
 - Without a summary (no policy, a T3 that predates policy, or a client without
@@ -264,10 +275,16 @@ and never the file.
 `loadedFingerprint` and `installedFingerprint` (from the local
 `t3 policy show`; `policyShow: "unavailable"` when no `t3` binary answers or
 with `--computer`), `mismatch` with the fix `restart T3 to apply the
-installed policy`, `limits` (`allowedDrivers`, `maxRuntimeMode`, `clients`)
+installed policy` (also given when the running server does not report which
+policy it loaded), `limits` (`allowedDrivers`, `maxRuntimeMode`, `clients`)
 and `warnings`. When `clients` leaves out `remote` and this host is paired or
 reached with `--computer`, doctor warns `policy_clients_without_remote`: T3
-drops Tailscale Serve routes and signs out paired devices. Labs whose driver
+drops Tailscale Serve routes and signs out paired devices, so devices that
+reach this T3 over the tailnet lose access. With `--computer`, Tentacles
+itself reaches T3 through an ssh forward, which the policy does not cut; the
+warning is about the other devices. Gap: doctor cannot see whether other
+devices reach a host over Tailscale, so the warning does not fire on an
+unpaired host used only that way. Check such hosts by hand. Labs whose driver
 the policy forbids move from `labs` to `blockedByPolicy`.
 
 ## Write: act / orchestrate
