@@ -767,5 +767,16 @@
         "plugins": []
       }
     ]
-  }
+  },
+  "managedPolicy": {
+    "present": "unknown",
+    "organization": null,
+    "loadedFingerprint": null,
+    "installedFingerprint": null,
+    "policyShow": "unavailable",
+    "mismatch": false,
+    "limits": null,
+    "warnings": []
+  },
+  "blockedByPolicy": []
 }

@@ -53,6 +53,7 @@ import { pluginInventoryBlock } from "./plugin-inventory.mjs";
 import { LAB_NAMES, labName } from "./lab-names.mjs";
 import { inspectInstanceWebTools } from "./web-tools.mjs";
 import { ANTIGRAVITY_INSTANCE_ID, antigravityAction, applyAntigravityState } from "./antigravity.mjs";
+import { enforceManagedPolicy, isDriverAllowed, managedPolicyReport, policySummary } from "./managed-policy.mjs";
 
 const HERMES_MENTION = /(^|\s)@hermes\b/i;
 const BRIDGE_OWNER_VARIABLE = "T3_HERMES_BRIDGE_OWNER";
@@ -785,6 +786,8 @@ function pruneOriginationLedger(state, stateFile) {
 export async function originate(client, { workspace, title, message, instanceId, model = DEFAULT_MODEL, options, budget, runtimeMode, freshProviderContext, fixedTitle, idempotencyKey, stateFile = DEFAULT_BRIDGE_STATE_FILE } = {}) {
   const modelSelection = resolveModelSelection({ instanceId: instanceId === undefined ? DEFAULT_INSTANCE_ID : instanceId, model, options, budget });
   runtimeMode = requireExplicitRuntimeMode(runtimeMode);
+  // KRA-8715: a driver or runtime mode the managed policy forbids is refused with no fallback.
+  await enforceManagedPolicy(client, { instanceId: modelSelection.instanceId, runtimeMode });
   requireFreshFlags({ freshProviderContext, fixedTitle });
   await requireFreshProviderContext(client, { freshProviderContext, fixedTitle, instanceId });
   if (!idempotencyKey) {
@@ -1581,6 +1584,8 @@ async function doctorReport(client, {
   pluginInventory = null,
   now = Date.now,
   refreshDirectory = path.join(path.dirname(DEFAULT_BRIDGE_STATE_FILE), "doctor-refresh"),
+  policyShow = null,
+  remoteAccess = false,
   signal,
 } = {}) {
   if (!["summary", "full"].includes(modelsMode)) throw new Error("Doctor models must be summary or full");
@@ -1749,6 +1754,20 @@ async function doctorReport(client, {
     else if (lab.ready && originatePicks.has(lab)) lab.action = defaultSourceAction(lab);
   }
 
+  // KRA-8715: labs whose driver the managed policy forbids leave the lab list.
+  const policy = policySummary(config);
+  const blockedByPolicy = [];
+  if (policy) {
+    for (const lab of [...labs]) {
+      const driver = configById.get(lab.instanceId)?.driver ?? settings.providerInstances?.[lab.instanceId]?.driver;
+      if (isDriverAllowed(policy, driver)) continue;
+      labs.splice(labs.indexOf(lab), 1);
+      blockedByPolicy.push({ instanceId: lab.instanceId, name: lab.name, driver, code: "policy_refused" });
+    }
+  }
+  const pairing = readPairPresence(pairStateFile);
+  const managedPolicy = managedPolicyReport({ config, serverVersion, policyShow, remoteAccess: remoteAccess || pairing.status === "paired" });
+
   void instanceId;
   const nativeInstance = settings.providerInstances?.[NATIVE_GROK_INSTANCE_ID];
   const nativeConfig = nativeInstance && typeof nativeInstance.config === "object" && !Array.isArray(nativeInstance.config) ? nativeInstance.config : undefined;
@@ -1770,8 +1789,10 @@ async function doctorReport(client, {
     product: "Tentacles",
     capabilities: talk.capabilities,
     t3: { reachable: true, auth: { status: "valid" }, version: serverVersion, talk: talk.finding, projects: projects.length, threads: threads.length, leakedSessions },
-    pairing: readPairPresence(pairStateFile),
+    pairing,
+    managedPolicy,
     labs,
+    blockedByPolicy,
     adapterCredential,
     hermes,
     nativeGrok,
@@ -1846,6 +1867,17 @@ export function formatDoctor(result = {}) {
       ? "Adapter credential route: constructable"
       : `Adapter credential route: fail-closed (${adapterCredential.code || "adapter_auth_unavailable"})`);
   }
+  const policy = result.managedPolicy && typeof result.managedPolicy === "object" ? result.managedPolicy : null;
+  if (policy) {
+    const present = policy.present === true ? `managed by ${policy.organization}` : policy.present === false ? "none" : "unknown (T3 predates managed policy)";
+    lines.push(`Managed policy: ${present}  loaded: ${policy.loadedFingerprint ?? "none"}  installed: ${policy.policyShow === "ok" ? policy.installedFingerprint ?? "none" : "unknown"}${policy.mismatch ? "  MISMATCH" : ""}`);
+    if (policy.limits) {
+      const limits = policy.limits;
+      lines.push(`Policy limits: drivers=${limits.allowedDrivers?.join(",") ?? "any"}  maxRuntimeMode=${limits.maxRuntimeMode ?? "any"}  clients=${limits.clients?.join(",") ?? "any"}`);
+    }
+    if (policy.action) lines.push(`Fix: ${policy.action}`);
+    for (const warning of policy.warnings ?? []) lines.push(`Warning (${warning.code}): ${warning.message}`);
+  }
   if (nativeGrok.present || nativeGrok.disabled) {
     lines.push(`Native Grok: present=${yesNo(nativeGrok.present)}  enabled=${yesNo(nativeGrok.enabled)}  disabled=${yesNo(nativeGrok.disabled)}`);
   }
@@ -1886,6 +1918,10 @@ export function formatDoctor(result = {}) {
       if (action) parts.push(`action: ${action}`);
       lines.push(`  - ${parts.join("  ")}`);
     }
+  }
+  const blockedByPolicy = Array.isArray(result.blockedByPolicy) ? result.blockedByPolicy : [];
+  if (blockedByPolicy.length) {
+    lines.push(`Blocked by policy: ${blockedByPolicy.map((lab) => `${lab.instanceId} (driver ${lab.driver})`).join(", ")}`);
   }
   const defaultNotes = labs.filter((lab) => lab.ready && lab.action);
   if (defaultNotes.length) {

@@ -23,8 +23,8 @@ function turnResultAdapter(upstream) {
 }
 
 test("every code has one static message and unknown codes fall back to provider_error", () => {
-  assert.deepEqual([...FAILURE_CODES].sort(), ["approval_required", "cancelled", "lab_not_ready", "provider_error",
-    "session_busy", "timeout", "usage_limit"]);
+  assert.deepEqual([...FAILURE_CODES].sort(), ["approval_required", "cancelled", "lab_not_ready", "policy_refused",
+    "provider_error", "session_busy", "timeout", "usage_limit"]);
   for (const code of FAILURE_CODES) {
     assert.deepEqual(failure(code), { code, message: FAILURE_MESSAGES[code] });
     assert.equal(typeof FAILURE_MESSAGES[code], "string");

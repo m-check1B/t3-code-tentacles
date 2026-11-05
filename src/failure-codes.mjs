@@ -14,6 +14,7 @@ export const FAILURE_CODES = Object.freeze([
   "provider_error",
   "usage_limit",
   "approval_required",
+  "policy_refused",
 ]);
 
 export const FAILURE_MESSAGES = Object.freeze({
@@ -24,6 +25,7 @@ export const FAILURE_MESSAGES = Object.freeze({
   provider_error: "The provider reported an error; details stay on the owner surface.",
   usage_limit: "The provider usage limit was reached; route to a fallback lab or retry later.",
   approval_required: "The turn is waiting for an approval or user input.",
+  policy_refused: "The T3 managed policy refused this request; see policyMessage. There is no fallback.",
 });
 
 const MAX_CLASSIFIED_TEXT = 4096;
@@ -42,6 +44,39 @@ const TEXT_PATTERNS = [
   ["lab_not_ready", /\b(?:lab|provider(?: instance)?|harness|adapter|model)\b[^\n]{0,80}?\b(?:not (?:ready|found|installed|configured|available)|unavailable|is missing)\b|\bharness_not_found\b/i],
   ["cancelled", /\b(?:cancel(?:l)?ed|interrupted|aborted by user)\b/i],
 ];
+
+// KRA-8715: upstream `managedPolicyDeniedMessage`,
+// `managedRuntimeModeCeilingMessage` and `disallowedProviderMessage`. Only the
+// matched sentence is kept. With the organization from `server.getConfig` the
+// match starts at that exact name; without it the sentence must fill a whole
+// JSON string value or line, so no text before it can ride along.
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// A sentence ends at a dot followed by the end, a quote, whitespace or a JSON escape.
+const SENTENCE = String.raw`[^\n"\\]{1,200}?\.(?=$|["\s\\])`;
+const MODE = String.raw`(?:Supervised|Auto-accept edits|Auto|Full access)\.(?=$|["\s\\])`;
+const OWN_VALUE = String.raw`(?:^|(?<=["\n]))`;
+const VALUE_END = String.raw`(?: Switch this thread's mode to continue\.)?(?=$|["\n]|\\n)`;
+
+function policyDenialPatterns(organization) {
+  const orgless = new RegExp(String.raw`(?<=^|["\s])(Your organization policy does not allow ${SENTENCE})`);
+  if (typeof organization === "string" && organization.trim()) {
+    const org = escapeRegExp(organization.trim());
+    return [new RegExp(String.raw`(?<=^|["\s])(${org}(?:'s policy does not allow ${SENTENCE}| limits threads to ${MODE}))`), orgless];
+  }
+  const org = String.raw`[^\n"\\:=]{1,120}?`;
+  return [new RegExp(String.raw`${OWN_VALUE}(${org}(?:'s policy does not allow ${SENTENCE}| limits threads to ${MODE}))${VALUE_END}`), orgless];
+}
+
+/** The policy sentence T3 used to refuse something, or null. */
+export function policyDenialText(text, { organization } = {}) {
+  if (typeof text !== "string") return null;
+  const bounded = text.slice(0, MAX_CLASSIFIED_TEXT);
+  for (const pattern of policyDenialPatterns(organization)) {
+    const match = pattern.exec(bounded);
+    if (match) return match[1].trim();
+  }
+  return null;
+}
 
 export function failure(code) {
   if (!FAILURE_CODES.includes(code)) code = "provider_error";
@@ -77,6 +112,11 @@ export function classifyFailure({
 } = {}) {
   if (hasPendingApprovals === true || hasPendingUserInput === true) return failure("approval_required");
   if (state === "cancelled" || state === "interrupted" || sessionStatus === "interrupted") return failure("cancelled");
+  // KRA-8715: only a T3-originated refusal (PolicyRefusedError) is policy_refused;
+  // provider or session text with policy words keeps its own code.
+  if (error instanceof Error && error.failure?.code === "policy_refused") {
+    return typeof error.policyMessage === "string" ? { ...failure("policy_refused"), policyMessage: error.policyMessage } : failure("policy_refused");
+  }
   if (error instanceof Error && error.failure && FAILURE_CODES.includes(error.failure.code)) return failure(error.failure.code);
   if (error instanceof Error && error.name === "TimeoutError") return failure("timeout");
   if (error instanceof Error && error.name === "AbortError") return failure("cancelled");
