@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- KRA-8715: Tentacles is aware of the T3 managed policy (T3 v0.1.7). `doctor` adds a `managedPolicy` section (present, organization, loaded and installed fingerprints from `t3 policy show`, a mismatch fix `restart T3 to apply the installed policy`, limits) and warns when `clients` leaves out `remote` on a paired or remote host. `originate` and `act`/`orchestrate` refuse a driver outside `allowedDrivers` or a runtime mode above `maxRuntimeMode` before dispatch with the new failure code `policy_refused`, and T3's own policy denials map to it with T3's sentence as `policyMessage`; nothing falls back. Doctor and the capability inventory move labs the policy forbids into `blockedByPolicy`. Without a policy, or on a T3 older than 0.1.7, behavior is unchanged.
+
 ## [0.5.0-jack.12] - 2026-10-31
 
 ### Fixed

@@ -24,6 +24,7 @@ import {
 import { readOrchestrationSnapshot, requireFullThreadId, T3HttpError, T3AuthError } from "./t3-client.mjs";
 import { T3RpcRejectedError, T3V2UnsupportedError, V2_PROTOCOL } from "./t3-v2.mjs";
 import { classifyFailure } from "./failure-codes.mjs";
+import { enforceManagedPolicy, PolicyRefusedError } from "./managed-policy.mjs";
 
 const INTERACTION_MODES = new Set(["default", "plan"]);
 const APPROVAL_DECISIONS = new Set(["accept", "acceptForSession", "decline", "cancel"]);
@@ -876,6 +877,8 @@ export class IntentDispatchError extends Error {
     if (authError instanceof T3AuthError) this.message = authError.message;
     // The adapter's own refusal is safe to show; T3 reply bodies are not.
     if (authError instanceof T3V2UnsupportedError) this.message = authError.message;
+    // KRA-8715: a policy refusal names the organization and the limit, never a secret.
+    if (authError instanceof PolicyRefusedError) this.message = authError.message;
     // KRA-8958: non-auth receipts carry a typed code; the auth code is kept as is.
     this.receipt = { accepted: false, commandId, status, projected: false, ...(authError instanceof T3AuthError ? { code: authError.code, action: authError.action } : classifyFailure({ error: authError })) };
   }
@@ -894,7 +897,7 @@ async function dispatchWithReceipt(client, command) {
   try { result = await client.dispatch(command); }
   catch (error) {
     const refused = (error instanceof T3HttpError && error.status >= 400 && error.status < 500)
-      || error instanceof T3RpcRejectedError || error instanceof T3V2UnsupportedError;
+      || error instanceof T3RpcRejectedError || error instanceof T3V2UnsupportedError || error instanceof PolicyRefusedError;
     throw new IntentDispatchError(command.commandId, refused ? "rejected" : "unconfirmed", error);
   }
   if (result?.accepted === false) throw new IntentDispatchError(command.commandId, "rejected");
@@ -930,6 +933,17 @@ async function applyIntentWithReceipt(client, intent, { wait = true, commandId, 
   let baseline = null;
   let restartCommand = null;
   let restartDispatchResult = null;
+  // KRA-8715: refuse a driver or runtime mode the T3 managed policy forbids
+  // before anything dispatches. No other lab, model or mode is tried.
+  const enforcePolicy = async () => {
+    try {
+      await enforceManagedPolicy(dispatchClient, {
+        instanceId: (command.modelSelection ?? command.defaultModelSelection)?.instanceId,
+        runtimeMode: command.runtimeMode,
+      });
+    } catch (error) { throw new IntentDispatchError(command.commandId, "rejected", error); }
+  };
+  if (command.type !== "thread.turn.start") await enforcePolicy();
   if (command.type === "thread.turn.start") {
     baseline = await readBeforeDispatch(command, () => getThreadIfProjected(client, command.threadId));
     const sessionStatus = baseline?.thread?.session?.status ?? null;
@@ -951,6 +965,7 @@ async function applyIntentWithReceipt(client, intent, { wait = true, commandId, 
         throw error;
       }
     }
+    await enforcePolicy();
     if (shouldRestart && sessionStatus !== null && sessionStatus !== "stopped") {
       restartCommand = threadSessionStop({
         threadId: command.threadId,

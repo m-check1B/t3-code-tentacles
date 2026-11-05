@@ -178,6 +178,7 @@ Linear" finds a `linear` CLI and a Linear MCP server alike.
   "skills": [ { "lab": "codex", "name": "alibaba-open-code-review" } ],
   "labs": [ { "instanceId": "codex", "name": "Codex", "ready": true, "code": null, "fix": null } ],
   "labsState": "ok",
+  "blockedByPolicy": [],
   "truncated": { "mcp": false, "plugins": false, "skills": false },
   "dropped": 0,
   "redactions": 0
@@ -189,6 +190,10 @@ Field notes:
 - `labs` is a closed projection of `tentacles doctor`: id, name, ready, code and
   action as `fix`. It never includes models. `labsState` is `ok`,
   `unavailable` (T3 unreachable or not authorized) or `skipped`.
+- `blockedByPolicy` (KRA-8715) lists labs whose driver the T3 managed policy
+  does not allow, as `{ instanceId, driver, code: "policy_refused" }`. They
+  are left out of `labs`, so "available" never includes them. It is `[]`
+  without a policy or a doctor report.
 - The document carries no hostname: on a Mac it often holds the owner's name.
   Jack already knows which computer it is from the pair.
 - Limits: 64 CLI rows, 256 MCP rows, 256 plugin rows and 512 skill rows.

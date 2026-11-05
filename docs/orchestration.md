@@ -216,9 +216,11 @@ generating, ready/idle and `Done` entries carry neither field.
 | `session_busy` | HTTP 409; busy session/state, or another turn already running | The session is busy with another turn; retry after it finishes. |
 | `lab_not_ready` | lab, provider, harness, adapter or model text saying not ready, not found, not installed, not configured, unavailable or missing; `harness_not_found` | The lab or provider is not ready; check tentacles doctor. |
 | `provider_error` | context-length, context-window or token-limit overflow text; any other failure | The provider reported an error; details stay on the owner surface. |
+| `policy_refused` | a Tentacles managed-policy refusal before dispatch; T3's own policy sentence (`<org>'s policy does not allow …` or `<org> limits threads to …`) | The T3 managed policy refused this request; see policyMessage. There is no fallback. |
 
 Structured signals win over text, in this order: pending requests, cancelled
-state, a code already attached by Tentacles, error class, HTTP status, then
+state, a code already attached by Tentacles, error class, a T3 policy
+sentence (`policy_refused`, whose `policyMessage` is that sentence), HTTP status, then
 text patterns in the order context/token overflow (`provider_error`), usage
 limit, timeout, busy, not ready, cancelled.
 Provider text (`session.lastError`, an optional upstream turn-result `error`
@@ -231,6 +233,42 @@ is `provider_error`. A T3 401 receipt keeps its existing
 session that entered `error` is unchanged (below); the receipt carries the
 code. Codes are in `src/failure-codes.mjs` (`FAILURE_CODES`,
 `FAILURE_MESSAGES`, `classifyFailure`).
+
+### Managed policy (KRA-8715)
+
+T3 v0.1.7 adds a machine-wide managed policy (`/etc/t3code/policy.json` on
+Linux, `/Library/Application Support/T3Code/policy.json` or the
+`com.t3tools.t3code` profile on macOS). Tentacles reads only the summary T3
+publishes in `server.getConfig` (`managedPolicy`: organization and `limits`)
+and never the file.
+
+- `originate` and every `act`/`orchestrate` intent that names a lab or a
+  runtime mode read that summary first. A driver outside
+  `limits.providers.allowedDrivers`, or a runtime mode above
+  `limits.maxRuntimeMode` (order `approval-required` < `auto-accept-edits` <
+  `auto` < `full-access`), is refused before anything dispatches, with
+  `code: "policy_refused"` and a `policyMessage` naming the organization,
+  the driver or mode and the allowed list or ceiling. The `act` receipt is
+  `rejected`. Tentacles never falls back to another instance, model, driver
+  or runtime mode.
+- When T3 itself refuses (an RPC exit, or a session `lastError`), the receipt
+  or report gets `policy_refused` and `policyMessage` is T3's own sentence.
+  Only that sentence is kept; the rest of a T3 error body stays redacted.
+- Every originate runs `full-access`, so a `maxRuntimeMode` below
+  `full-access` refuses every originate on that host. That is intended.
+- Without a summary (no policy, a T3 that predates policy, or a client without
+  `server.getConfig`) nothing changes.
+
+`tentacles doctor` adds a `managedPolicy` section: `present` (`true`,
+`false`, or `"unknown"` for a T3 older than 0.1.7), `organization`,
+`loadedFingerprint` and `installedFingerprint` (from the local
+`t3 policy show`; `policyShow: "unavailable"` when no `t3` binary answers or
+with `--computer`), `mismatch` with the fix `restart T3 to apply the
+installed policy`, `limits` (`allowedDrivers`, `maxRuntimeMode`, `clients`)
+and `warnings`. When `clients` leaves out `remote` and this host is paired or
+reached with `--computer`, doctor warns `policy_clients_without_remote`: T3
+drops Tailscale Serve routes and signs out paired devices. Labs whose driver
+the policy forbids move from `labs` to `blockedByPolicy`.
 
 ## Write: act / orchestrate
 

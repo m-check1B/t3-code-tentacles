@@ -14,6 +14,7 @@ export const FAILURE_CODES = Object.freeze([
   "provider_error",
   "usage_limit",
   "approval_required",
+  "policy_refused",
 ]);
 
 export const FAILURE_MESSAGES = Object.freeze({
@@ -24,6 +25,7 @@ export const FAILURE_MESSAGES = Object.freeze({
   provider_error: "The provider reported an error; details stay on the owner surface.",
   usage_limit: "The provider usage limit was reached; route to a fallback lab or retry later.",
   approval_required: "The turn is waiting for an approval or user input.",
+  policy_refused: "The T3 managed policy refused this request; see policyMessage. There is no fallback.",
 });
 
 const MAX_CLASSIFIED_TEXT = 4096;
@@ -42,6 +44,24 @@ const TEXT_PATTERNS = [
   ["lab_not_ready", /\b(?:lab|provider(?: instance)?|harness|adapter|model)\b[^\n]{0,80}?\b(?:not (?:ready|found|installed|configured|available)|unavailable|is missing)\b|\bharness_not_found\b/i],
   ["cancelled", /\b(?:cancel(?:l)?ed|interrupted|aborted by user)\b/i],
 ];
+
+// KRA-8715: upstream `managedPolicyDeniedMessage` and
+// `managedRuntimeModeCeilingMessage`. Only the matched sentence is kept.
+const POLICY_DENIAL_PATTERNS = [
+  /[^\n"\\:]{1,120}?'s policy does not allow [^\n"\\.]{1,120}\./,
+  /[^\n"\\:]{1,120}? limits threads to (?:Supervised|Auto-accept edits|Auto|Full access)\./,
+];
+
+/** The policy sentence T3 used to refuse something, or null. */
+export function policyDenialText(text) {
+  if (typeof text !== "string") return null;
+  const bounded = text.slice(0, MAX_CLASSIFIED_TEXT);
+  for (const pattern of POLICY_DENIAL_PATTERNS) {
+    const match = pattern.exec(bounded);
+    if (match) return match[0].trim();
+  }
+  return null;
+}
 
 export function failure(code) {
   if (!FAILURE_CODES.includes(code)) code = "provider_error";
@@ -77,10 +97,16 @@ export function classifyFailure({
 } = {}) {
   if (hasPendingApprovals === true || hasPendingUserInput === true) return failure("approval_required");
   if (state === "cancelled" || state === "interrupted" || sessionStatus === "interrupted") return failure("cancelled");
+  if (error instanceof Error && error.failure?.code === "policy_refused") {
+    return typeof error.policyMessage === "string" ? { ...failure("policy_refused"), policyMessage: error.policyMessage } : failure("policy_refused");
+  }
   if (error instanceof Error && error.failure && FAILURE_CODES.includes(error.failure.code)) return failure(error.failure.code);
   if (error instanceof Error && error.name === "TimeoutError") return failure("timeout");
   if (error instanceof Error && error.name === "AbortError") return failure("cancelled");
   const status = Number.isInteger(httpStatus) ? httpStatus : (Number.isInteger(error?.status) ? error.status : null);
+  // T3's own policy sentence is shown as is; it names the organization and the limit.
+  const policyMessage = policyDenialText(errorText(error));
+  if (policyMessage) return { ...failure("policy_refused"), policyMessage };
   if (status === 429) return failure("usage_limit");
   if (status === 409) return failure("session_busy");
   if (status === 408 || status === 504) return failure("timeout");

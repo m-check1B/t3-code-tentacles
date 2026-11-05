@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { requireFreshProviderContext } from "./fresh-provider-context.mjs";
 import { DEFAULT_T3_URL, DEFAULT_TOKEN_FILE, readToken, requireLoopbackUrl } from "./config.mjs";
+import { PolicyRefusedError, policyDenialText } from "./managed-policy.mjs";
 import { archivedShellToV1, shellToV1, T3RpcRejectedError, threadDetailToV1, translateCommand, T3V2UnsupportedError, V2_PROTOCOL, V2_PROTOCOL_HEADER } from "./t3-v2.mjs";
 
 const isPlainRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -311,7 +312,10 @@ export class T3Client {
         if (message.exit?._tag === "Success") {
           finish(resolve, message.exit.value);
         } else {
-          finish(reject, new T3RpcRejectedError(tag, safeErrorBody(message.exit)));
+          // KRA-8715: T3's managed-policy sentence is the one part of a refusal that is shown.
+          let denial = null;
+          try { denial = policyDenialText(JSON.stringify(message.exit ?? null)); } catch { /* unserializable exit */ }
+          finish(reject, denial ? new PolicyRefusedError(denial, { rpcTag: tag }) : new T3RpcRejectedError(tag, safeErrorBody(message.exit)));
         }
       });
       socket.addEventListener("error", () => finish(reject, new Error(`T3 RPC ${tag} websocket failed`)));

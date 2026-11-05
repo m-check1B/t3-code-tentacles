@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { createAutoReauth, reauthenticate } from "./t3-auth.mjs";
+import { createAutoReauth, reauthenticate, resolveT3Bin } from "./t3-auth.mjs";
+import { runPolicyShow } from "./managed-policy.mjs";
 import { COMPUTER_COMMANDS, ensureForward, loadComputer, remoteIssueSpawn } from "./computers.mjs";
 import { requireFullThreadId, T3Client } from "./t3-client.mjs";
 import {
@@ -445,6 +446,12 @@ async function main() {
       instanceId,
       pairStateFile: options["pair-state-file"] || DEFAULT_PAIR_STATE_FILE,
       models: options.models || "summary",
+      // KRA-8715: the installed fingerprint comes from the local `t3 policy show`; a remote computer reports it unknown.
+      policyShow: computer ? null : runPolicyShow({
+        t3Bin: resolveT3Bin({ t3Bin: process.env.TENTACLES_T3_BIN || null, t3Home: process.env.TENTACLES_T3_HOME || path.join(os.homedir(), ".t3") }),
+        t3Home: process.env.TENTACLES_T3_HOME || null,
+      }),
+      remoteAccess: Boolean(computer),
     });
     if (responds) result.responds = await probeResponds(client, result.labs, responds);
     console.log(options.json ? JSON.stringify(result, null, 2) : formatDoctor(result));

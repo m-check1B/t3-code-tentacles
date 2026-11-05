@@ -649,6 +649,10 @@ export async function scanCapabilities({
       skills: skills.rows,
       labs: doctorReport ? labsFromDoctor(doctorReport) : null,
       labsState: doctorReport === undefined ? "skipped" : doctorReport ? "ok" : "unavailable",
+      // KRA-8715: labs the T3 managed policy forbids; doctor already left them out of `labs`.
+      blockedByPolicy: Array.isArray(doctorReport?.blockedByPolicy)
+        ? doctorReport.blockedByPolicy.map((lab) => ({ instanceId: lab.instanceId, driver: lab.driver ?? null, code: "policy_refused" }))
+        : [],
       truncated: { mcp: mcp.truncated, plugins: plugins.truncated, skills: skills.truncated },
       dropped: mcp.dropped + plugins.dropped + skills.dropped,
       redactions: 0,
@@ -789,6 +793,7 @@ export function formatCapabilities(document) {
   for (const row of document.plugins ?? []) lines.push(`  ${row.lab.padEnd(9)} ${row.name}${row.enabled ? "" : " (disabled)"}`);
   if (document.labs) {
     lines.push("", `Labs ready: ${document.labs.filter((lab) => lab.ready).map((lab) => lab.instanceId).join(", ") || "none"}`);
+    if (document.blockedByPolicy?.length) lines.push(`Labs blocked by policy: ${document.blockedByPolicy.map((lab) => lab.instanceId).join(", ")}`);
   }
   if (!document.complete) lines.push("", "Scan hit its deadline; some rows are probe_timeout.");
   lines.push("", "Machine JSON: tentacles capabilities scan --json");
