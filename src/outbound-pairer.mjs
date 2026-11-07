@@ -359,7 +359,9 @@ export class LoopbackRuntimeAdapter {
       throw new Error("turn-result requires exactly threadId, messageId and turnCommandId");
     }
     for (const key of keys) requireSafeId(input[key], key);
-    const result = await this.client.request("/api/orchestration/turn-result", { method: "POST", body: input });
+    const result = typeof this.client.turnResult === "function"
+      ? await this.client.turnResult(input)
+      : await this.client.request("/api/orchestration/turn-result", { method: "POST", body: input });
     requireRecord(result, "turn-result response");
     if (keys.some((key) => result[key] !== input[key])
       || !["pending", "succeeded", "failed", "cancelled"].includes(result.state)

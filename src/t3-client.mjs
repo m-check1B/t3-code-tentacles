@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { requireFreshProviderContext } from "./fresh-provider-context.mjs";
 import { DEFAULT_T3_URL, DEFAULT_TOKEN_FILE, readToken, requireLoopbackUrl } from "./config.mjs";
 import { PolicyRefusedError, policyDenialText } from "./managed-policy.mjs";
-import { archivedShellToV1, shellToV1, T3RpcRejectedError, threadDetailToV1, translateCommand, T3V2UnsupportedError, V2_PROTOCOL, V2_PROTOCOL_HEADER } from "./t3-v2.mjs";
+import { archivedShellToV1, isUnknownTagError, isUnknownTagExit, nativeTurnResult, PATCHED_MESSAGE_METHOD, shellToV1, T3RpcRejectedError, threadDetailToV1, translateCommand, T3V2UnsupportedError, upstreamMessageStep, V2_PROTOCOL, V2_PROTOCOL_HEADER } from "./t3-v2.mjs";
+
+export const TURN_RESULT_PATH = "/api/orchestration/turn-result";
+const MAX_FRESH_PROVIDERS = 32;
 
 const isPlainRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 
@@ -229,10 +232,81 @@ export class T3Client {
           }
         }
         : undefined;
-      const value = await this.rpc(step.method, step.payload, { beforeSend });
+      const value = await this.sendStep(step, { beforeSend });
       result = { ...(isPlainRecord(value) && typeof value.sequence === "number" ? { sequence: value.sequence } : { sequence: result.sequence }), protocol: V2_PROTOCOL };
     }
     return result;
+  }
+
+  // KRA-10175: send a translated step. Patched T3 v2 keeps its atomic message
+  // RPC; upstream answers that tag with "Unknown request tag" (never applied),
+  // so the same message goes once through dispatchCommand and the choice is kept.
+  async sendStep(step, { beforeSend } = {}) {
+    if (step.method !== PATCHED_MESSAGE_METHOD) return this.rpc(step.method, step.payload, { beforeSend });
+    if (this.messageDispatch !== "upstream") {
+      try {
+        const value = await this.rpc(step.method, step.payload, { beforeSend });
+        this.messageDispatch = "patched";
+        return value;
+      } catch (error) {
+        if (!isUnknownTagError(error, PATCHED_MESSAGE_METHOD)) throw error;
+        this.messageDispatch = "upstream";
+      }
+    }
+    const freshContext = step.payload?.freshProviderContext === true ? (await this.serverCapabilities()).freshContext === true : false;
+    const upstream = upstreamMessageStep(step, { freshContext });
+    return this.rpc(upstream.method, upstream.payload, { beforeSend });
+  }
+
+  async serverConfig(options) {
+    return this.rpc("server.getConfig", {}, options);
+  }
+
+  async serverCapabilities(options) {
+    const capabilities = (await this.serverConfig(options))?.environment?.capabilities;
+    return isPlainRecord(capabilities) ? capabilities : {};
+  }
+
+  // KRA-10175: talkTurnResult/v1 capabilities. A patched T3 answers the GET with
+  // a JSON record. Upstream T3 v2 has no such route (its SPA fallback answers
+  // HTML, or 404/405); there the record is derived from server.getConfig and
+  // the result is read from the thread projection. Protocol 1 keeps the old
+  // behaviour exactly, including a 404 error.
+  async talkCapabilities({ signal } = {}) {
+    let payload;
+    try {
+      payload = await this.request(TURN_RESULT_PATH, { signal });
+    } catch (error) {
+      if (!(error instanceof T3HttpError && [404, 405].includes(error.status)) || await this.protocol({ signal }) !== V2_PROTOCOL) throw error;
+    }
+    if (isPlainRecord(payload)) {
+      this.turnResultSource = "patched";
+      return payload;
+    }
+    if (await this.protocol({ signal }) !== V2_PROTOCOL) return payload;
+    const config = await this.serverConfig({ signal });
+    if (config?.environment?.orchestrationProtocolVersion !== V2_PROTOCOL) return payload;
+    this.turnResultSource = "native-v2";
+    const providers = (Array.isArray(config.providers) ? config.providers : [])
+      .filter((entry) => entry?.enabled === true && entry.installed === true && typeof entry.instanceId === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(entry.instanceId))
+      .map((entry) => entry.instanceId);
+    const unique = [...new Set(providers)].slice(0, MAX_FRESH_PROVIDERS);
+    return {
+      talkTurnResult: "v1",
+      ...(config.environment.capabilities?.freshContext === true && unique.length
+        ? { talkFreshProviderContext: "v1", talkFreshProviderContextProviders: unique } : {}),
+    };
+  }
+
+  // Exact turn result for { threadId, messageId, turnCommandId }.
+  async turnResult(tuple, { signal } = {}) {
+    if (this.turnResultSource === undefined) {
+      try { await this.talkCapabilities({ signal }); } catch { /* the POST below reports the failure */ }
+    }
+    if (this.turnResultSource !== "native-v2") return this.request(TURN_RESULT_PATH, { method: "POST", body: tuple, signal });
+    requireFullThreadId(tuple?.threadId);
+    const detail = await this.request(`/api/orchestration/threads/${encodeURIComponent(tuple.threadId)}`, { signal });
+    return nativeTurnResult(detail, tuple);
   }
 
   async rpc(tag, payload = {}, { timeoutMs = 15_000, beforeSend, signal } = {}) {
@@ -320,7 +394,7 @@ export class T3Client {
           // KRA-8715: T3's managed-policy sentence is the one part of a refusal that is shown.
           let denial = null;
           try { denial = policyDenialText(JSON.stringify(message.exit ?? null), { organization: this.policyOrganization }); } catch { /* unserializable exit */ }
-          finish(reject, denial ? new PolicyRefusedError(denial, { rpcTag: tag }) : new T3RpcRejectedError(tag, safeErrorBody(message.exit)));
+          finish(reject, denial ? new PolicyRefusedError(denial, { rpcTag: tag }) : new T3RpcRejectedError(tag, safeErrorBody(message.exit), { unknownTag: isUnknownTagExit(message.exit, tag) }));
         }
       });
       socket.addEventListener("error", () => finish(reject, new Error(`T3 RPC ${tag} websocket failed`)));
@@ -330,8 +404,21 @@ export class T3Client {
     });
   }
 
-  getSettings(options) {
-    return this.rpc("server.getSettings", {}, options);
+  // KRA-10176: upstream T3 >= 0.1.8 removed server.getSettings; the same
+  // settings ride server.getConfig().settings. Feature detection, not version
+  // sniffing: only an exact unknown-tag reply switches the source.
+  async getSettings(options) {
+    if (this.settingsSource !== "config") {
+      try {
+        return await this.rpc("server.getSettings", {}, options);
+      } catch (error) {
+        if (!isUnknownTagError(error, "server.getSettings")) throw error;
+        this.settingsSource = "config";
+      }
+    }
+    const settings = (await this.serverConfig(options))?.settings;
+    if (!isPlainRecord(settings)) throw new T3V2UnsupportedError("T3 server.getConfig carries no settings");
+    return settings;
   }
 
   updateSettings(patch) {

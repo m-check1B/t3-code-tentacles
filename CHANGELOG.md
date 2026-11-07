@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- KRA-10175 / KRA-10176: one build now drives both the patched T3 v2 and upstream T3 Code (Nightly) 0.1.8. Tentacles detects removed RPCs from the server's exact `Unknown request tag: <tag>` reply (never applied), not from a version string. Turns go through `orchestration.dispatchCommand` (`message.dispatch`) where `orchestration.dispatchMessageWithMode` is gone, with `freshProviderContext` sent as upstream's `freshContext` only when `server.getConfig` advertises it. Settings come from `server.getConfig().settings` where `server.getSettings` is gone, so `doctor`, provider installs and the managed-policy check work again. Any other refusal still has no fallback.
+- KRA-10175: `talkTurnResult/v1` works on upstream T3 v2, which has no patched turn-result route. Capabilities come from `server.getConfig`, and the result is read from the thread projection with an exact join (the sent `messageId` names the run; the output is that run's last settled assistant message), never the latest run. An upstream message id that is not a safe id (Antigravity ids reach 138 characters with percent-escapes) is reported as a stable `t3v2-sha256:` digest of itself. On upstream T3 the runtime mode is no longer atomic with the message: the `thread.runtime-mode.set` step and the pre-send projection check remain.
+
+### Added
+
+- KRA-10176: every doctor lab row has `signedIn` (true, false or null) from T3's own `auth.status` word, also shown as the last column of the text table.
+
 ## [0.5.0-jack.13] - 2026-11-07
 
 ### Added

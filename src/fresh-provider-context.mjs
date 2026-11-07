@@ -17,6 +17,9 @@ export async function requireFreshProviderContext(client, { freshProviderContext
   if (freshProviderContext !== true && fixedTitle !== true) return;
   if (typeof instanceId !== "string" || !instanceId) throw new Error("Fresh provider context requires an explicit provider instance");
   if (typeof client.protocol === "function") await client.protocol();
-  const capabilities = await client.request("/api/orchestration/turn-result");
+  // KRA-10175: upstream T3 v2 derives the record from server.getConfig.
+  const capabilities = typeof client.talkCapabilities === "function"
+    ? await client.talkCapabilities()
+    : await client.request("/api/orchestration/turn-result");
   if (!freshContextProviders(capabilities).includes(instanceId)) throw new Error("Fresh provider context is unavailable for this provider");
 }

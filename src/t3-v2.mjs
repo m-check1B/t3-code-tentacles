@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { validateNestedRecords } from "./t3-v2-validation.mjs";
 
 // T3 Orchestrator V2 (T3 >= v0.1.0, orchestrationProtocolVersion 2) adapter (KRA-6436).
@@ -11,10 +12,47 @@ export const V2_PROTOCOL_HEADER = "x-t3-orchestration-protocol";
 
 // A definitive T3 RPC failure reply: the command was refused, never applied.
 export class T3RpcRejectedError extends Error {
-  constructor(tag, detail) {
+  constructor(tag, detail, { unknownTag = false } = {}) {
     super(`T3 RPC ${tag} failed: ${detail}`);
     this.name = "T3RpcRejectedError";
+    this.tag = tag;
+    // KRA-10175/10176: the server does not know this RPC at all, so it never
+    // decoded or applied the request. Only this exact defect sets the flag.
+    this.unknownTag = unknownTag === true;
   }
+}
+
+/** True when an RPC failure exit is upstream's "Unknown request tag: <tag>" defect. */
+export function isUnknownTagExit(exit, tag) {
+  if (exit?._tag !== "Failure") return false;
+  const causes = Array.isArray(exit.cause) ? exit.cause : [exit.cause];
+  const expected = `Unknown request tag: ${tag}`;
+  return causes.length > 0 && causes.every((cause) => cause?._tag === "Die" && cause.defect === expected);
+}
+
+export const isUnknownTagError = (error, tag) => error instanceof T3RpcRejectedError && error.unknownTag === true && error.tag === tag;
+
+// Patched T3 v2 (jack/upstream-0.1.0) carries runtime mode atomically on its
+// own message RPC. Upstream T3 >= 0.1.8 removed that tag; it takes
+// message.dispatch through orchestration.dispatchCommand.
+export const PATCHED_MESSAGE_METHOD = "orchestration.dispatchMessageWithMode";
+export const UPSTREAM_MESSAGE_METHOD = "orchestration.dispatchCommand";
+
+/**
+ * Patched message step -> upstream message.dispatch step. Upstream has no
+ * atomic runtimeMode on the message (the preceding thread.runtime-mode.set step
+ * and the client's pre-send projection check stay), and names the fresh flag
+ * `freshContext`. A fresh turn is refused unless the server advertises
+ * `environment.capabilities.freshContext`: older servers ignore the field.
+ */
+export function upstreamMessageStep(step, { freshContext = false } = {}) {
+  if (step?.method !== PATCHED_MESSAGE_METHOD || step.payload?.type !== "message.dispatch")
+    throw new T3V2UnsupportedError("T3 V2 adapter can convert only its message step");
+  const { runtimeMode, freshProviderContext, ...rest } = step.payload;
+  void runtimeMode;
+  if (freshProviderContext === true && freshContext !== true)
+    throw new T3V2UnsupportedError("This T3 server does not advertise freshContext; refusing a fresh-context turn");
+  return { method: UPSTREAM_MESSAGE_METHOD, payload: { ...rest, ...(freshProviderContext === true ? { freshContext: true } : {}) } };
 }
 
 export class T3V2UnsupportedError extends Error {
@@ -121,7 +159,7 @@ export async function translateCommand(command, { readProjection } = {}) {
         deliveryIntent: "auto",
         dispatchMode: { type: "start_immediately" },
       }));
-      steps.at(-1).method = "orchestration.dispatchMessageWithMode";
+      steps.at(-1).method = PATCHED_MESSAGE_METHOD;
       return steps;
     }
     case "thread.session.stop": {
@@ -384,5 +422,69 @@ export function threadDetailToV1(detail, threadId) {
       activities: [],
       latestTurn: latest ? { turnId: latest.id, state: latest.status, requestedAt: latest.requestedAt, completedAt: latest.completedAt ?? null } : null,
     },
+  };
+}
+
+// ── Native turn result (upstream T3 v2, no patched turn-result route) ──────
+
+const RUN_RESULT_STATE = { completed: "succeeded", failed: "failed", cancelled: "cancelled", interrupted: "cancelled", rolled_back: "cancelled" };
+const EFFORT_OPTION_IDS = new Set(["reasoningEffort", "effort"]);
+const SAFE_RESULT_ID = /^[A-Za-z0-9._:-]{1,128}$/;
+
+// Upstream provider message ids can carry percent-escapes and exceed 128
+// characters (Antigravity, 7 Nov 2026). The turn-result contract allows only
+// safe ids, so an unsafe one is replaced by a stable digest of itself: the same
+// T3 message always yields the same id, which keeps journal linking exact.
+export function safeResultId(id) {
+  if (typeof id !== "string" || id === "") return null;
+  return SAFE_RESULT_ID.test(id) ? id : `t3v2-sha256:${createHash("sha256").update(id).digest("hex")}`;
+}
+
+/**
+ * KRA-10175: derive the talkTurnResult/v1 record from a V2 thread detail.
+ * The join is exact: the client-generated messageId names the run
+ * (run.userMessageId) and the output is that run's last settled assistant
+ * message. There is no fallback to the latest run or thread state. Upstream
+ * does not keep the command id on the run, so turnCommandId is echoed from the
+ * caller's persisted receipt, never inferred.
+ */
+export function nativeTurnResult(detail, { threadId, messageId, turnCommandId }) {
+  const projection = detail?.projection;
+  if (!isRecord(projection?.thread) || projection.thread.id !== threadId) throw new T3V2UnsupportedError(`T3 V2 thread ${threadId} projection identity mismatch`);
+  const runs = validatedRuns(projection);
+  const messages = Array.isArray(projection.messages) ? projection.messages : [];
+  const matches = runs.filter((run) => run.userMessageId === messageId);
+  if (matches.length > 1) throw new T3V2UnsupportedError("T3 V2 message is joined to more than one run");
+  const run = matches[0];
+  const base = { threadId, messageId, turnCommandId };
+  const empty = { turnId: null, assistantMessageId: null, instanceId: null, model: null, effort: null, outputText: null };
+  if (!run) return { ...base, ...empty, state: "pending" };
+  const userRow = messages.find((message) => message?.id === messageId);
+  if (userRow && (userRow.role !== "user" || (userRow.runId != null && userRow.runId !== run.id)))
+    throw new T3V2UnsupportedError("T3 V2 message and run disagree");
+  const selection = isRecord(run.modelSelection) ? run.modelSelection : {};
+  const effortOption = Array.isArray(selection.options) ? selection.options.find((option) => EFFORT_OPTION_IDS.has(option?.id)) : undefined;
+  const effort = typeof effortOption?.value === "string" && /^[A-Za-z0-9_-]{1,32}$/.test(effortOption.value) ? effortOption.value : null;
+  const identity = {
+    // Run ids ("run:thread:<uuid>:ordinal:<n>") stay verbatim: interrupt matches them against the session.
+    turnId: typeof run.id === "string" ? run.id : null,
+    instanceId: typeof run.providerInstanceId === "string" ? run.providerInstanceId : (typeof selection.instanceId === "string" ? selection.instanceId : null),
+    model: typeof selection.model === "string" ? selection.model : null,
+    effort,
+  };
+  const fresh = run.freshContext === true ? { freshProviderContext: true, nativeContextGeneration: turnCommandId } : {};
+  let state = RUN_RESULT_STATE[run.status] ?? "pending";
+  const assistant = messages.filter((message) => message?.role === "assistant" && message.runId === run.id && message.streaming !== true && typeof message.text === "string").at(-1);
+  if (state === "succeeded" && !assistant) {
+    return { ...base, ...identity, assistantMessageId: null, outputText: null, state: "failed", error: "assistant output missing", ...fresh };
+  }
+  if (state === "succeeded") return { ...base, ...identity, assistantMessageId: safeResultId(assistant.id), outputText: assistant.text, state, ...fresh };
+  const failure = state === "failed"
+    ? (Array.isArray(projection.turnItems) ? projection.turnItems : []).filter((item) => item?.runId === run.id && item.type === "error").at(-1)
+    : undefined;
+  return {
+    ...base, ...identity, assistantMessageId: null, outputText: null, state,
+    ...(typeof failure?.failure?.message === "string" ? { error: failure.failure.message } : {}),
+    ...(state === "pending" ? {} : fresh),
   };
 }

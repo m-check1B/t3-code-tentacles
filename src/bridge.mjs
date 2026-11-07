@@ -1307,6 +1307,11 @@ function providerErrorCode(message) {
   return "provider_error";
 }
 
+function providerSignedIn(configProvider) {
+  const status = configProvider?.auth?.status;
+  return status === "authenticated" ? true : status === "unauthenticated" ? false : null;
+}
+
 function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
   const configProvider = configById.get(instanceId);
   const instance = settings?.providerInstances?.[instanceId];
@@ -1339,6 +1344,9 @@ function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
     enabled,
     installed,
     ready,
+    // KRA-10176: T3's own sign-in word (server.getConfig providers[].auth.status);
+    // true/false only for an explicit answer, null when T3 reports none.
+    signedIn: providerSignedIn(configProvider),
     // A lab switched off on this host is disabled even over a stale T3 error.
     status: code === "disabled" ? "disabled" : normalizedDoctorStatus(configProvider?.status, { installed, configured }),
     code,
@@ -1536,13 +1544,18 @@ export async function probeTalkCapabilities(client, { signal = AbortSignal.timeo
   let code = "t3_not_patched";
   let reauthAction = T3_REAUTH_ACTION;
   try {
-    payload = await withinDoctorDeadline(signal, () => client.request("/api/orchestration/turn-result", { signal }));
+    payload = await withinDoctorDeadline(signal, () => typeof client.talkCapabilities === "function"
+      ? client.talkCapabilities({ signal })
+      : client.request("/api/orchestration/turn-result", { signal }));
   } catch (error) {
     if (signal.aborted) code = "t3_capability_timeout";
     else if (error instanceof T3HttpError && error.status === 401) { code = "t3_reauth_required"; reauthAction = error.action ?? T3_REAUTH_ACTION; }
     else if (!(error instanceof T3HttpError && [404, 405].includes(error.status))) code = "t3_capability_unavailable";
   }
-  const supported = isPlainObject(payload) && Object.keys(payload).length === 1 && payload.talkTurnResult === "v1";
+  // KRA-10175: upstream T3 v2 (no patched route) answers a derived record that
+  // may also carry its native freshContext providers.
+  const native = client.turnResultSource === "native-v2";
+  const supported = isPlainObject(payload) && payload.talkTurnResult === "v1" && (native || Object.keys(payload).length === 1);
   const freshProviders = supported ? freshContextProviders(payload) : [];
   return {
     capabilities: {
@@ -1883,7 +1896,7 @@ export function formatDoctor(result = {}) {
   }
   lines.push("");
   const table = [
-    ["lab", "name", "kind", "advertised", "enabled", "installed", "ready", "status", "count", "default", "runtime", "models"],
+    ["lab", "name", "kind", "advertised", "enabled", "installed", "ready", "status", "count", "default", "runtime", "models", "signedIn"],
   ];
   for (const lab of labs) {
     table.push([
@@ -1899,6 +1912,7 @@ export function formatDoctor(result = {}) {
       lab.defaultModel || (lab.kind === "explicit" ? "(pass --model)" : ""),
       lab.runtime?.id || "",
       Array.isArray(lab.models) ? `${lab.models.join(",")}${lab.modelsTruncated ? ",…" : ""}` : "",
+      lab.signedIn === true ? "yes" : lab.signedIn === false ? "no" : "?",
     ]);
   }
   lines.push(formatDoctorTable(table));

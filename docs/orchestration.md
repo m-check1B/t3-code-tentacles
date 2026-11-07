@@ -23,8 +23,15 @@ Keep four facts separate:
    below. Local Talk separately requires the patched `turn-result` endpoint:
    its result must correlate the exact accepted command, message and run and
    retain bounded output/restart-continuation semantics. Negotiating V2 does
-   not prove either extension exists. Unpatched upstream T3 is not a supported
-   substitute for these flows.
+   not prove either extension exists. Upstream T3 Code (Nightly) 0.1.8
+   (KRA-10175/10176) is supported through feature detection: an exact
+   `Unknown request tag` reply moves turns to `orchestration.dispatchCommand`
+   and settings to `server.getConfig().settings`; without the patched route,
+   Local Talk reads the exact run joined to the sent `messageId` from the
+   thread projection. There the runtime mode is set by the preceding
+   `thread.runtime-mode.set` step and the pre-send check, not atomically with
+   the message. Live proof: codex, claudeAgent and antigravity originate,
+   continue and report on 0.1.8-nightly.20261107.4314 (7 Nov 2026).
 4. **Staged runtime evidence.** Record exact installed and running T3/Tentacles
    builds, negotiated protocol and extension proof, then verify originate,
    continue, report, observe, doctor and the relevant Talk/Guardian consumers

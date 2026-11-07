@@ -135,7 +135,9 @@ export async function probeResponds(client, labs, {
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1) throw new Error("Responds probe timeout must be a positive integer");
   workspace = privateProbeWorkspace(workspace);
   const interrupter = new TurnInterrupter({
-    readTurnResult: (tuple) => client.request("/api/orchestration/turn-result", { method: "POST", body: tuple }),
+    readTurnResult: (tuple) => typeof client.turnResult === "function"
+      ? client.turnResult(tuple)
+      : client.request("/api/orchestration/turn-result", { method: "POST", body: tuple }),
     readThread: (threadId) => client.thread(threadId),
     dispatch: (command) => client.dispatch(command),
     withThreadLock: createThreadLock(),

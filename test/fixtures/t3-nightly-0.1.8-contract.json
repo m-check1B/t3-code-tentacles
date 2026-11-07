@@ -1,0 +1,723 @@
+{
+  "source": {
+    "server": "0.1.8-nightly.20261107.4314",
+    "recordedAt": "2026-11-07T17:30:24.344Z",
+    "note": "Allow-listed projection of read-only RPCs on upstream T3 Code (Nightly). No auth details, provider config, keys or settings values beyond driver/enabled."
+  },
+  "environmentDescriptor": {
+    "orchestrationProtocolVersion": 2,
+    "serverVersion": "0.1.8-nightly.20261107.4314"
+  },
+  "config": {
+    "environment": {
+      "serverVersion": "0.1.8-nightly.20261107.4314",
+      "orchestrationProtocolVersion": 2,
+      "capabilities": {
+        "freshContext": true,
+        "threadStop": true,
+        "threadSnooze": true
+      }
+    },
+    "providers": [
+      {
+        "instanceId": "codex",
+        "driver": "codex",
+        "displayName": "Codex",
+        "enabled": true,
+        "installed": true,
+        "version": "0.164.0",
+        "status": "ready",
+        "auth": {
+          "status": "authenticated"
+        },
+        "models": [
+          {
+            "slug": "gpt-6.1-sol",
+            "name": "GPT-6.1-Sol",
+            "isCustom": false
+          },
+          {
+            "slug": "gpt-6-astra",
+            "name": "GPT-6-Astra",
+            "isCustom": false,
+            "isDefault": true
+          },
+          {
+            "slug": "gpt-6.1-terra",
+            "name": "GPT-6.1 Terra",
+            "isCustom": false
+          },
+          {
+            "slug": "gpt-6-sol",
+            "name": "GPT-6-Sol",
+            "isCustom": false
+          },
+          {
+            "slug": "gpt-6-luna",
+            "name": "GPT-6-Luna",
+            "isCustom": false
+          },
+          {
+            "slug": "gpt-5.6-sol",
+            "name": "GPT-5.6-Sol",
+            "isCustom": false
+          },
+          {
+            "slug": "gpt-5.6-terra",
+            "name": "GPT-5.6-Terra",
+            "isCustom": false
+          },
+          {
+            "slug": "gpt-5.6-luna",
+            "name": "GPT-5.6-Luna",
+            "isCustom": false
+          }
+        ]
+      },
+      {
+        "instanceId": "claudeAgent",
+        "driver": "claudeAgent",
+        "displayName": "Claude",
+        "enabled": true,
+        "installed": true,
+        "version": "2.1.310",
+        "status": "ready",
+        "auth": {
+          "status": "authenticated"
+        },
+        "models": [
+          {
+            "slug": "claude-opus-5-5",
+            "name": "Claude Opus 5.5",
+            "isCustom": false,
+            "isDefault": true
+          },
+          {
+            "slug": "claude-sonnet-5-5",
+            "name": "Claude Sonnet 5.5",
+            "isCustom": false
+          },
+          {
+            "slug": "claude-fable-5-1",
+            "name": "Claude Fable 5.1",
+            "isCustom": false
+          },
+          {
+            "slug": "claude-fable-5",
+            "name": "Claude Fable 5",
+            "isCustom": false
+          },
+          {
+            "slug": "claude-opus-5",
+            "name": "Claude Opus 5",
+            "isCustom": false
+          },
+          {
+            "slug": "claude-opus-4-8",
+            "name": "Claude Opus 4.8",
+            "isCustom": false
+          },
+          {
+            "slug": "claude-opus-4-7",
+            "name": "Claude Opus 4.7",
+            "isCustom": false
+          },
+          {
+            "slug": "claude-opus-4-6",
+            "name": "Claude Opus 4.6",
+            "isCustom": false
+          },
+          {
+            "slug": "claude-opus-4-5",
+            "name": "Claude Opus 4.5",
+            "isCustom": false
+          },
+          {
+            "slug": "claude-sonnet-5",
+            "name": "Claude Sonnet 5",
+            "isCustom": false
+          },
+          {
+            "slug": "claude-sonnet-4-6",
+            "name": "Claude Sonnet 4.6",
+            "isCustom": false
+          },
+          {
+            "slug": "claude-haiku-5-5",
+            "name": "Claude Haiku 5.5",
+            "isCustom": false
+          },
+          {
+            "slug": "claude-haiku-4-5",
+            "name": "Claude Haiku 4.5",
+            "isCustom": false
+          }
+        ]
+      },
+      {
+        "instanceId": "cursor",
+        "driver": "cursor",
+        "displayName": "Cursor CLI",
+        "enabled": true,
+        "installed": true,
+        "version": null,
+        "status": "error",
+        "message": "[redacted provider message]",
+        "auth": {
+          "status": "unauthenticated"
+        },
+        "models": []
+      },
+      {
+        "instanceId": "deepseek",
+        "driver": "grok",
+        "displayName": "DeepSeek CLI",
+        "enabled": true,
+        "installed": true,
+        "version": "0.1.9",
+        "status": "warning",
+        "message": "[redacted provider message]",
+        "auth": {
+          "status": "unknown"
+        },
+        "models": [
+          {
+            "slug": "grok-build",
+            "name": "Grok Build",
+            "isCustom": false
+          },
+          {
+            "slug": "deepseek/deepseek-v4-flash",
+            "name": "deepseek/deepseek-v4-flash",
+            "isCustom": true
+          }
+        ]
+      },
+      {
+        "instanceId": "grok",
+        "driver": "grok",
+        "displayName": "Grok",
+        "enabled": true,
+        "installed": true,
+        "version": "1.0.77",
+        "status": "ready",
+        "auth": {
+          "status": "authenticated"
+        },
+        "models": [
+          {
+            "slug": "grok-4.6",
+            "name": "grok-4.6",
+            "isCustom": false,
+            "isDefault": true
+          },
+          {
+            "slug": "grok-4.7",
+            "name": "Grok 4.7",
+            "isCustom": false
+          }
+        ]
+      },
+      {
+        "instanceId": "opencode",
+        "driver": "opencode",
+        "displayName": "OpenCode",
+        "enabled": true,
+        "installed": true,
+        "version": "1.19.0",
+        "status": "ready",
+        "message": "[redacted provider message]",
+        "auth": {
+          "status": "authenticated"
+        },
+        "models": [
+          {
+            "slug": "opencode/beam-free",
+            "name": "Beam Free",
+            "isCustom": false
+          },
+          {
+            "slug": "opencode/big-pickle",
+            "name": "Big Pickle",
+            "isCustom": false
+          },
+          {
+            "slug": "opencode/crouton-alpha-free",
+            "name": "Crouton Alpha Free",
+            "isCustom": false
+          },
+          {
+            "slug": "opencode/deepseek-v4.1-flash-free",
+            "name": "DeepSeek V4.1 Flash Free",
+            "isCustom": false
+          },
+          {
+            "slug": "opencode/flint-40b-free",
+            "name": "Flint 40B Free",
+            "isCustom": false
+          },
+          {
+            "slug": "cliproxy/gemini-3-flash",
+            "name": "gemini-3-flash",
+            "isCustom": false
+          },
+          {
+            "slug": "opencode/glm-5.3-flash-free",
+            "name": "GLM-5.3-Flash Free",
+            "isCustom": false
+          },
+          {
+            "slug": "jupiter-go/deepseek-v4.1-flash",
+            "name": "Go / deepseek-v4.1-flash",
+            "isCustom": false
+          },
+          {
+            "slug": "jupiter-go/glm-5.3-flash",
+            "name": "Go / glm-5.3-flash",
+            "isCustom": false
+          },
+          {
+            "slug": "jupiter-go/kimi-k3",
+            "name": "Go / kimi-k3",
+            "isCustom": false
+          },
+          {
+            "slug": "jupiter-go/kimi-k3.1-pro",
+            "name": "Go / kimi-k3.1-pro",
+            "isCustom": false
+          },
+          {
+            "slug": "jupiter-go/mimo-v2.6-flash",
+            "name": "Go / mimo-v2.6-flash",
+            "isCustom": false
+          },
+          {
+            "slug": "jupiter-go/minimax-m3.1-flash",
+            "name": "Go / minimax-m3.1-flash",
+            "isCustom": false
+          },
+          {
+            "slug": "jupiter-go/qwen3.7-plus",
+            "name": "Go / qwen3.7-plus",
+            "isCustom": false
+          },
+          {
+            "slug": "cliproxy/gpt-6.1-sol",
+            "name": "gpt-6.1-sol",
+            "isCustom": false
+          },
+          {
+            "slug": "cliproxy/grok-4.6",
+            "name": "grok-4.6",
+            "isCustom": false
+          },
+          {
+            "slug": "cliproxy/grok-4.7",
+            "name": "grok-4.7",
+            "isCustom": false
+          },
+          {
+            "slug": "opencode/iceman-free",
+            "name": "Iceman Free",
+            "isCustom": false
+          },
+          {
+            "slug": "opencode/inkling-2-small-free",
+            "name": "Inkling 2 Small Free",
+            "isCustom": false
+          },
+          {
+            "slug": "cliproxy/kimi-k3",
+            "name": "kimi-k3",
+            "isCustom": false
+          },
+          {
+            "slug": "opencode/mimo-v2.6-flash-free",
+            "name": "MiMo-V2.6-Flash Free",
+            "isCustom": false
+          },
+          {
+            "slug": "opencode/nemotron-3.5-lightning-free",
+            "name": "Nemotron 3.5 Lightning Free",
+            "isCustom": false
+          },
+          {
+            "slug": "opencode/nemotron-3.5-super-vl-free",
+            "name": "Nemotron 3.5 Super VL Free",
+            "isCustom": false
+          }
+        ]
+      },
+      {
+        "instanceId": "antigravity",
+        "driver": "antigravity",
+        "displayName": "Antigravity",
+        "enabled": true,
+        "installed": true,
+        "version": "1.4.5",
+        "status": "ready",
+        "auth": {
+          "status": "authenticated"
+        },
+        "models": [
+          {
+            "slug": "gemini-4-argon",
+            "name": "Gemini 4 Argon",
+            "isCustom": false
+          },
+          {
+            "slug": "gemini-3.8-flash",
+            "name": "Gemini 3.8 Flash",
+            "isCustom": false,
+            "isDefault": true
+          },
+          {
+            "slug": "claude-opus-5-5",
+            "name": "Claude Opus 5.5",
+            "isCustom": false
+          },
+          {
+            "slug": "claude-sonnet-5-5",
+            "name": "Claude Sonnet 5.5",
+            "isCustom": false
+          },
+          {
+            "slug": "gpt-oss-120b-medium",
+            "name": "GPT-OSS 120B (Medium)",
+            "isCustom": false
+          }
+        ]
+      },
+      {
+        "instanceId": "fx",
+        "driver": "fx",
+        "displayName": "fx",
+        "enabled": false,
+        "installed": false,
+        "version": null,
+        "status": "disabled",
+        "message": "[redacted provider message]",
+        "auth": {
+          "status": "unknown"
+        },
+        "models": [
+          {
+            "slug": "default",
+            "name": "Default",
+            "isCustom": false,
+            "isDefault": true
+          }
+        ]
+      },
+      {
+        "instanceId": "kiro",
+        "driver": "kiro",
+        "displayName": "Kiro",
+        "enabled": false,
+        "installed": false,
+        "version": null,
+        "status": "disabled",
+        "message": "[redacted provider message]",
+        "auth": {
+          "status": "unknown"
+        },
+        "models": [
+          {
+            "slug": "default",
+            "name": "Kiro default",
+            "isCustom": false
+          }
+        ]
+      },
+      {
+        "instanceId": "muse",
+        "driver": "muse",
+        "displayName": "Muse Code",
+        "enabled": false,
+        "installed": false,
+        "version": null,
+        "status": "disabled",
+        "message": "[redacted provider message]",
+        "auth": {
+          "status": "unknown"
+        },
+        "models": []
+      },
+      {
+        "instanceId": "pi",
+        "driver": "pi",
+        "displayName": "Pi",
+        "enabled": false,
+        "installed": false,
+        "version": null,
+        "status": "disabled",
+        "message": "[redacted provider message]",
+        "auth": {
+          "status": "unknown"
+        },
+        "models": [
+          {
+            "slug": "default",
+            "name": "Pi default",
+            "isCustom": false
+          }
+        ]
+      }
+    ],
+    "settings": {
+      "providerInstances": {
+        "cursor": {
+          "driver": "cursor",
+          "enabled": true
+        },
+        "grok": {
+          "driver": "grok",
+          "enabled": true
+        },
+        "opencode": {
+          "driver": "opencode",
+          "enabled": true
+        },
+        "antigravity": {
+          "driver": "antigravity",
+          "enabled": true
+        },
+        "deepseek": {
+          "driver": "grok",
+          "enabled": true
+        }
+      }
+    }
+  },
+  "unknownTagExits": {
+    "server.getSettings": {
+      "_tag": "Failure",
+      "cause": [
+        {
+          "_tag": "Die",
+          "defect": "Unknown request tag: server.getSettings"
+        }
+      ]
+    },
+    "orchestration.dispatchMessageWithMode": {
+      "_tag": "Failure",
+      "cause": [
+        {
+          "_tag": "Die",
+          "defect": "Unknown request tag: orchestration.dispatchMessageWithMode"
+        }
+      ]
+    }
+  },
+  "turnResultGet": {
+    "type": "string",
+    "prefix": "<!doctype html>"
+  },
+  "threadDetail": {
+    "snapshotSequence": 16219,
+    "projection": {
+      "thread": {
+        "id": "54956603-18c3-4539-b432-032c53d2c861",
+        "projectId": "adea245b-42b1-412b-ae9b-46f0dcddb6a6",
+        "title": "PONG Reply",
+        "runtimeMode": "full-access",
+        "interactionMode": "default",
+        "providerInstanceId": "codex",
+        "createdAt": "2026-11-07T17:28:12.158Z",
+        "updatedAt": "2026-11-07T17:28:38.743Z",
+        "archivedAt": null,
+        "deletedAt": null,
+        "modelSelection": {
+          "instanceId": "codex",
+          "model": "gpt-5.6-luna",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "value": "low"
+            }
+          ]
+        },
+        "branch": null,
+        "worktreePath": null
+      },
+      "runs": [
+        {
+          "id": "run:thread:54956603-18c3-4539-b432-032c53d2c861:ordinal:1",
+          "threadId": "54956603-18c3-4539-b432-032c53d2c861",
+          "ordinal": 1,
+          "providerInstanceId": "codex",
+          "modelSelection": {
+            "instanceId": "codex",
+            "model": "gpt-5.6-luna",
+            "options": [
+              {
+                "id": "reasoningEffort",
+                "value": "low"
+              }
+            ]
+          },
+          "userMessageId": "52a2e1f0-1032-4082-96e1-fdf4c91b2240",
+          "status": "completed",
+          "queuePosition": null,
+          "requestedAt": "2026-11-07T17:28:12.207Z",
+          "startedAt": "2026-11-07T17:28:13.202Z",
+          "completedAt": "2026-11-07T17:28:16.601Z"
+        },
+        {
+          "id": "run:thread:54956603-18c3-4539-b432-032c53d2c861:ordinal:2",
+          "threadId": "54956603-18c3-4539-b432-032c53d2c861",
+          "ordinal": 2,
+          "providerInstanceId": "codex",
+          "modelSelection": {
+            "instanceId": "codex",
+            "model": "gpt-5.6-luna",
+            "options": [
+              {
+                "id": "reasoningEffort",
+                "value": "low"
+              }
+            ]
+          },
+          "userMessageId": "fc0e7d97-0e78-4523-98a5-ee8bdcb2b05d",
+          "status": "completed",
+          "queuePosition": null,
+          "requestedAt": "2026-11-07T17:28:37.599Z",
+          "startedAt": "2026-11-07T17:28:37.608Z",
+          "completedAt": "2026-11-07T17:28:38.743Z"
+        }
+      ],
+      "messages": [
+        {
+          "createdBy": "user",
+          "creationSource": "mcp",
+          "id": "52a2e1f0-1032-4082-96e1-fdf4c91b2240",
+          "threadId": "54956603-18c3-4539-b432-032c53d2c861",
+          "runId": "run:thread:54956603-18c3-4539-b432-032c53d2c861:ordinal:1",
+          "role": "user",
+          "text": "Reply with the single word PONG and nothing else. Do not run any tools.",
+          "attachments": [],
+          "streaming": false,
+          "createdAt": "2026-11-07T17:28:12.207Z",
+          "updatedAt": "2026-11-07T17:28:12.207Z"
+        },
+        {
+          "createdBy": "agent",
+          "creationSource": "provider",
+          "id": "message:provider:codex:native-item:msg_0c44d6b65a6c228e016aef5fb0782887d2afa058cb3583184a",
+          "threadId": "54956603-18c3-4539-b432-032c53d2c861",
+          "runId": "run:thread:54956603-18c3-4539-b432-032c53d2c861:ordinal:1",
+          "role": "assistant",
+          "text": "PONG",
+          "attachments": [],
+          "streaming": false,
+          "createdAt": "2026-11-07T17:28:16.495Z",
+          "updatedAt": "2026-11-07T17:28:16.577Z"
+        },
+        {
+          "createdBy": "user",
+          "creationSource": "mcp",
+          "id": "fc0e7d97-0e78-4523-98a5-ee8bdcb2b05d",
+          "threadId": "54956603-18c3-4539-b432-032c53d2c861",
+          "runId": "run:thread:54956603-18c3-4539-b432-032c53d2c861:ordinal:2",
+          "role": "user",
+          "text": "Reply with the single word PONG again and nothing else. Do not run any tools.",
+          "attachments": [],
+          "streaming": false,
+          "createdAt": "2026-11-07T17:28:37.599Z",
+          "updatedAt": "2026-11-07T17:28:37.599Z"
+        },
+        {
+          "createdBy": "agent",
+          "creationSource": "provider",
+          "id": "message:provider:codex:native-item:msg_0c44d6b65a6c228e016aef5fc69e2087d2a5002b653dbaad9e",
+          "threadId": "54956603-18c3-4539-b432-032c53d2c861",
+          "runId": "run:thread:54956603-18c3-4539-b432-032c53d2c861:ordinal:2",
+          "role": "assistant",
+          "text": "PONG",
+          "attachments": [],
+          "streaming": false,
+          "createdAt": "2026-11-07T17:28:38.651Z",
+          "updatedAt": "2026-11-07T17:28:38.706Z"
+        }
+      ],
+      "turnItems": [
+        {
+          "id": "turn-item:message:52a2e1f0-1032-4082-96e1-fdf4c91b2240",
+          "threadId": "54956603-18c3-4539-b432-032c53d2c861",
+          "runId": "run:thread:54956603-18c3-4539-b432-032c53d2c861:ordinal:1",
+          "ordinal": 1000001,
+          "status": "completed",
+          "type": "user_message",
+          "messageId": "52a2e1f0-1032-4082-96e1-fdf4c91b2240",
+          "text": "Reply with the single word PONG and nothing else. Do not run any tools.",
+          "inputIntent": "turn_start",
+          "startedAt": "2026-11-07T17:28:12.207Z",
+          "completedAt": "2026-11-07T17:28:12.207Z"
+        },
+        {
+          "id": "turn-item:provider:codex:native-item:msg_0c44d6b65a6c228e016aef5fb0782887d2afa058cb3583184a",
+          "threadId": "54956603-18c3-4539-b432-032c53d2c861",
+          "runId": "run:thread:54956603-18c3-4539-b432-032c53d2c861:ordinal:1",
+          "ordinal": 1000002,
+          "status": "completed",
+          "type": "assistant_message",
+          "messageId": "message:provider:codex:native-item:msg_0c44d6b65a6c228e016aef5fb0782887d2afa058cb3583184a",
+          "text": "PONG",
+          "streaming": false,
+          "startedAt": "2026-11-07T17:28:16.495Z",
+          "completedAt": "2026-11-07T17:28:16.577Z"
+        },
+        {
+          "id": "turn-item:provider:codex:native-item:checkpoint%3Acheckpoint%3Ascope%3Acheckpoint-scope%253Athread%253A54956603-18c3-4539-b432-032c53d2c861%253Aname%253Aroot%3Aname%3A1",
+          "threadId": "54956603-18c3-4539-b432-032c53d2c861",
+          "runId": "run:thread:54956603-18c3-4539-b432-032c53d2c861:ordinal:1",
+          "ordinal": 1000003,
+          "status": "completed",
+          "type": "checkpoint",
+          "startedAt": "2026-11-07T17:28:16.601Z",
+          "completedAt": "2026-11-07T17:28:16.601Z"
+        },
+        {
+          "id": "turn-item:message:fc0e7d97-0e78-4523-98a5-ee8bdcb2b05d",
+          "threadId": "54956603-18c3-4539-b432-032c53d2c861",
+          "runId": "run:thread:54956603-18c3-4539-b432-032c53d2c861:ordinal:2",
+          "ordinal": 2000001,
+          "status": "completed",
+          "type": "user_message",
+          "messageId": "fc0e7d97-0e78-4523-98a5-ee8bdcb2b05d",
+          "text": "Reply with the single word PONG again and nothing else. Do not run any tools.",
+          "inputIntent": "turn_start",
+          "startedAt": "2026-11-07T17:28:37.599Z",
+          "completedAt": "2026-11-07T17:28:37.599Z"
+        },
+        {
+          "id": "turn-item:provider:codex:native-item:msg_0c44d6b65a6c228e016aef5fc69e2087d2a5002b653dbaad9e",
+          "threadId": "54956603-18c3-4539-b432-032c53d2c861",
+          "runId": "run:thread:54956603-18c3-4539-b432-032c53d2c861:ordinal:2",
+          "ordinal": 2000002,
+          "status": "completed",
+          "type": "assistant_message",
+          "messageId": "message:provider:codex:native-item:msg_0c44d6b65a6c228e016aef5fc69e2087d2a5002b653dbaad9e",
+          "text": "PONG",
+          "streaming": false,
+          "startedAt": "2026-11-07T17:28:38.651Z",
+          "completedAt": "2026-11-07T17:28:38.706Z"
+        },
+        {
+          "id": "turn-item:provider:codex:native-item:checkpoint%3Acheckpoint%3Ascope%3Acheckpoint-scope%253Athread%253A54956603-18c3-4539-b432-032c53d2c861%253Aname%253Aroot%3Aname%3A2",
+          "threadId": "54956603-18c3-4539-b432-032c53d2c861",
+          "runId": "run:thread:54956603-18c3-4539-b432-032c53d2c861:ordinal:2",
+          "ordinal": 2000003,
+          "status": "completed",
+          "type": "checkpoint",
+          "startedAt": "2026-11-07T17:28:38.743Z",
+          "completedAt": "2026-11-07T17:28:38.743Z"
+        }
+      ],
+      "subagents": [],
+      "providerThreads": [],
+      "runtimeRequests": [],
+      "updatedAt": "2026-11-07T17:28:38.743Z"
+    }
+  }
+}
