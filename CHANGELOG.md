@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.5.0-jack.14] - 2026-11-07
+
 ### Fixed
 
 - KRA-10175 / KRA-10176: one build now drives both the patched T3 v2 and upstream T3 Code (Nightly) 0.1.8. Tentacles detects removed RPCs from the server's exact `Unknown request tag: <tag>` reply (never applied), not from a version string. Turns go through `orchestration.dispatchCommand` (`message.dispatch`) where `orchestration.dispatchMessageWithMode` is gone, with `freshProviderContext` sent as upstream's `freshContext` only when `server.getConfig` advertises it. Settings come from `server.getConfig().settings` where `server.getSettings` is gone, so `doctor`, provider installs and the managed-policy check work again. Any other refusal still has no fallback.
