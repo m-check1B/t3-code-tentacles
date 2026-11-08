@@ -25,7 +25,7 @@ export const SPHERE_ABILITY = "desktop.use";
 // Sphere rejects a pair.bind whose rpc advert names a method it does not know
 // (jack_pairing.py _valid_rpc_capabilities), so a new method needs a Sphere
 // release first. Additive data rides an existing answer (KRA-7369).
-export const REMOTE_RPC_METHODS = Object.freeze(["seats", "originate", "continue", "doctor-status", "turn-result", "thread-events", "thread-artifact", "interrupt"]);
+export const REMOTE_RPC_METHODS = Object.freeze(["seats", "originate", "continue", "doctor-status", "turn-result", "thread-events", "thread-artifact"]);
 
 const offerSecrets = new WeakMap();
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -502,9 +502,10 @@ function unavailable(id) {
 }
 
 export class RemoteRpcShim {
-  constructor(runtime) {
+  constructor(runtime, { enableInterrupt = false } = {}) {
     if (!runtime) throw new Error("Remote RPC shim requires a runtime");
     this.runtime = runtime;
+    this.rpcMethods = Object.freeze([...REMOTE_RPC_METHODS, ...(enableInterrupt === true ? ["interrupt"] : [])]);
   }
 
   async handle(message) {
@@ -513,7 +514,7 @@ export class RemoteRpcShim {
       requireRecord(message, "RPC request");
       if (message.version !== PAIR_PROTOCOL_VERSION || message.type !== "rpc.request") throw new Error("Invalid RPC envelope");
       id = requireSafeId(message.id, "RPC request id");
-      if (!REMOTE_RPC_METHODS.includes(message.method)) throw new Error("Unsupported RPC method");
+      if (!this.rpcMethods.includes(message.method)) throw new Error("Unsupported RPC method");
       const params = message.params === undefined ? {} : requireRecord(message.params, "RPC params");
       const method = ({ "doctor-status": "doctorStatus", "turn-result": "turnResult", "thread-events": "threadEvents", "thread-artifact": "threadArtifact" })[message.method] ?? message.method;
       if (typeof this.runtime[method] !== "function") throw new Error("Runtime method is unavailable");
@@ -592,6 +593,7 @@ export const AMBIGUOUS_DENIAL_LIMIT = 6;
 export class OutboundPairer {
   constructor({
     runtime,
+    enableInterrupt = false,
     WebSocketImpl = globalThis.WebSocket,
     pairStateFile = DEFAULT_PAIR_STATE_FILE,
     handshakeTimeoutMs = 15_000,
@@ -619,7 +621,7 @@ export class OutboundPairer {
     }
     reconnectDelayMs(0, { baseMs: reconnectBaseMs, capMs: reconnectCapMs, random: () => 0 });
     if (typeof random !== "function") throw new Error("Reconnect jitter source must be a function");
-    this.shim = new RemoteRpcShim(runtime);
+    this.shim = new RemoteRpcShim(runtime, { enableInterrupt });
     this.WebSocketImpl = WebSocketImpl;
     this.pairStateFile = pairStateFile;
     this.handshakeTimeoutMs = handshakeTimeoutMs;
@@ -876,7 +878,7 @@ export class OutboundPairer {
               productId: SPHERE_PRODUCT_ID,
               ability: SPHERE_ABILITY,
               runtime: "tentacles",
-              rpc: [...REMOTE_RPC_METHODS],
+              rpc: [...this.shim.rpcMethods],
             },
           });
         } catch {

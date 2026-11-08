@@ -49,6 +49,8 @@ tentacles pair \
   --machine-id '<sphere-machine-id>'
 ```
 
+The bind omits the `interrupt` RPC by default for compatibility with older Sphere relays. Once the relay supports it, pass `--enable-interrupt` to advertise and accept that RPC.
+
 Tentacles sends the token only in the initial `pair.bind` frame. It removes the
 exact file inode only after the endpoint acknowledges `pair.bound`. Expired or
 rejected offers remain available for operator audit and replacement; they are
