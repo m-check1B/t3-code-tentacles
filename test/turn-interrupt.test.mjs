@@ -78,7 +78,7 @@ function adapterFor(t3, extra = {}) {
 }
 
 test("interrupt is allowlisted and advertised only with exact turn results", async () => {
-  assert.equal(REMOTE_RPC_METHODS.includes("interrupt"), true);
+  assert.equal(REMOTE_RPC_METHODS.includes("interrupt"), false);
   const t3 = new FakeT3();
   const adapter = adapterFor(t3, { doctorImpl: async () => ({ ready: true }) });
   assert.equal((await adapter.doctorStatus()).capabilities.turnInterrupt, "turn-interrupt-v1");
@@ -205,7 +205,7 @@ test("continue on the same thread waits for an in-flight interrupt", async () =>
 test("the shim refuses malformed interrupt requests generically", async () => {
   const t3 = new FakeT3();
   t3.start(A);
-  const shim = new RemoteRpcShim(adapterFor(t3));
+  const shim = new RemoteRpcShim(adapterFor(t3), { enableInterrupt: true });
   for (const params of [
     { ...stopFor(A), reason: "other" },
     { ...stopFor(A), extra: true },

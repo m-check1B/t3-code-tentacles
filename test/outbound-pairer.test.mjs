@@ -405,6 +405,37 @@ test("RPC shim exposes exactly the loopback surface and fails closed without err
   assert.equal(unsupported.error.data, null);
 });
 
+test("interrupt RPC is rejected by default and accepted only when opted in", async () => {
+  let calls = 0;
+  const runtime = { interrupt: async () => { calls++; return { ok: true }; } };
+  const request = { version: 1, type: "rpc.request", id: "stop", method: "interrupt", params: {} };
+  assert.equal((await new RemoteRpcShim(runtime).handle(request)).type, "rpc.error");
+  assert.equal(calls, 0);
+  assert.equal((await new RemoteRpcShim(runtime, { enableInterrupt: true }).handle(request)).type, "rpc.result");
+  assert.equal(calls, 1);
+});
+
+test("opt-in advertises and serves interrupt on the same bind", async () => {
+  FakeWebSocket.instances = [];
+  const directory = temporaryDirectory("pair-interrupt");
+  const controller = new AbortController();
+  const pairer = new OutboundPairer({ runtime: { interrupt: async () => ({ ok: true }) }, enableInterrupt: true, WebSocketImpl: FakeWebSocket, pairStateFile: path.join(directory, "presence.json") });
+  const run = pairer.run({ pairFile: writeOffer(directory), machineId: "sphere-machine-1", signal: controller.signal });
+  try {
+    const socket = await waitFor(() => FakeWebSocket.instances[0], "socket");
+    socket.emit("open");
+    const bind = await waitFor(() => socket.sent.find((message) => message.type === "pair.bind"), "bind");
+    assert.deepEqual(bind.host.rpc, ["seats", "originate", "continue", "doctor-status", "turn-result", "thread-events", "thread-artifact", "interrupt"]);
+    socket.message({ version: 1, type: "pair.bound", requestId: bind.requestId });
+    socket.message({ version: 1, type: "rpc.request", id: "stop", method: "interrupt", params: {} });
+    const reply = await waitFor(() => socket.sent.find((message) => message.id === "stop"), "interrupt reply");
+    assert.equal(reply.type, "rpc.result");
+  } finally {
+    controller.abort();
+    await run;
+  }
+});
+
 test("outbound pair binds one Sphere machine, consumes the offer once, and serves RPC", async () => {
   FakeWebSocket.instances = [];
   const directory = temporaryDirectory("pair-run");
@@ -434,7 +465,7 @@ test("outbound pair binds one Sphere machine, consumes the offer once, and serve
     productId: SPHERE_PRODUCT_ID,
     ability: SPHERE_ABILITY,
     runtime: "tentacles",
-    rpc: ["seats", "originate", "continue", "doctor-status", "turn-result", "thread-events", "thread-artifact", "interrupt"],
+    rpc: ["seats", "originate", "continue", "doctor-status", "turn-result", "thread-events", "thread-artifact"],
   });
   assert.equal(fs.existsSync(pairFile), true);
 

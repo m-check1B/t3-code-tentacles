@@ -123,7 +123,7 @@ export function parseArgs(argv) {
     if (command === "originate" && !ORIGINATE_OPTION_KEYS.has(key)) {
       throw new Error(`Unknown originate option --${key}; run tentacles help for supported options`);
     }
-    if (key === "help" || key === "once" || key === "allow-all-projects" || key === "no-wait" || key === "json" || key === "no-labs") {
+    if (key === "help" || key === "once" || key === "allow-all-projects" || key === "no-wait" || key === "json" || key === "no-labs" || key === "enable-interrupt") {
       options[key] = true;
       continue;
     }
@@ -215,7 +215,7 @@ Usage:
   tentacles reauth --computer NAME [--t3-bin /remote/t3] [--t3-home /remote/.t3]
   tentacles doctor [--json] [--models summary|full] [--responds all|LAB,LAB] [--responds-timeout SECONDS]
   tentacles capabilities scan [--json] [--no-labs]
-  tentacles pair --pair-file OWNER_ONLY_JSON --machine-id SPHERE_MACHINE_ID [--pair-state-file PATH]
+  tentacles pair --pair-file OWNER_ONLY_JSON --machine-id SPHERE_MACHINE_ID [--pair-state-file PATH] [--enable-interrupt]
   tentacles install-provider [--instance hermes] [--profile default] [--model MODEL]
   tentacles remove-provider [--instance hermes]
   tentacles install-codex-app-provider [--instance codex-app] [--codex-app-bin PATH]
@@ -466,6 +466,7 @@ async function main() {
     const pairer = new OutboundPairer({
       runtime,
       pairStateFile,
+      enableInterrupt: options["enable-interrupt"] === true,
       onEvent: (event) => console.error(JSON.stringify(event)),
     });
     const controller = new AbortController();
