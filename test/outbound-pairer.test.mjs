@@ -465,7 +465,7 @@ test("outbound pair binds one Sphere machine, consumes the offer once, and serve
     "protocol-failure rebind",
   );
   assert.equal(reconnectBind.pairToken, PAIR_TOKEN);
-  reconnectSocket.message({ version: 1, type: "pair.unpaired" });
+  reconnectSocket.message({ version: 1, type: "pair.unpaired", reasonCode: "authorization_denied" });
   const outcome = await runResult;
   assert.match(outcome.error.message, /authorization was denied/);
   assert.deepEqual(readPairPresence(stateFile), { status: "unpaired" });
@@ -902,4 +902,318 @@ test("turn-result validates exact correlation, terminal text, bounds and negotia
   const shim = new RemoteRpcShim(adapter);
   result = { ...result, threadId: "foreign" };
   assert.equal((await shim.handle({ version: 1, type: "rpc.request", id: "query", method: "turn-result", params })).type, "rpc.error");
+});
+
+
+// The pairer's bounded budget for ambiguous refusals (about 30 s at default backoff).
+const AMBIGUOUS_DENIAL_LIMIT = 6;
+
+// KRA-6929: Sphere answers a stale or competing registration of the same pair
+// with a bare pair.unpaired (older relays) or pair.conflict. Neither is an
+// authorization decision; the pairer reconnects without any RPC authority.
+for (const frame of [{ type: "pair.unpaired" }, { type: "pair.conflict" }]) {
+  test(`KRA-6929: ${frame.type} without a reason is retried, then the pair binds`, async (t) => {
+    FakeWebSocket.instances = [];
+    const directory = temporaryDirectory("pair-conflict");
+    const pairFile = writeOffer(directory);
+    const stateFile = path.join(directory, "presence.json");
+    const controller = new AbortController();
+    t.after(() => controller.abort());
+    const pairer = new OutboundPairer({ runtime: {}, WebSocketImpl: FakeWebSocket, pairStateFile: stateFile, reconnectBaseMs: 5, reconnectCapMs: 10 });
+    const run = pairer.run({ pairFile, machineId: "sphere-machine-1", signal: controller.signal }).then((value) => ({ value }), (error) => ({ error }));
+    const first = await waitFor(() => FakeWebSocket.instances[0], "first socket");
+    first.emit("open");
+    await waitFor(() => first.sent.find((message) => message.type === "pair.bind"), "first bind");
+    first.message({ version: 1, ...frame });
+    const second = await waitFor(() => FakeWebSocket.instances[1], "retry socket");
+    const presence = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    assert.equal(presence.status, "unpaired");
+    assert.equal(presence.staleReason, "relay_connection_closed");
+    assert.equal(fs.existsSync(pairFile), true, "the offer is not consumed by a refused bind");
+    second.emit("open");
+    const bind = await waitFor(() => second.sent.find((message) => message.type === "pair.bind"), "retry bind");
+    assert.equal(bind.pairToken, PAIR_TOKEN);
+    second.message({ version: 1, type: "pair.bound", requestId: bind.requestId });
+    await waitFor(() => readPairPresence(stateFile).status === "paired", "paired after retry");
+    controller.abort();
+    assert.deepEqual((await run).value, { status: "unpaired" });
+  });
+}
+
+test("KRA-6929: repeated bare pair.unpaired without a bind ends as a denial", async () => {
+  FakeWebSocket.instances = [];
+  const directory = temporaryDirectory("pair-denied-bounded");
+  const pairFile = writeOffer(directory);
+  const stateFile = path.join(directory, "presence.json");
+  const pairer = new OutboundPairer({ runtime: {}, WebSocketImpl: FakeWebSocket, pairStateFile: stateFile, reconnectBaseMs: 1, reconnectCapMs: 2 });
+  const run = pairer.run({ pairFile, machineId: "sphere-machine-1" }).then((value) => ({ value }), (error) => ({ error }));
+  for (let index = 0; index < AMBIGUOUS_DENIAL_LIMIT; index += 1) {
+    const socket = await waitFor(() => FakeWebSocket.instances[index], `socket ${index}`);
+    socket.emit("open");
+    await waitFor(() => socket.sent.find((message) => message.type === "pair.bind"), `bind ${index}`);
+    socket.message({ version: 1, type: "pair.unpaired" });
+  }
+  const outcome = await run;
+  assert.match(outcome.error.message, /authorization was denied/);
+  assert.equal(FakeWebSocket.instances.length, AMBIGUOUS_DENIAL_LIMIT);
+  assert.equal(JSON.parse(fs.readFileSync(stateFile, "utf8")).staleReason, "authorization_denied");
+});
+
+test("KRA-6929: an explicit denial still ends at once", async () => {
+  FakeWebSocket.instances = [];
+  const directory = temporaryDirectory("pair-denied-explicit");
+  const pairFile = writeOffer(directory);
+  const stateFile = path.join(directory, "presence.json");
+  const pairer = new OutboundPairer({ runtime: {}, WebSocketImpl: FakeWebSocket, pairStateFile: stateFile, reconnectBaseMs: 5, reconnectCapMs: 10 });
+  const run = pairer.run({ pairFile, machineId: "sphere-machine-1" }).then((value) => ({ value }), (error) => ({ error }));
+  const socket = await waitFor(() => FakeWebSocket.instances[0], "socket");
+  socket.emit("open");
+  await waitFor(() => socket.sent.find((message) => message.type === "pair.bind"), "bind");
+  socket.message({ version: 1, type: "pair.unpaired", reasonCode: "authorization_denied" });
+  assert.match((await run).error.message, /authorization was denied/);
+  assert.equal(FakeWebSocket.instances.length, 1);
+});
+
+// Jack #1021: a failed turn carries why (T3 keeps it only in session.lastError).
+test("failed turn-result carries the session's last error, redacted, first line only", async () => {
+  const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
+  const base = { ...params, turnId: "turn", assistantMessageId: null, instanceId: "claudeAgent", model: "claude-opus", effort: "high", outputText: null };
+  let state = "failed";
+  let lastError = "Claude usage limit reached. Send the message again once the limit resets.\nstack: /Users/someone/x";
+  let threadReads = 0;
+  const adapter = new LoopbackRuntimeAdapter({ client: {
+    request: async () => ({ ...base, state }),
+    thread: async (id) => { threadReads += 1; assert.equal(id, "thread"); return { thread: { id, session: { status: "error", lastError } } }; }
+  }, doctorImpl: async () => ({ ready: true }) });
+  assert.equal((await adapter.turnResult(params)).failureDetail, "Claude usage limit reached. Send the message again once the limit resets.");
+  lastError = "Codex failed: Authorization: Bearer sk-SECRETSECRETSECRET for a@b.example at /Users/someone/project token=abc";
+  const redacted = (await adapter.turnResult(params)).failureDetail;
+  for (const secret of ["sk-SECRET", "a@b.example", "/Users/someone", "abc"]) assert.equal(redacted.includes(secret), false, secret);
+  lastError = "x".repeat(900);
+  assert.ok((await adapter.turnResult(params)).failureDetail.length <= 200);
+  lastError = null;
+  assert.equal("failureDetail" in await adapter.turnResult(params), false);
+  state = "succeeded";
+  const before = threadReads;
+  await assert.rejects(adapter.turnResult(params), /Invalid correlated/); // succeeded still needs output
+  assert.equal(threadReads, before, "only a failed turn reads the session");
+  state = "failed";
+  const broken = new LoopbackRuntimeAdapter({ client: { request: async () => ({ ...base, state: "failed" }), thread: async () => { throw new Error("T3 down"); } }, doctorImpl: async () => ({ ready: true }) });
+  const result = await broken.turnResult(params);
+  assert.equal(result.state, "failed");
+  assert.equal("failureDetail" in result, false);
+});
+
+// Review P1 (17 Oct): one shared vector set with Jack (api/tests/fixtures/redaction_vectors.json).
+test("redactFailureLine rejects unsupported C0/C1 controls before recognizing keys", async () => {
+  const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
+  for (let code = 0; code <= 0x9f; code++) {
+    if (code > 0x1f && code < 0x7f || [9, 10, 13, 0x85].includes(code)) continue;
+    const control = String.fromCharCode(code);
+    for (const text of [`Error: Cookie${control}: sid=FAKE_SECRET_SESSION_0001`,
+      `Error: {"coo${control}kie":"FAKE_SECRET_SESSION_0001"}`]) {
+      assert.equal(redactFailureLine(text), null, `control U+${code.toString(16)}`);
+    }
+  }
+  assert.equal(redactFailureLine("Error:\tCookie\t: sid=FAKE_SECRET_SESSION_0001"), "Error: Cookie : [redacted]");
+});
+
+test("redactFailureLine removes every shared secret shape and keeps limit text", async () => {
+  const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
+  const vectors = JSON.parse(fs.readFileSync(new URL("./fixtures/redaction_vectors.json", import.meta.url), "utf8"));
+  for (const secret of vectors.secrets) {
+    const out = redactFailureLine(secret);
+    assert.equal(/SECRET/.test(out ?? ""), false, `${JSON.stringify(secret)} -> ${out}`);
+    assert.equal(/\u001b/.test(out ?? ""), false);
+  }
+  for (const text of vectors.unchanged) assert.equal(redactFailureLine(text), text);
+});
+
+// B3: exercise the real wire projection, not only the redaction helper.
+test("failed turn-result never exports any shared credential shape", async (t) => {
+  const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
+  const base = { ...params, state: "failed", turnId: "turn", assistantMessageId: null,
+    instanceId: "claudeAgent", model: "fixture", effort: "high", outputText: null };
+  const vectors = JSON.parse(fs.readFileSync(new URL("./fixtures/redaction_vectors.json", import.meta.url), "utf8"));
+  for (const [index, lastError] of vectors.secrets.entries()) {
+    await t.test(`shared credential vector ${index + 1}`, async () => {
+      const adapter = new LoopbackRuntimeAdapter({ client: {
+        request: async () => base,
+        thread: async () => ({ thread: { id: "thread", session: { lastError } } })
+      } });
+      const result = await adapter.turnResult(params);
+      assert.equal(JSON.stringify(result).includes("SECRET"), false, lastError);
+    });
+  }
+});
+
+// Cross-language first-line contract covers CR/LF/CRLF, LS, PS and NEL.
+test("failed turn-result selects the first nonempty line across all line boundaries", async () => {
+  const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
+  const vectors = JSON.parse(fs.readFileSync(new URL("./fixtures/redaction_vectors.json", import.meta.url), "utf8"));
+  for (const { input: lastError, expected } of vectors.lines) {
+    const adapter = new LoopbackRuntimeAdapter({ client: {
+      request: async () => ({ ...params, state: "failed", turnId: "turn", assistantMessageId: null,
+        instanceId: "claudeAgent", model: "fixture", effort: "high", outputText: null }),
+      thread: async () => ({ thread: { id: "thread", session: { lastError } } })
+    } });
+    assert.equal((await adapter.turnResult(params)).failureDetail, expected, JSON.stringify(lastError));
+  }
+});
+
+// B3 #55: the unchanged RPC probe, with a literal TAB inside each credential key.
+test("key-interior TAB credentials never cross helper or RPC publication", async () => {
+  const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
+  const marker = "FAKE_B3_SECRET_314";
+  const params = { threadId: "b3-thread", messageId: "b3-message", turnCommandId: "b3-command" };
+  for (const key of ["coo\tkie", "authori\tzation", "pass\tword", "client_secre\tt"]) {
+    const raw = `Error: {"${key}":"${marker}"}`;
+    assert.equal(redactFailureLine(raw), null);
+    const adapter = new LoopbackRuntimeAdapter({ client: {
+      request: async () => ({ ...params, state: "failed", turnId: "b3-turn",
+        assistantMessageId: null, instanceId: "fixture", model: "fixture", effort: "high",
+        outputText: null, failureDetail: marker, internalDiagnostic: marker }),
+      thread: async () => ({ thread: { id: params.threadId, session: { lastError: raw } } })
+    } });
+    const out = await new RemoteRpcShim(adapter).handle({ version: 1, type: "rpc.request",
+      id: "b3-probe", method: "turn-result", params });
+    assert.equal(out.type, "rpc.result");
+    assert.equal(Object.hasOwn(out.result, "failureDetail"), false);
+    assert.equal(Object.hasOwn(out.result, "internalDiagnostic"), false);
+    assert.equal(JSON.stringify(out).includes(marker), false);
+  }
+});
+
+test("credential key whitespace is refused at every interior position", async () => {
+  const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
+  const marker = "FAKE_B3_SECRET_314";
+  for (const key of ["authorization", "cookie", "password", "passwd", "pwd", "client_secret",
+    "api_key", "access_token", "private_key", "credentials"]) {
+    for (let at = 1; at < key.length; at++) {
+      for (const gap of ["\t", " ", " \t "]) {
+        const raw = `Error: {"${key.slice(0, at)}${gap}${key.slice(at)}":"${marker}"}`;
+        assert.equal(redactFailureLine(raw), null, `${key} interior ${at}`);
+      }
+    }
+  }
+});
+
+test("ordinary TAB word and delimiter whitespace stays supported", async () => {
+  const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
+  const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
+  for (const [raw, expected] of [
+    ["Error:\ttemporary\tfailure", "Error: temporary failure"],
+    ["Error: provider\tfailed: unavailable", "Error: provider failed: unavailable"],
+    ["Error:\tCookie\t: FAKE_B3_SECRET_314", "Error: Cookie : [redacted]"],
+    ['Error: {"status"\t:\t"unavailable"}', 'Error: {"status" : "unavailable"}'],
+    ["Claude usage limit reached.", "Claude usage limit reached."],
+  ]) {
+    assert.equal(redactFailureLine(raw), expected);
+    const adapter = new LoopbackRuntimeAdapter({ client: {
+      request: async () => ({ ...params, state: "failed", turnId: "turn", assistantMessageId: null,
+        instanceId: "fixture", model: "fixture", effort: "high", outputText: null }),
+      thread: async () => ({ thread: { id: params.threadId, session: { lastError: raw } } })
+    } });
+    const out = await new RemoteRpcShim(adapter).handle({ version: 1, type: "rpc.request",
+      id: "tab-control", method: "turn-result", params });
+    assert.equal(out.type, "rpc.result");
+    assert.equal(out.result.failureDetail, expected);
+  }
+});
+
+
+test("escaped diagnostics fail closed even at final RPC publication", async () => {
+  const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
+  const vectors = JSON.parse(fs.readFileSync(new URL("./fixtures/redaction_vectors.json", import.meta.url), "utf8"));
+  const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
+  const splitKeys = ["coo\tkie", "authori\tzation", "pass\tword", "client_secre\tt"];
+  const splitDiagnostics = splitKeys.flatMap((key) => [key, key.replace(/\t/g, " ")]
+    .map((spelling) => `Error: {"${spelling}":"FAKE_B3_SECRET_314"}`));
+  for (const raw of [...vectors.unsupportedEncodings, ...splitDiagnostics]) {
+    assert.equal(redactFailureLine(raw), null);
+    const adapter = new LoopbackRuntimeAdapter({ client: {
+      request: async () => ({ ...params, state: "failed", turnId: "turn", assistantMessageId: null,
+        instanceId: "claudeAgent", model: "fixture", effort: "high", outputText: null })
+    } });
+    // A helper regression must not bypass the final turn-result publication guard.
+    adapter.sessionFailureDetail = async () => raw;
+    const out = await new RemoteRpcShim(adapter).handle({ version: 1, type: "rpc.request", id: "encoded", method: "turn-result", params });
+    assert.equal(out.type, "rpc.result");
+    assert.equal(Object.hasOwn(out.result, "failureDetail"), false);
+    assert.equal(JSON.stringify(out).includes("SECRET"), false);
+  }
+});
+
+// KRA-7389 root cause: the same shared hostile key matrix as Agent Jack's API and
+// web (whitespace_key_vectors.json, byte-identical copy), at the real RPC wire and
+// at the final publication guard. Ordinary prose and literal redaction stay useful.
+test("shared whitespace/quote key matrix never crosses helper or RPC publication", async () => {
+  const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
+  const vectors = JSON.parse(fs.readFileSync(new URL("./fixtures/whitespace_key_vectors.json", import.meta.url), "utf8"));
+  assert.ok(vectors.length >= 2000);
+  const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
+  const failed = { ...params, state: "failed", turnId: "turn", assistantMessageId: null,
+    instanceId: "claudeAgent", model: "fixture", effort: "high", outputText: null };
+  const disclosures = [];
+  for (const raw of vectors) {
+    if (redactFailureLine(raw) !== null) disclosures.push(["helper", raw]);
+    for (const final of [false, true]) {
+      const adapter = new LoopbackRuntimeAdapter({ client: { request: async () => failed,
+        thread: async () => ({ thread: { id: "thread", session: { lastError: raw } } }) } });
+      if (final) adapter.sessionFailureDetail = async () => raw;
+      const out = await new RemoteRpcShim(adapter).handle({ version: 1, type: "rpc.request", id: "matrix", method: "turn-result", params });
+      assert.equal(out.type, "rpc.result");
+      if (JSON.stringify(out).includes("SECRET") || Object.hasOwn(out.result, "failureDetail")) disclosures.push([final ? "final" : "rpc", raw]);
+    }
+  }
+  assert.deepEqual(disclosures, []);
+  for (const [raw, expected] of [
+    ["Error: provider failed: unavailable", "Error: provider failed: unavailable"],
+    ["Error: process failed token=FAKE_B3_SECRET_314", "Error: process failed token=[redacted]"],
+    ["Error: cookie = FAKE_B3_SECRET_314", "Error: cookie = [redacted]"],
+    ['Error: api_key : "FAKE_B3_SECRET_314"', "Error: api_key : [redacted]"],
+    ["Error: invalid api key", "Error: invalid api key"],
+  ]) assert.equal(redactFailureLine(raw), expected);
+});
+
+test("oversized or adversarial lastError is refused or scanned in bounded time", async () => {
+  const { redactFailureLine, MAX_RAW_DIAGNOSTIC } = await import("../src/outbound-pairer.mjs");
+  for (const raw of [
+    "Error: " + "a".repeat(40_000) + " token=FAKE_B3_SECRET_314",
+    "Error: " + "word ".repeat(MAX_RAW_DIAGNOSTIC / 5 - 2),
+    "Error: " + "token".repeat(MAX_RAW_DIAGNOSTIC / 5 - 2),
+    "Error: " + "a.".repeat(MAX_RAW_DIAGNOSTIC / 2 - 6) + "=x",
+  ]) {
+    const started = performance.now();
+    const out = redactFailureLine(raw);
+    assert.ok(performance.now() - started < 100, `slow scan for ${raw.length} chars`);
+    assert.ok(out === null || !out.includes("SECRET"));
+    if (raw.length > MAX_RAW_DIAGNOSTIC) assert.equal(out, null);
+  }
+  for (const ws of ["\t", "\v", "\f", " ", "\u00a0", "\u1680", "\u2003", "\u2028", "\u202f", "\u3000", "\ufeff", "\n", "\u0085"])
+    assert.equal(redactFailureLine(`Error: {"status${ws}name":"unavailable"}`), null, JSON.stringify(ws));
+  assert.equal(redactFailureLine('Error: {"status"\t:\t"unavailable"}'), 'Error: {"status" : "unavailable"}');
+});
+
+// B3 816c P3-1 / grammar B5: no key-length limit; a long literal key is redacted like Jack.
+test("long literal keys are redacted at any length, connector-led keys refused", async () => {
+  const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
+  for (const n of [63, 64, 65, 500])
+    assert.equal(redactFailureLine(`Error: provider failed: ${"a".repeat(n)}token=FAKE_B3_SECRET_991`), "Error: provider failed: [redacted][redacted]", String(n));
+  assert.equal(redactFailureLine(`Error: _${"a".repeat(500)}token=FAKE_B3_SECRET_991`), null);
+});
+
+test("shared prose controls (contractions, possessives, quoted values) keep failureDetail", async () => {
+  const { redactFailureLine } = await import("../src/outbound-pairer.mjs");
+  const controls = JSON.parse(fs.readFileSync(new URL("./fixtures/diagnostic_key_controls.json", import.meta.url), "utf8"));
+  const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
+  for (const raw of controls) {
+    const expected = raw.split(/[\s\u0085]+/).join(" ");
+    assert.equal(redactFailureLine(raw), expected, JSON.stringify(raw));
+    const adapter = new LoopbackRuntimeAdapter({ client: { request: async () => ({ ...params, state: "failed", turnId: "turn",
+      assistantMessageId: null, instanceId: "claudeAgent", model: "fixture", effort: "high", outputText: null }),
+      thread: async () => ({ thread: { id: "thread", session: { lastError: raw } } }) } });
+    const out = await new RemoteRpcShim(adapter).handle({ version: 1, type: "rpc.request", id: "control", method: "turn-result", params });
+    assert.equal(out.result.failureDetail, expected, JSON.stringify(raw));
+  }
 });
