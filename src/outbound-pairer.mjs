@@ -381,12 +381,115 @@ export class LoopbackRuntimeAdapter {
     if (fresh) await requireFreshProviderContext(this.client, { freshProviderContext: true, instanceId: result.instanceId });
     // Closed projection excludes all upstream additions and internal diagnostics.
     // KRA-8958: failed/cancelled results add a typed code and static message;
-    // an upstream error string is pattern-matched only, never projected.
+    // the result error is pattern-matched only. Session detail is separately redacted.
     const typed = result.state === "failed" || result.state === "cancelled"
       ? classifyFailure({ state: result.state, error: typeof result.error === "string" || isRecord(result.error) ? result.error : null })
       : null;
-    return { ...Object.fromEntries([...keys, "turnId", "assistantMessageId", "instanceId", "model", "effort", "state", "outputText"].map((key) => [key, result[key]])), ...(fresh ? { freshProviderContext: true, nativeContextGeneration: result.nativeContextGeneration } : {}), ...(typed ?? {}) };
+    const failureDetail = result.state === "failed" ? redactFailureLine(await this.sessionFailureDetail(input.threadId)) : null;
+    return { ...Object.fromEntries([...keys, "turnId", "assistantMessageId", "instanceId", "model", "effort", "state", "outputText"].map((key) => [key, result[key]])), ...(fresh ? { freshProviderContext: true, nativeContextGeneration: result.nativeContextGeneration } : {}), ...(typed ?? {}), ...(failureDetail ? { failureDetail } : {}) };
   }
+  async sessionFailureDetail(threadId) {
+    if (typeof this.client.thread !== "function") return null;
+    try {
+      const response = await this.client.thread(threadId);
+      const thread = response?.thread ?? response;
+      if (!thread || typeof thread !== "object" || thread.id !== threadId) return null;
+      return redactFailureLine(thread.session?.lastError);
+    } catch { return null; }
+  }
+}
+
+// Shared with Agent Jack (api/src/jack_api/local_claude_failure.py safe_line and
+// web/src/lib/local_claude_failure.ts); test/fixtures/redaction_vectors.json is the
+// common vector set. Keys may be quoted (JSON) or compound (client_secret, x_auth_token).
+const SECRET_KEY = String.raw`[A-Za-z0-9_.-]*(?:authorization|cookie|password|passwd|pwd|secret|token|api[_-]?key|private[_-]?key|access[_-]?key|session[_-]?key|credentials?|_key)`;
+// Fail closed at a credential field: discard the rest of this diagnostic line.
+// Quoted/escaped/malformed values, JSON containers and all later cookies must
+// stay local; attempting to find a value terminator can export a secret suffix.
+const KEYED_SECRET = new RegExp(String.raw`(?<![A-Za-z0-9])(["']?${SECRET_KEY}["']?)(\s*[:=]\s*|\s+(?=["']))[\s\S]*`, "gi");
+// One grammar with Agent Jack (docs/privacy/diagnostic-key-grammar.md; shared
+// vectors test/fixtures/whitespace_key_vectors.json). G2: a quoted field name
+// with whitespace. G3: a credential word cut by any non-word character (any
+// whitespace, quote, punctuation), or a compound key cut before its connector,
+// used as a field name. Refused on raw text before normalization and again at
+// final publication; an unmatched pattern is never treated as safe.
+// Shared whitespace union with Agent Jack (Python \s plus BOM; JS \s lacks NEL).
+const WS = String.raw`[\s\u0085]`;
+const FIELD_END = String.raw`(?=${WS}*[:=]|${WS}+["'])`;
+// G2, linear: anchored at a field-opening quote (not an apostrophe inside a word), never
+// retried from every word start.
+const QUOTED_SPACED_KEY = [
+  new RegExp(String.raw`(?<![A-Za-z0-9_.-])["'][A-Za-z0-9_.-]+(?:${WS}+[A-Za-z0-9_.-]+)+["']?${FIELD_END}`),
+  new RegExp(String.raw`(?<=[A-Za-z0-9_.-]${WS}+[A-Za-z0-9_.-]+)["']${FIELD_END}`),
+];
+const SECRET_WORD = new RegExp(SECRET_KEY.replace("[A-Za-z0-9_.-]*", ""), "iy");
+const DELIMITER = /\W*?[:="']/y;
+const LITERAL_WORD = new RegExp(`^${SECRET_KEY.replace("[A-Za-z0-9_.-]*", "")}$`, "i");
+// Raw diagnostics longer than this are refused before any pattern work (fail
+// closed; truncating could split a credential before recognition). The
+// published line is at most 200 characters; T3 lastError is normally short.
+export const MAX_RAW_DIAGNOSTIC = 2048;
+
+function unsupportedKey(text) {
+  if (QUOTED_SPACED_KEY.some((pattern) => pattern.test(text))) return true;
+  const kept = [];
+  // tokenStart[i]: start of the [\w.-] field-name run ending before i, in one linear pass
+  // (no per-match backwards walk, no key-length limit; Jack walks the same run).
+  const tokenStart = new Array(text.length + 1);
+  tokenStart[0] = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (/\w/.test(text[i])) kept.push(i);
+    tokenStart[i + 1] = /[\w.-]/.test(text[i]) ? tokenStart[i] : i + 1;
+  }
+  const compact = kept.map((i) => text[i]).join("");
+  for (let k = 0; k < compact.length; k++) {
+    SECRET_WORD.lastIndex = k;
+    const word = SECRET_WORD.exec(compact)?.[0];
+    if (!word) continue;
+    const start = kept[k], end = kept[k + word.length - 1] + 1;
+    DELIMITER.lastIndex = end;
+    if (!DELIMITER.test(text)) continue; // First, so only field names are walked.
+    const token = tokenStart[start];
+    if (/[_.-]/.test(text[token]) || !LITERAL_WORD.test(text.slice(start, end))) return true;
+  }
+  return false;
+}
+const VENDOR_TOKENS = [
+  /\bgh[pousr]_[A-Za-z0-9_]{6,}/g,
+  /\bgithub_pat_[A-Za-z0-9_]{6,}/g,
+  /\bAKIA[0-9A-Z]{16}\b/g,
+  /\bxox[abprs]-[A-Za-z0-9-]{6,}/g,
+  /\bglpat-[A-Za-z0-9_-]{6,}/g,
+  /\bsk-[A-Za-z0-9_-]{6,}/g,
+  /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_.-]+/g,
+  /[A-Za-z0-9_\-+/=]{32,}/g,
+];
+
+/** First nonempty line of a provider error, without credentials, accounts, paths or links. */
+export function redactFailureLine(value) {
+  if (typeof value !== "string" || value.length > MAX_RAW_DIAGNOSTIC) return null;
+  const cleaned = value
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
+  // Literal diagnostics only: escaped keys/nested JSON strings cannot safely
+  // use the literal credential grammar. Omit unsupported optional detail.
+  if (cleaned.includes("\\")) return null;
+  // Reject unsupported controls before matching: even a key itself can be split.
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u0084\u0086-\u009f\ufeff]/.test(cleaned)) return null;
+  if (unsupportedKey(cleaned)) return null;
+  const first = cleaned.replace(/\r\n|[\r\n\u0085\u2028\u2029]/g, "\n").split("\n").map((line) => line.trim()).find(Boolean);
+  if (!first) return null;
+  let line = first.replace(/\t/g, " ")
+    .replace(/[A-Za-z][A-Za-z0-9+.-]*:\/\/[\s\S]*$/g, "[link]")
+    .replace(/(?:\/Users|\/home)\/[^/\s]+/g, "~")
+    .replace(/[A-Za-z]:\\Users\\[^\\\s]+/g, "~")
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[account]")
+    .replace(/\b(?:Bearer|Basic)\s+[^\s"',;}]+/gi, "[redacted]")
+    .replace(KEYED_SECRET, "$1$2[redacted]");
+  for (const pattern of VENDOR_TOKENS) line = line.replace(pattern, "[redacted]");
+  line = line.replace(/\s+/g, " ").trim();
+  if (line.length > 200) line = `${line.slice(0, 199).trimEnd()}…`;
+  return line || null;
 }
 
 function unavailable(id) {
@@ -481,6 +584,11 @@ function waitForReconnect(delayMs, signal) {
   });
 }
 
+// KRA-6929: older Sphere relays answer a stale or competing registration of the
+// same pair with a bare pair.unpaired, the same frame as a denial. Retry it with
+// backoff (about 30 s at the defaults) before treating it as the denial it may be.
+export const AMBIGUOUS_DENIAL_LIMIT = 6;
+
 export class OutboundPairer {
   constructor({
     runtime,
@@ -562,6 +670,7 @@ export class OutboundPairer {
     let offerConsumed = false;
     let everBound = false;
     let reconnectAttempt = 0;
+    let ambiguousDenials = 0;
     const consumeOfferOnce = () => {
       if (offerConsumed) return;
       consumePairOffer(offer);
@@ -633,6 +742,16 @@ export class OutboundPairer {
         if (outcome.bound) {
           everBound = true;
           reconnectAttempt = 0;
+          ambiguousDenials = 0;
+        }
+        if (outcome.ambiguousDenial && !outcome.bound && ++ambiguousDenials >= AMBIGUOUS_DENIAL_LIMIT) {
+          writePairPresence("unpaired", {
+            file: this.pairStateFile,
+            now: this.now(),
+            staleReason: "authorization_denied",
+          });
+          this.emit({ event: "pair.unpaired", status: "unpaired", staleReason: "authorization_denied" });
+          throw new Error("Pair authorization was denied");
         }
         writePairPresence("unpaired", {
           file: this.pairStateFile,
@@ -802,8 +921,14 @@ export class OutboundPairer {
             authorizationFailure("unpaired", "authorization_revoked", "Pair authorization was revoked");
             return;
           }
-          if (message.type === "pair.unpaired") {
+          if (message.type === "pair.unpaired" && message.reasonCode === "authorization_denied") {
             authorizationFailure("unpaired", "authorization_denied", "Pair authorization was denied");
+            return;
+          }
+          if (message.type === "pair.unpaired" || message.type === "pair.conflict") {
+            // KRA-6929: a registration conflict, or an older relay's ambiguous
+            // refusal. No bind means no RPC authority; reconnect and re-authenticate.
+            finish({ kind: "transient", staleReason: "relay_connection_closed", ambiguousDenial: message.type === "pair.unpaired" });
             return;
           }
           if (!bound) throw new Error("Relay message arrived before a valid pair bind");

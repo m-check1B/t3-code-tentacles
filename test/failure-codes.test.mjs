@@ -15,6 +15,18 @@ const providerBody = (text) => `{"error":{"message":"${text}","request":{"header
 const blockedReport = (session, extra = {}) =>
   projectThreadReport({ id: THREAD_ID, modelSelection: { model: "gpt-5.6-sol" }, session, ...extra }, THREAD_ID);
 
+test("paired failure keeps the typed code and redacted session detail together", async () => {
+  const input = { threadId: "thread", messageId: "message", turnCommandId: "command" };
+  const adapter = new LoopbackRuntimeAdapter({ client: {
+    request: async () => ({ ...input, state: "failed", turnId: "turn", assistantMessageId: null, instanceId: "codex", model: "fixture", effort: "high", outputText: null, error: "usage limit reached" }),
+    thread: async () => ({ thread: { id: "thread", session: { lastError: "usage limit reached token=FAKE_SECRET_123" } } }),
+  } });
+  const result = await adapter.turnResult(input);
+  assert.equal(result.code, "usage_limit");
+  assert.equal(result.message, FAILURE_MESSAGES.usage_limit);
+  assert.equal(result.failureDetail, "usage limit reached token=[redacted]");
+});
+
 function turnResultAdapter(upstream) {
   const input = { threadId: "thread", messageId: "message", turnCommandId: "command" };
   const adapter = new LoopbackRuntimeAdapter({ client: { request: async () => ({ ...input, turnId: "turn", assistantMessageId: null,
