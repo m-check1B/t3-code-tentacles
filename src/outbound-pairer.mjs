@@ -381,7 +381,7 @@ export class LoopbackRuntimeAdapter {
     if (fresh) await requireFreshProviderContext(this.client, { freshProviderContext: true, instanceId: result.instanceId });
     // Closed projection excludes all upstream additions and internal diagnostics.
     // KRA-8958: failed/cancelled results add a typed code and static message;
-    // an upstream error string is pattern-matched only, never projected.
+    // the result error is pattern-matched only. Session detail is separately redacted.
     const typed = result.state === "failed" || result.state === "cancelled"
       ? classifyFailure({ state: result.state, error: typeof result.error === "string" || isRecord(result.error) ? result.error : null })
       : null;
