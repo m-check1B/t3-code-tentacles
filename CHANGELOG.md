@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.5.0-jack.15] - 2026-11-08
+
 ### Fixed
 
 - KRA-10174: failed paired turns include a bounded, redacted session failure detail alongside typed failure codes. Bare pairing refusals retry as transient conflicts before a bounded denial.
