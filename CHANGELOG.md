@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.5.0-jack.16] - 2026-11-08
+
+### Fixed
+
+- KRA-10174: the pairing bind advertises the 0.4.1-jack.4 RPC list again, without `interrupt`, so desktops pair with Sphere releases that predate the interrupt relay (KRA-6245). Those releases close a bind that names an unknown method. `tentacles pair --enable-interrupt` advertises and accepts `interrupt` once the relay supports it.
+
 ## [0.5.0-jack.15] - 2026-11-08
 
 ### Fixed
