@@ -43,6 +43,10 @@ includes the exact `messageId` and `turnId` when T3 provides one. No command ID
 is inferred. Jack must register its dispatched user/assistant origin IDs before
 draining events so policy envelopes and already-finalized replies are not
 projected again. Text or timestamp equality is never an origin match.
+An upstream id that is not a safe id (longer than 128 characters or outside
+`[A-Za-z0-9._:-]`) is journaled as the same `t3v2-sha256:` digest that
+`turn-result` reports as `assistantMessageId`, so the two always match. A
+message already journaled under its raw id keeps it.
 
 - `thread-events` params: `{threadId, afterSequence: 0, limit: 100,
   includeTurnEnd: false}`; limit 1–200. `includeTurnEnd` must be a boolean.

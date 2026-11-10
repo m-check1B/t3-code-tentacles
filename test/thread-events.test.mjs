@@ -382,3 +382,38 @@ test("KRA-8998: the sequence-gap finder refuses a cursor that is not a safe inte
   }
   assert.equal(findSequenceGap(null, 4), 5, "a malformed page at a valid cursor still reports the next sequence");
 });
+
+test("a poll that adds nothing leaves the journal file untouched", async (t) => {
+  const { directory, thread, client } = setup(t);
+  const file = path.join(directory, `${THREAD}.json`);
+  const first = await threadEvents(client, { threadId: THREAD }, { directory });
+  const before = fs.statSync(file);
+  assert.deepEqual(await threadEvents(client, { threadId: THREAD }, { directory }), first);
+  const after = fs.statSync(file);
+  // The writer replaces the file by rename, so a rewrite always changes the inode.
+  assert.deepEqual([after.ino, after.mtimeMs], [before.ino, before.mtimeMs]);
+  thread.messages.push({ id: "m2", role: "assistant", text: "Done", createdAt: WHEN });
+  assert.equal((await threadEvents(client, { threadId: THREAD }, { directory })).events.at(-1).eventId, "message:m2");
+  assert.notEqual(fs.statSync(file).ino, before.ino);
+});
+
+test("an unsafe upstream message id is journaled under the id turn-result reports", async (t) => {
+  const { safeResultId } = await import("../src/t3-v2.mjs");
+  // Shape seen live on T3 Nightly 0.1.8 (Antigravity): percent-escaped, 138 characters.
+  const unsafe = `message:provider:antigravity:native-item:provider-instance%3Aantigravity%3A${"0".repeat(64)}`;
+  const reply = { id: unsafe, role: "assistant", text: "Done", createdAt: WHEN };
+  const fresh = setup(t);
+  fresh.thread.messages.push(reply);
+  const event = (await threadEvents(fresh.client, { threadId: THREAD }, { directory: fresh.directory })).events.find((entry) => entry.payload.role === "assistant");
+  assert.equal(event.eventId, `message:${safeResultId(unsafe)}`);
+  assert.equal(event.payload.messageId, safeResultId(unsafe));
+  assert.equal(fresh.thread.messages[0].id, "m1", "a safe id stays verbatim");
+
+  // A journal written before this fix keeps the raw id and gains no second copy.
+  const old = setup(t);
+  old.thread.messages.push(reply);
+  recordThreadEvents(THREAD, [{ eventId: `message:${unsafe}`, kind: "message", occurredAt: WHEN,
+    payload: { role: "assistant", text: "Done", messageId: unsafe } }], { directory: old.directory });
+  const page = await threadEvents(old.client, { threadId: THREAD }, { directory: old.directory });
+  assert.deepEqual(page.events.filter((entry) => entry.payload.role === "assistant").map((entry) => entry.eventId), [`message:${unsafe}`]);
+});
