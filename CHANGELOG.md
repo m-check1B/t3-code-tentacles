@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.5.0-jack.19] - 2026-11-20
+
 ### Fixed
 
 - KRA-10860: automatic T3 sign-in no longer ends on a stale launcher. A T3 home can still hold an old app's `<T3 home>/runtime/versions/*/t3` next to the `<T3 home>/bin/t3` that the running T3 Code (Beta) wrote. That stale launcher came first and issued a session the running T3 rejected, so `doctor` reported `t3_reauth_required` and named that launcher. Now every issued session is checked against the running T3 (one authenticated `GET /api/orchestration/shell`) before it is stored. A session that gets a 401 is dropped and the next launcher in the same order is tried. A rejected session is never stored, and a missing token file stays missing. On success the result names the launcher that worked. If every launcher is rejected, the action names `<T3 home>/bin/t3` and says to check `TENTACLES_T3_HOME`. An explicit `TENTACLES_T3_BIN` is still the only candidate and is never replaced: if T3 rejects its session, the message says so and says to point it at the running T3's launcher or unset it. If T3 cannot answer the check, the session is stored as before. Hosts whose first launcher works behave as before. Only launchers inside the T3 home (or the explicit or PATH one) are ever run. `tentacles reauth` (explicit) is unchanged.
