@@ -6,6 +6,12 @@
       "status": "valid"
     },
     "version": null,
+    "support": {
+      "status": "unknown",
+      "minimum": "0.1.8",
+      "testedThrough": "0.1.11",
+      "action": null
+    },
     "projects": 0,
     "threads": 0,
     "leakedSessions": {

@@ -70,9 +70,9 @@ export function reauthenticate({ t3Bin, t3Home, tokenFile = process.env.T3_HERME
   }
 }
 
-const SEMVER = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
+export const SEMVER = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
 
-function compareVersions(a, b) {
+export function compareVersions(a, b) {
   for (let index = 1; index <= 3; index += 1) {
     const delta = Number(a[index]) - Number(b[index]);
     if (delta) return delta;

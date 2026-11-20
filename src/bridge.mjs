@@ -1,4 +1,5 @@
 import { requireFreshFlags, requireFreshProviderContext, freshContextProviders } from "./fresh-provider-context.mjs";
+import { t3Support, talkMissingAction } from "./t3-support.mjs";
 import { TURN_INTERRUPT_CONTRACT } from "./turn-interrupt.mjs";
 import { inspectLeakedSessions } from "./orchestrate.mjs";
 import fs from "node:fs";
@@ -1566,7 +1567,8 @@ export async function probeTalkCapabilities(client, { signal = AbortSignal.timeo
     finding: supported ? { status: "present", code: null, action: null } : {
       status: code === "t3_not_patched" ? "missing" : "unavailable",
       code,
-      action: code === "t3_not_patched" ? "This Mac's T3 Code lacks Local Talk support; update T3 to the approved patched build."
+      // Machine code kept for compatibility; the text names the supported stock range.
+      action: code === "t3_not_patched" ? talkMissingAction(null)
         : code === "t3_reauth_required" ? reauthAction
           : "Check the local T3 connection, then rerun doctor to verify Local Talk support.",
     },
@@ -1644,6 +1646,8 @@ async function doctorReport(client, {
     && /^[A-Za-z0-9._+-]{1,128}$/.test(config.environment.serverVersion)
     ? config.environment.serverVersion
     : null;
+  const support = t3Support(serverVersion);
+  if (talk.finding.code === "t3_not_patched") talk.finding.action = talkMissingAction(serverVersion);
   const configById = new Map();
   const duplicateIds = new Set();
   for (const entry of providers) {
@@ -1801,7 +1805,7 @@ async function doctorReport(client, {
   return boundDoctorInventories({
     product: "Tentacles",
     capabilities: talk.capabilities,
-    t3: { reachable: true, auth: { status: "valid" }, version: serverVersion, talk: talk.finding, projects: projects.length, threads: threads.length, leakedSessions },
+    t3: { reachable: true, auth: { status: "valid" }, version: serverVersion, support, talk: talk.finding, projects: projects.length, threads: threads.length, leakedSessions },
     pairing,
     managedPolicy,
     labs,
@@ -1861,6 +1865,10 @@ export function formatDoctor(result = {}) {
   if (t3.auth) {
     lines.push(`T3 authentication: ${t3.auth.status === "valid" ? "valid" : "re-authentication required (401)"}`);
     if (t3.auth.status === "invalid") lines.push(`Recovery: ${t3.auth.action}`);
+  }
+  if (t3.support) {
+    lines.push(`T3 Code support: ${t3.support.status}  range: ${t3.support.minimum}..${t3.support.testedThrough}`);
+    if (t3.support.action && !t3.talk?.action) lines.push(`Recovery: ${t3.support.action}`);
   }
   if (t3.talk) {
     lines.push(`Local Talk: ${t3.talk.status}${t3.talk.code ? `  code: ${t3.talk.code}` : ""}`);
