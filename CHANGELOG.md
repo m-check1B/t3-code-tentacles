@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.5.0-jack.18] - 2026-11-20
+
 ### Fixed
 
 - KRA-10852: automatic T3 re-authentication finds the CLI on a fresh official T3 Code (Beta) home. After an explicit `TENTACLES_T3_BIN`, `t3` on PATH and the newest `<T3 home>/runtime/versions/*/t3`, it now also tries `<T3 home>/bin/t3`, the launcher T3 Code (Beta) v0.1.11 installs on macOS and Linux. Windows is not supported yet: there the launcher is `bin\t3.cmd`, which Node cannot run without a shell. Tentacles names it as unsupported and never offers or runs it. Hosts that already resolve keep the same binary. `doctor` on such a home signs itself in without `tentacles reauth --t3-bin`. If no CLI is found, the error names `<T3 home>/bin` and says to open T3 Code (Beta) once.
