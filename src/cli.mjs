@@ -455,7 +455,7 @@ async function main() {
     });
     if (responds) result.responds = await probeResponds(client, result.labs, responds);
     console.log(options.json ? JSON.stringify(result, null, 2) : formatDoctor(result));
-    if (result.t3?.auth?.status === "invalid") process.exitCode = 1;
+    if (result.t3?.auth?.status === "invalid" || result.t3?.reachable === false) process.exitCode = 1;
     return;
   }
   if (command === "pair") {

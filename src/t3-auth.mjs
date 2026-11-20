@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { DEFAULT_TOKEN_FILE, readToken, resolveExecutable } from "./config.mjs";
+import { DEFAULT_TOKEN_FILE, readToken, resolveExecutable, tokenFileUnset } from "./config.mjs";
 import { privateModeOk } from "./platform.mjs";
 
 function ownedDirectory(directory) {
@@ -36,7 +36,8 @@ export function reauthenticate({ t3Bin, t3Home, tokenFile = process.env.T3_HERME
   let originalToken = null;
   try {
     original = fs.lstatSync(tokenFile);
-    originalToken = readToken(tokenFile); // Same symlink, ownership, permission and bounds gate as runtime reads.
+    // Same symlink, ownership, permission and bounds gate as runtime reads; a first-run empty file has no bearer to keep.
+    originalToken = tokenFileUnset(tokenFile) ? "" : readToken(tokenFile);
   } catch (error) { if (error.code !== "ENOENT") throw error; }
   const temporary = path.join(directory, `.t3-token-${randomUUID()}.tmp`);
   try {
@@ -60,7 +61,7 @@ export function reauthenticate({ t3Bin, t3Home, tokenFile = process.env.T3_HERME
     }
     // ext4 reuses a freed inode and mtime is tick-coarse, so a same-size
     // replacement can match every stat field; the content cannot.
-    if (current && readToken(tokenFile) !== originalToken) {
+    if (current && (tokenFileUnset(tokenFile) ? "" : readToken(tokenFile)) !== originalToken) {
       throw new Error("The token file changed during reauthentication; the newer file was preserved");
     }
     fs.renameSync(temporary, tokenFile);
@@ -141,8 +142,10 @@ export function createAutoReauth({
   return ({ tokenFile }) => {
     const resolved = resolveT3Bin({ t3Bin, t3Home, pathEnv: env.PATH || "" });
     const shown = resolved ?? t3Bin;
-    const action = ["tentacles reauth --t3-bin", shown ? shellQuote(shown) : '"$(command -v t3)"', "--t3-home", shellQuote(t3Home),
+    // Nothing found: name the launcher stock T3 Code (Beta) installs when it first opens (KRA-10852).
+    const command = ["tentacles reauth --t3-bin", shellQuote(shown ?? path.join(t3Home, "bin", process.platform === "win32" ? "t3.cmd" : "t3")), "--t3-home", shellQuote(t3Home),
       ...(tokenFile === DEFAULT_TOKEN_FILE ? [] : ["--token-file", shellQuote(tokenFile)])].join(" ");
+    const action = shown ? command : `Open T3 Code (Beta) once, then run: ${command}`;
     const fail = reason => Object.assign(new Error(reason), { action });
     if (!resolved && t3Bin) {
       throw fail(`automatic reauthentication rejected TENTACLES_T3_BIN ${t3Bin}: ${path.isAbsolute(t3Bin) ? "not an executable file" : "not an absolute path"}`);

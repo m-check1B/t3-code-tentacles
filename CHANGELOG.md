@@ -7,6 +7,7 @@ All notable changes to this project are documented here.
 ### Fixed
 
 - KRA-10852: automatic T3 re-authentication finds the CLI on a fresh official T3 Code (Beta) home. After an explicit `TENTACLES_T3_BIN`, `t3` on PATH and the newest `<T3 home>/runtime/versions/*/t3`, it now also tries `<T3 home>/bin/t3` (`bin\t3.cmd` on Windows), the launcher T3 Code (Beta) v0.1.11 installs. Hosts that already resolve keep the same binary. `doctor` on such a home signs itself in without `tentacles reauth --t3-bin`. If no CLI is found, the error names `<T3 home>/bin` and says to open T3 Code (Beta) once.
+- KRA-10852: a first run with no T3 token file (or an empty one) no longer fails before any request. Every local command that builds the T3 client (with automatic reauth on) issues one session through the same resolver and gates on its first request, then continues. `tentacles doctor --json` never prints an empty stdout here. If no CLI is found it reports `t3.auth.status=invalid`, `t3_reauth_required` and the one-line action `Open T3 Code (Beta) once, then run: tentacles reauth --t3-bin '<T3 home>/bin/t3' …`. If T3 is not running it reports `t3.reachable=false`, `t3_unreachable` and `Open T3 Code (Beta), then rerun tentacles doctor.` Both exit 1. A symlinked or otherwise invalid token file still fails closed, and an existing valid token is never re-issued.
 
 ## [0.5.0-jack.17] - 2026-11-20
 

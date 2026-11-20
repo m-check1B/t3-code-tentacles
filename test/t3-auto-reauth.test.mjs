@@ -101,7 +101,7 @@ test("no T3 CLI found fails closed without issuing and names the T3 home", async
     assert.match(error.message, /found no executable T3 CLI/);
     assert.ok(error.message.includes(path.join(h.t3Home, "bin")), "names the stock launcher directory");
     assert.match(error.message, /open T3 Code \(Beta\) once/);
-    assert.equal(error.action, `tentacles reauth --t3-bin "$(command -v t3)" --t3-home '${h.t3Home}' --token-file '${h.tokenFile}'`);
+    assert.equal(error.action, `Open T3 Code (Beta) once, then run: tentacles reauth --t3-bin '${path.join(h.t3Home, "bin", "t3")}' --t3-home '${h.t3Home}' --token-file '${h.tokenFile}'`);
     assert.deepEqual(tokens(error.message), []);
     return true;
   });
@@ -264,4 +264,70 @@ test("bin/t3 that is not executable or escapes the T3 home is ignored; Windows l
   assert.equal(resolveT3Bin({ t3Home: f.t3Home, pathEnv: "" }), null);
   const cmd = addLauncher(f.t3Home, "t3.cmd");
   assert.equal(resolveT3Bin({ t3Home: f.t3Home, pathEnv: "", platform: "win32" }), cmd);
+});
+
+// KRA-10852: a brand-new machine has no token file at all; the first request issues one.
+function firstRun(t, { launcher = true, tokenFile: state = "missing", serve } = {}) {
+  const h = harness(t, { versions: [], responses: serve ?? byBearer });
+  fs.rmSync(h.tokenFile);
+  if (state === "empty") fs.writeFileSync(h.tokenFile, "", { mode: 0o600 });
+  if (launcher) addLauncher(h.t3Home);
+  else fs.mkdirSync(h.t3Home, { recursive: true });
+  const reauth = createAutoReauth({ env: { PATH: "" }, t3Home: h.t3Home, log: line => h.logs.push(line),
+    spawnImpl: (bin, args) => { h.spawned.push({ bin, args }); return { status: 0, stdout: `${NEW}\n`, stderr: OLD }; } });
+  const client = new T3Client({ orchestrationProtocol: 1, tokenFile: h.tokenFile, reauth,
+    fetchImpl: async (url, init) => { h.calls.push(init); return (serve ?? byBearer)(init); } });
+  return { ...h, client };
+}
+
+for (const state of ["missing", "empty"]) {
+  test(`${state} token file + launcher: the first request issues a session once and signs in with no flag (KRA-10852)`, async t => {
+    const h = firstRun(t, { tokenFile: state });
+    const results = await Promise.all([h.client.snapshot(), h.client.snapshot()]);
+    assert.deepEqual(results, [{ accepted: true }, { accepted: true }]);
+    assert.equal(h.spawned.length, 1, "concurrent first requests share one issuance");
+    assert.equal(h.spawned[0].bin, fs.realpathSync(path.join(h.t3Home, "bin", "t3")));
+    assert.ok(h.calls.every(init => init.headers.authorization === `Bearer ${NEW}`), "no request goes out without a bearer");
+    assert.equal(fs.readFileSync(h.tokenFile, "utf8"), `${NEW}\n`);
+    assert.equal(fs.statSync(h.tokenFile).mode & 0o777, 0o600);
+    assert.deepEqual(tokens(h.logs.join("\n")), []);
+  });
+}
+
+test("missing token file + no launcher: named code and one-line action, nothing issued, no request sent (KRA-10852)", async t => {
+  const h = firstRun(t, { launcher: false });
+  await assert.rejects(h.client.snapshot(), error => {
+    assert.ok(error instanceof T3AuthError);
+    assert.equal(error.code, "t3_reauth_required");
+    assert.match(error.message, /^No T3 bearer yet \(token file missing or empty: /);
+    assert.match(error.action, /^Open T3 Code \(Beta\) once, then run: tentacles reauth --t3-bin '[^']*\/bin\/t3' /);
+    assert.equal(error.action.includes("\n"), false);
+    assert.deepEqual(tokens(`${error.message} ${error.action}`), []);
+    return true;
+  });
+  assert.equal(h.spawned.length, 0);
+  assert.equal(h.calls.length, 0);
+  assert.equal(fs.existsSync(h.tokenFile), false);
+});
+
+test("an existing valid token file is used as-is and never re-issued (KRA-10852)", async t => {
+  const h = harness(t, { versions: [], responses: () => new Response('{"accepted":true}') });
+  addLauncher(h.t3Home);
+  assert.deepEqual(await h.client.snapshot(), { accepted: true });
+  assert.equal(h.spawned.length, 0);
+  assert.equal(h.calls[0].headers.authorization, `Bearer ${OLD}`);
+  assert.equal(fs.readFileSync(h.tokenFile, "utf8"), OLD);
+});
+
+test("without a reauth hook a missing or empty token file still fails in the constructor (KRA-10852)", t => {
+  const f = fixture(t, []);
+  fs.rmSync(f.tokenFile);
+  assert.throws(() => new T3Client({ tokenFile: f.tokenFile }), /T3 bearer token file is missing/);
+  fs.writeFileSync(f.tokenFile, "", { mode: 0o600 });
+  assert.throws(() => new T3Client({ tokenFile: f.tokenFile }), /size is outside the accepted range/);
+  fs.rmSync(f.tokenFile);
+  const target = path.join(f.dir, "empty-target");
+  fs.writeFileSync(target, "", { mode: 0o600 });
+  fs.symlinkSync(target, f.tokenFile);
+  assert.throws(() => new T3Client({ tokenFile: f.tokenFile, reauth: () => assert.fail("never") }), /must not be a symlink/, "a symlinked token file is never a first run");
 });
