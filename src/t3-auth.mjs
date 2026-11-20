@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { DEFAULT_TOKEN_FILE, readToken, resolveExecutable } from "./config.mjs";
+import { DEFAULT_TOKEN_FILE, readToken, resolveExecutable, tokenFileUnset } from "./config.mjs";
 import { privateModeOk } from "./platform.mjs";
 
 function ownedDirectory(directory) {
@@ -19,12 +19,19 @@ function ownedDirectory(directory) {
 // never edits T3's database or guesses a new credential from local secrets.
 // remote: t3Bin and t3Home live on another computer and spawnImpl reaches it
 // (computers.mjs remoteIssueSpawn), so the local file checks do not apply.
-export function reauthenticate({ t3Bin, t3Home, tokenFile = process.env.T3_HERMES_TOKEN_FILE || DEFAULT_TOKEN_FILE, spawnImpl = spawnSync, remote = false } = {}) {
+// KRA-10852: Node >= 22 refuses to spawn a .cmd/.bat without a shell (EINVAL), and
+// T3 Code (Beta) on Windows ships its CLI only as bin\t3.cmd. Windows is not supported yet.
+export const WINDOWS_LAUNCHER_UNSUPPORTED = "Windows is not supported yet: the T3 Code (Beta) CLI there is a .cmd launcher that Tentacles cannot run";
+const WINDOWS_ACTION = `${WINDOWS_LAUNCHER_UNSUPPORTED}; run Tentacles on macOS or Linux.`;
+const windowsLauncher = (file, platform) => platform === "win32" && /\.(?:cmd|bat)$/i.test(file);
+
+export function reauthenticate({ t3Bin, t3Home, tokenFile = process.env.T3_HERMES_TOKEN_FILE || DEFAULT_TOKEN_FILE, spawnImpl = spawnSync, remote = false, platform = process.platform } = {}) {
   const absolute = remote ? path.posix.isAbsolute : path.isAbsolute;
   if (![t3Bin, t3Home].every(value => typeof value === "string" && absolute(value)) || typeof tokenFile !== "string" || !path.isAbsolute(tokenFile)) {
     throw new Error("reauth requires absolute --t3-bin, --t3-home and token-file paths");
   }
   if (!remote) {
+    if (windowsLauncher(t3Bin, platform)) throw new Error(`${WINDOWS_LAUNCHER_UNSUPPORTED} (${t3Bin})`);
     fs.accessSync(t3Bin, fs.constants.X_OK);
     if (!fs.statSync(t3Bin).isFile()) throw new Error("T3 CLI must be an executable file");
     if (!fs.statSync(t3Home).isDirectory()) throw new Error("T3 home must already exist");
@@ -36,7 +43,8 @@ export function reauthenticate({ t3Bin, t3Home, tokenFile = process.env.T3_HERME
   let originalToken = null;
   try {
     original = fs.lstatSync(tokenFile);
-    originalToken = readToken(tokenFile); // Same symlink, ownership, permission and bounds gate as runtime reads.
+    // Same symlink, ownership, permission and bounds gate as runtime reads; a first-run empty file has no bearer to keep.
+    originalToken = tokenFileUnset(tokenFile) ? "" : readToken(tokenFile);
   } catch (error) { if (error.code !== "ENOENT") throw error; }
   const temporary = path.join(directory, `.t3-token-${randomUUID()}.tmp`);
   try {
@@ -60,7 +68,7 @@ export function reauthenticate({ t3Bin, t3Home, tokenFile = process.env.T3_HERME
     }
     // ext4 reuses a freed inode and mtime is tick-coarse, so a same-size
     // replacement can match every stat field; the content cannot.
-    if (current && readToken(tokenFile) !== originalToken) {
+    if (current && (tokenFileUnset(tokenFile) ? "" : readToken(tokenFile)) !== originalToken) {
       throw new Error("The token file changed during reauthentication; the newer file was preserved");
     }
     fs.renameSync(temporary, tokenFile);
@@ -98,22 +106,25 @@ function executableFile(file) {
   } catch { return false; }
 }
 
-// Resolution order: explicit path, PATH, then the newest semver under
-// <t3Home>/runtime/versions/*/t3 whose real path stays inside the T3 home.
-export function resolveT3Bin({ t3Bin, t3Home, pathEnv = process.env.PATH || "" } = {}) {
+// Resolution order: explicit path, PATH, the newest semver under
+// <t3Home>/runtime/versions/*/t3, then <t3Home>/bin/t3 (t3.cmd on Windows), the
+// launcher stock T3 Code (Beta) v0.1.11 writes (DesktopCliShim.launcherPath).
+// The launcher is last so hosts that already resolve keep their binary (KRA-10852).
+// Every T3-home candidate must keep its real path inside the T3 home.
+export function resolveT3Bin({ t3Bin, t3Home, pathEnv = process.env.PATH || "", platform = process.platform } = {}) {
   if (t3Bin) return path.isAbsolute(t3Bin) && executableFile(t3Bin) ? t3Bin : null;
   try {
     const onPath = resolveExecutable("t3", pathEnv);
     if (executableFile(onPath)) return onPath;
   } catch { /* not on PATH */ }
-  let home, entries;
-  try {
-    home = fs.realpathSync(t3Home);
-    entries = fs.readdirSync(path.join(t3Home, "runtime", "versions"));
-  } catch { return null; }
+  let home;
+  try { home = fs.realpathSync(t3Home); } catch { return null; }
+  let entries = [];
+  try { entries = fs.readdirSync(path.join(t3Home, "runtime", "versions")); } catch { /* fresh stock home */ }
   const versions = entries.map(name => SEMVER.exec(name)).filter(Boolean).sort((a, b) => compareVersions(b, a));
-  for (const version of versions) {
-    const candidate = path.join(t3Home, "runtime", "versions", version[0], "t3");
+  const candidates = [...versions.map(version => path.join(t3Home, "runtime", "versions", version[0], "t3")),
+    path.join(t3Home, "bin", platform === "win32" ? "t3.cmd" : "t3")];
+  for (const candidate of candidates) {
     let real;
     try { real = fs.realpathSync(candidate); } catch { continue; }
     // Return what was checked: executing the candidate would re-resolve a swappable symlink.
@@ -133,24 +144,34 @@ export function createAutoReauth({
   t3Home = env.TENTACLES_T3_HOME || path.join(os.homedir(), ".t3"),
   spawnImpl = spawnSync,
   log = message => process.stderr.write(`${message}\n`),
+  platform = process.platform,
 } = {}) {
   if (["0", "false", "off", "no"].includes(String(env.TENTACLES_T3_AUTO_REAUTH ?? "").toLowerCase())) return null;
-  return ({ tokenFile }) => {
-    const resolved = resolveT3Bin({ t3Bin, t3Home, pathEnv: env.PATH || "" });
+  return ({ tokenFile, cause = "401" }) => {
+    const resolved = resolveT3Bin({ t3Bin, t3Home, pathEnv: env.PATH || "", platform });
+    if (resolved && windowsLauncher(resolved, platform)) {
+      // Never offer a reauth command that cannot work; the action is the one-line truth.
+      throw Object.assign(new Error(`automatic reauthentication found ${resolved}, but ${WINDOWS_LAUNCHER_UNSUPPORTED}`),
+        { action: WINDOWS_ACTION });
+    }
     const shown = resolved ?? t3Bin;
-    const action = ["tentacles reauth --t3-bin", shown ? shellQuote(shown) : '"$(command -v t3)"', "--t3-home", shellQuote(t3Home),
+    // Nothing found: name the launcher stock T3 Code (Beta) installs when it first opens (KRA-10852).
+    const command = ["tentacles reauth --t3-bin", shellQuote(shown ?? path.join(t3Home, "bin", "t3")), "--t3-home", shellQuote(t3Home),
       ...(tokenFile === DEFAULT_TOKEN_FILE ? [] : ["--token-file", shellQuote(tokenFile)])].join(" ");
+    const action = shown ? command : platform === "win32" ? WINDOWS_ACTION
+      : `Open T3 Code (Beta) once, then run: ${command}`;
     const fail = reason => Object.assign(new Error(reason), { action });
     if (!resolved && t3Bin) {
       throw fail(`automatic reauthentication rejected TENTACLES_T3_BIN ${t3Bin}: ${path.isAbsolute(t3Bin) ? "not an executable file" : "not an absolute path"}`);
     }
-    if (!resolved) throw fail(`automatic reauthentication found no executable T3 CLI (TENTACLES_T3_BIN, PATH or ${path.join(t3Home, "runtime", "versions")})`);
+    if (!resolved) throw fail(`automatic reauthentication found no executable T3 CLI (TENTACLES_T3_BIN, PATH, ${path.join(t3Home, "runtime", "versions")} or ${path.join(t3Home, "bin")}); open T3 Code (Beta) once so it installs its t3 launcher`);
     try {
-      reauthenticate({ t3Bin: resolved, t3Home, tokenFile, spawnImpl });
+      reauthenticate({ t3Bin: resolved, t3Home, tokenFile, spawnImpl, platform });
     } catch (error) {
       throw fail(`automatic reauthentication failed: ${error.message}`);
     }
-    log(`Tentacles: T3 rejected the bearer (401); issued a new session with ${resolved}`);
+    log(cause === "first-run" ? `Tentacles: no T3 bearer yet; issued a new session with ${resolved}`
+      : `Tentacles: T3 rejected the bearer (401); issued a new session with ${resolved}`);
     return { action };
   };
 }

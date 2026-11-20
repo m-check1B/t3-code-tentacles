@@ -1610,6 +1610,17 @@ async function doctorReport(client, {
     settings = await withinDoctorDeadline(signal, () => client.getSettings({ signal }));
     config = await withinDoctorDeadline(signal, () => client.rpc("server.getConfig", {}, { signal }));
   } catch (error) {
+    // KRA-10852: only a refused connection is T3 not running; other network failures keep their error.
+    if (error instanceof TypeError && error.cause?.code === "ECONNREFUSED" && !signal?.aborted) {
+      const action = "Open T3 Code (Beta), then rerun tentacles doctor.";
+      return {
+        product: "Tentacles",
+        capabilities: { talkTurnResult: null, turnInterrupt: null },
+        t3: { reachable: false, auth: { status: "unknown", code: "t3_unreachable", action }, talk: { status: "unavailable", code: "t3_unreachable", action } },
+        pairing: readPairPresence(pairStateFile),
+        labs: [],
+      };
+    }
     if (!(error instanceof T3HttpError) || error.status !== 401) throw error;
     const action = error.action ?? T3_REAUTH_ACTION;
     return {
@@ -1861,6 +1872,7 @@ export function formatDoctor(result = {}) {
   } else {
     lines.push(`Hermes health: unreachable  code: ${hermes.code || "hermes_unreachable"}`);
   }
+  if (t3.reachable === false) return ["Tentacles doctor — T3 is not reachable", `Recovery: ${t3.auth.action}`, "Lab readiness is unavailable until T3 Code runs."].join("\n");
   if (t3.auth?.status === "invalid") return ["Tentacles doctor — T3 re-authentication required (401)", `Recovery: ${t3.auth.action}`, "Lab readiness is unavailable until reauthentication."].join("\n");
   if (t3.auth) {
     lines.push(`T3 authentication: ${t3.auth.status === "valid" ? "valid" : "re-authentication required (401)"}`);

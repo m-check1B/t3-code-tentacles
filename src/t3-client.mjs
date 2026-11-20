@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { requireFreshProviderContext } from "./fresh-provider-context.mjs";
-import { DEFAULT_T3_URL, DEFAULT_TOKEN_FILE, readToken, requireLoopbackUrl } from "./config.mjs";
+import { DEFAULT_T3_URL, DEFAULT_TOKEN_FILE, readToken, requireLoopbackUrl, tokenFileUnset } from "./config.mjs";
 import { PolicyRefusedError, policyDenialText } from "./managed-policy.mjs";
 import { archivedShellToV1, isUnknownTagError, isUnknownTagExit, nativeTurnResult, PATCHED_MESSAGE_METHOD, shellToV1, T3RpcRejectedError, threadDetailToV1, translateCommand, T3V2UnsupportedError, upstreamMessageStep, V2_PROTOCOL, V2_PROTOCOL_HEADER } from "./t3-v2.mjs";
 
@@ -83,7 +83,9 @@ export class T3Client {
   } = {}) {
     this.baseUrl = requireLoopbackUrl(baseUrl, "T3_URL");
     this.tokenFile = token === undefined ? tokenFile : null;
-    this.token = token === undefined ? readToken(tokenFile) : token;
+    // KRA-10852: with a reauth hook, a first run (no or empty token file) defers
+    // to one issuance on the first request instead of failing here.
+    this.token = token !== undefined ? token : reauth && tokenFileUnset(tokenFile) ? null : readToken(tokenFile);
     this.fetchImpl = fetchImpl;
     this.WebSocketImpl = WebSocketImpl;
     this.requestTimeoutMs = requestTimeoutMs;
@@ -124,7 +126,20 @@ export class T3Client {
   }
 
   // retried: false, "rotated" (operator replaced the token file) or "reauth".
+  // Concurrent callers (first run and 401s alike) share one issuance; a failed attempt is never repeated.
+  // cause: "first-run" (no bearer yet, nothing sent) or "401" (T3 rejected the bearer).
+  runReauth(cause) {
+    this.reauthAttempt ??= Promise.resolve().then(() => this.reauth({ tokenFile: this.tokenFile, cause }))
+      .then(result => ({ action: result?.action }), error => ({ action: error.action, reason: error.message }));
+    return this.reauthAttempt;
+  }
+
   async request(pathname, { method = "GET", body, signal } = {}, retried = false) {
+    if (this.token === null && this.tokenFile) {
+      const { action, reason } = await this.runReauth("first-run");
+      try { if (!reason) this.token = readToken(this.tokenFile); } catch { /* fail closed below */ }
+      if (this.token === null) throw new T3AuthError({ method, pathname, action, reason: reason ?? "the issued bearer could not be read", missing: this.tokenFile });
+    }
     const usedToken = this.token;
     const response = await this.fetchImpl(`${this.baseUrl}${pathname}`, {
       method,
@@ -149,10 +164,7 @@ export class T3Client {
       };
       if (!retried && this.tokenFile && rotated()) return this.request(pathname, { method, body, signal }, "rotated");
       if (this.reauth && this.tokenFile && (!retried || this.reauthAttempt)) {
-        // Concurrent 401s share one issuance; a failed or exhausted attempt is never repeated.
-        this.reauthAttempt ??= Promise.resolve().then(() => this.reauth({ tokenFile: this.tokenFile }))
-          .then(result => ({ action: result?.action }), error => ({ action: error.action, reason: error.message }));
-        const { action, reason } = await this.reauthAttempt;
+        const { action, reason } = await this.runReauth("401");
         // Safe to retry once even for dispatches: a 401 means T3 rejected the request before acting.
         if (!retried && !reason && rotated()) return this.request(pathname, { method, body, signal }, "reauth");
         const rejected = { rotated: "the replaced bearer in the token file was also rejected", reauth: "a newly issued session was also rejected" }[retried];
@@ -454,11 +466,12 @@ export class T3HttpError extends Error {
 export const T3_REAUTH_ACTION = 'tentacles reauth --t3-bin "$(command -v t3)" --t3-home "$HOME/.t3"';
 
 export class T3AuthError extends T3HttpError {
-  constructor({ method, pathname, action = T3_REAUTH_ACTION, reason }) {
+  // missing: the token file path when no bearer existed yet (KRA-10852); same 401 code so every caller maps it.
+  constructor({ method, pathname, action = T3_REAUTH_ACTION, reason, missing = null }) {
     super({ method, pathname, status: 401 });
     this.name = "T3AuthError";
     this.code = "t3_reauth_required";
     this.action = action;
-    this.message = `T3 authentication rejected (401); the bearer expired, was revoked, or belongs to another T3 home.${reason ? ` ${reason[0].toUpperCase()}${reason.slice(1)}.` : ""} Re-authenticate using the colocated T3 CLI: ${this.action}`;
+    this.message = `${missing ? `No T3 bearer yet (token file missing or empty: ${missing}).` : "T3 authentication rejected (401); the bearer expired, was revoked, or belongs to another T3 home."}${reason ? ` ${reason[0].toUpperCase()}${reason.slice(1)}.` : ""} Re-authenticate using the colocated T3 CLI: ${this.action}`;
   }
 }

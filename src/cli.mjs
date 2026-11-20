@@ -296,7 +296,7 @@ Environment:
                             run against the T3 environment on that computer through an SSH loopback forward
   TENTACLES_COMPUTERS_FILE  default <state dir>/computers.json
   TENTACLES_T3_AUTO_REAUTH  0 disables the local one-time reauth + retry on a T3 401 (default on)
-  TENTACLES_T3_BIN          T3 CLI for that reauth (default: t3 on PATH, else newest <T3 home>/runtime/versions/*/t3)
+  TENTACLES_T3_BIN          T3 CLI for that reauth (default: t3 on PATH, else newest <T3 home>/runtime/versions/*/t3, else <T3 home>/bin/t3)
   TENTACLES_T3_HOME         T3 home for that reauth (default ~/.t3)
   TENTACLES_STALL_IDLE_MINUTES  default 10: idle window before report/observe call a disconnected turn stalled
   T3_HERMES_TOKEN_FILE      default ~/.local/state/t3-hermes-bridge/t3.token
@@ -455,7 +455,7 @@ async function main() {
     });
     if (responds) result.responds = await probeResponds(client, result.labs, responds);
     console.log(options.json ? JSON.stringify(result, null, 2) : formatDoctor(result));
-    if (result.t3?.auth?.status === "invalid") process.exitCode = 1;
+    if (result.t3?.auth?.status === "invalid" || result.t3?.reachable === false) process.exitCode = 1;
     return;
   }
   if (command === "pair") {

@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { createServer } from "node:http";
 import { test } from "node:test";
 import { T3Client, T3AuthError } from "../src/t3-client.mjs";
-import { createAutoReauth, resolveT3Bin } from "../src/t3-auth.mjs";
+import { createAutoReauth, reauthenticate, resolveT3Bin } from "../src/t3-auth.mjs";
 
 // Synthetic T3 homes only: nothing here reads or issues against the real ~/.t3.
 const OLD = "synthetic-expired-bearer-1111";
@@ -99,7 +99,9 @@ test("no T3 CLI found fails closed without issuing and names the T3 home", async
   await assert.rejects(h.client.snapshot(), error => {
     assert.ok(error instanceof T3AuthError);
     assert.match(error.message, /found no executable T3 CLI/);
-    assert.equal(error.action, `tentacles reauth --t3-bin "$(command -v t3)" --t3-home '${h.t3Home}' --token-file '${h.tokenFile}'`);
+    assert.ok(error.message.includes(path.join(h.t3Home, "bin")), "names the stock launcher directory");
+    assert.match(error.message, /open T3 Code \(Beta\) once/);
+    assert.equal(error.action, `Open T3 Code (Beta) once, then run: tentacles reauth --t3-bin '${path.join(h.t3Home, "bin", "t3")}' --t3-home '${h.t3Home}' --token-file '${h.tokenFile}'`);
     assert.deepEqual(tokens(error.message), []);
     return true;
   });
@@ -213,4 +215,144 @@ test("CLI doctor reauthenticates through a synthetic T3 home and never prints a 
   }
   assert.match(fs.readFileSync(marker, "utf8"), /^auth session issue --base-dir /);
   assert.equal(fs.readFileSync(f.tokenFile, "utf8"), `${NEW}\n`);
+});
+
+// KRA-10852: stock T3 Code (Beta) v0.1.11 writes its CLI launcher to <T3 home>/bin/t3
+// (bin/t3.cmd on Windows) and has no runtime/versions directory.
+function addLauncher(t3Home, name = "t3", mode = 0o755) {
+  fs.mkdirSync(path.join(t3Home, "bin"), { recursive: true });
+  fs.writeFileSync(path.join(t3Home, "bin", name), `#!/bin/sh\necho ${NEW}\n`, { mode });
+  return fs.realpathSync(path.join(t3Home, "bin", name));
+}
+
+test("a fresh stock T3 home with only bin/t3 reauthenticates on 401 with no flag (KRA-10852)", async t => {
+  const h = harness(t, { versions: [], responses: byBearer });
+  const launcher = addLauncher(h.t3Home);
+  assert.equal(resolveT3Bin({ t3Home: h.t3Home, pathEnv: "" }), launcher);
+  assert.deepEqual(await h.client.snapshot(), { accepted: true });
+  assert.equal(h.spawned.length, 1);
+  assert.equal(h.spawned[0].bin, launcher);
+  assert.deepEqual(h.spawned[0].args.slice(0, 5), ["auth", "session", "issue", "--base-dir", h.t3Home]);
+  assert.equal(fs.readFileSync(h.tokenFile, "utf8"), `${NEW}\n`);
+  assert.deepEqual(tokens(h.logs.join("\n")), []);
+});
+
+test("runtime/versions keeps priority over bin/t3; PATH and an explicit flag win over both (KRA-10852)", t => {
+  const f = fixture(t, ["0.0.46"]);
+  const launcher = addLauncher(f.t3Home);
+  const versioned = fs.realpathSync(path.join(f.t3Home, "runtime", "versions", "0.0.46", "t3"));
+  assert.equal(resolveT3Bin({ t3Home: f.t3Home, pathEnv: "" }), versioned);
+  const onPath = path.join(f.dir, "onpath");
+  fs.mkdirSync(onPath);
+  fs.writeFileSync(path.join(onPath, "t3"), "#!/bin/sh\n", { mode: 0o755 });
+  assert.equal(resolveT3Bin({ t3Home: f.t3Home, pathEnv: onPath }), fs.realpathSync(path.join(onPath, "t3")));
+  assert.equal(resolveT3Bin({ t3Bin: launcher, t3Home: f.t3Home, pathEnv: onPath }), launcher);
+  fs.rmSync(path.join(f.t3Home, "runtime"), { recursive: true });
+  assert.equal(resolveT3Bin({ t3Home: f.t3Home, pathEnv: "" }), launcher);
+});
+
+test("bin/t3 that is not executable or escapes the T3 home is ignored; Windows looks for bin/t3.cmd (KRA-10852)", t => {
+  const f = fixture(t, []);
+  fs.mkdirSync(f.t3Home);
+  assert.equal(resolveT3Bin({ t3Home: f.t3Home, pathEnv: "" }), null, "an empty fresh home finds nothing");
+  addLauncher(f.t3Home, "t3", 0o644);
+  assert.equal(resolveT3Bin({ t3Home: f.t3Home, pathEnv: "" }), null);
+  fs.rmSync(path.join(f.t3Home, "bin", "t3"));
+  const outside = path.join(f.dir, "outside-t3");
+  fs.writeFileSync(outside, "#!/bin/sh\n", { mode: 0o755 });
+  fs.symlinkSync(outside, path.join(f.t3Home, "bin", "t3"));
+  assert.equal(resolveT3Bin({ t3Home: f.t3Home, pathEnv: "" }), null);
+  const cmd = addLauncher(f.t3Home, "t3.cmd");
+  assert.equal(resolveT3Bin({ t3Home: f.t3Home, pathEnv: "", platform: "win32" }), cmd);
+});
+
+// KRA-10852: a brand-new machine has no token file at all; the first request issues one.
+function firstRun(t, { launcher = true, tokenFile: state = "missing", serve } = {}) {
+  const h = harness(t, { versions: [], responses: serve ?? byBearer });
+  fs.rmSync(h.tokenFile);
+  if (state === "empty") fs.writeFileSync(h.tokenFile, "", { mode: 0o600 });
+  if (launcher) addLauncher(h.t3Home);
+  else fs.mkdirSync(h.t3Home, { recursive: true });
+  const reauth = createAutoReauth({ env: { PATH: "" }, t3Home: h.t3Home, log: line => h.logs.push(line),
+    spawnImpl: (bin, args) => { h.spawned.push({ bin, args }); return { status: 0, stdout: `${NEW}\n`, stderr: OLD }; } });
+  const client = new T3Client({ orchestrationProtocol: 1, tokenFile: h.tokenFile, reauth,
+    fetchImpl: async (url, init) => { h.calls.push(init); return (serve ?? byBearer)(init); } });
+  return { ...h, client };
+}
+
+for (const state of ["missing", "empty"]) {
+  test(`${state} token file + launcher: the first request issues a session once and signs in with no flag (KRA-10852)`, async t => {
+    const h = firstRun(t, { tokenFile: state });
+    const results = await Promise.all([h.client.snapshot(), h.client.snapshot()]);
+    assert.deepEqual(results, [{ accepted: true }, { accepted: true }]);
+    assert.equal(h.spawned.length, 1, "concurrent first requests share one issuance");
+    assert.equal(h.spawned[0].bin, fs.realpathSync(path.join(h.t3Home, "bin", "t3")));
+    assert.ok(h.calls.every(init => init.headers.authorization === `Bearer ${NEW}`), "no request goes out without a bearer");
+    assert.equal(fs.readFileSync(h.tokenFile, "utf8"), `${NEW}\n`);
+    assert.equal(fs.statSync(h.tokenFile).mode & 0o777, 0o600);
+    assert.deepEqual(tokens(h.logs.join("\n")), []);
+    assert.deepEqual(h.logs, [`Tentacles: no T3 bearer yet; issued a new session with ${h.spawned[0].bin}`], "no request was sent, so no 401 is claimed");
+  });
+}
+
+test("missing token file + no launcher: named code and one-line action, nothing issued, no request sent (KRA-10852)", async t => {
+  const h = firstRun(t, { launcher: false });
+  await assert.rejects(h.client.snapshot(), error => {
+    assert.ok(error instanceof T3AuthError);
+    assert.equal(error.code, "t3_reauth_required");
+    assert.match(error.message, /^No T3 bearer yet \(token file missing or empty: /);
+    assert.match(error.action, /^Open T3 Code \(Beta\) once, then run: tentacles reauth --t3-bin '[^']*\/bin\/t3' /);
+    assert.equal(error.action.includes("\n"), false);
+    assert.deepEqual(tokens(`${error.message} ${error.action}`), []);
+    return true;
+  });
+  assert.equal(h.spawned.length, 0);
+  assert.equal(h.calls.length, 0);
+  assert.equal(fs.existsSync(h.tokenFile), false);
+});
+
+test("an existing valid token file is used as-is and never re-issued (KRA-10852)", async t => {
+  const h = harness(t, { versions: [], responses: () => new Response('{"accepted":true}') });
+  addLauncher(h.t3Home);
+  assert.deepEqual(await h.client.snapshot(), { accepted: true });
+  assert.equal(h.spawned.length, 0);
+  assert.equal(h.calls[0].headers.authorization, `Bearer ${OLD}`);
+  assert.equal(fs.readFileSync(h.tokenFile, "utf8"), OLD);
+});
+
+test("without a reauth hook a missing or empty token file still fails in the constructor (KRA-10852)", t => {
+  const f = fixture(t, []);
+  fs.rmSync(f.tokenFile);
+  assert.throws(() => new T3Client({ tokenFile: f.tokenFile }), /T3 bearer token file is missing/);
+  fs.writeFileSync(f.tokenFile, "", { mode: 0o600 });
+  assert.throws(() => new T3Client({ tokenFile: f.tokenFile }), /size is outside the accepted range/);
+  fs.rmSync(f.tokenFile);
+  const target = path.join(f.dir, "empty-target");
+  fs.writeFileSync(target, "", { mode: 0o600 });
+  fs.symlinkSync(target, f.tokenFile);
+  assert.throws(() => new T3Client({ tokenFile: f.tokenFile, reauth: () => assert.fail("never") }), /must not be a symlink/, "a symlinked token file is never a first run");
+});
+
+test("a 401 reissue still logs the 401 (KRA-10852 P3-2)", async t => {
+  const h = harness(t, { versions: [], responses: byBearer });
+  addLauncher(h.t3Home);
+  await h.client.snapshot();
+  assert.deepEqual(h.logs, [`Tentacles: T3 rejected the bearer (401); issued a new session with ${h.spawned[0].bin}`]);
+});
+
+test("Windows: the bin\\t3.cmd launcher is named as unsupported, never offered or spawned (KRA-10852 P3-1)", async t => {
+  const h = harness(t, { versions: [], responses: byBearer });
+  const cmd = addLauncher(h.t3Home, "t3.cmd");
+  const reauth = createAutoReauth({ env: { PATH: "" }, t3Home: h.t3Home, platform: "win32", log: line => h.logs.push(line),
+    spawnImpl: () => assert.fail("a .cmd is never spawned") });
+  assert.throws(() => reauth({ tokenFile: h.tokenFile }), error => {
+    assert.match(error.message, /found .*t3\.cmd, but Windows is not supported yet: the T3 Code \(Beta\) CLI there is a \.cmd launcher/);
+    assert.equal(error.action, "Windows is not supported yet: the T3 Code (Beta) CLI there is a .cmd launcher that Tentacles cannot run; run Tentacles on macOS or Linux.");
+    return true;
+  });
+  fs.rmSync(cmd);
+  assert.throws(() => reauth({ tokenFile: h.tokenFile }), error => /^Windows is not supported yet/.test(error.action), "nothing found on Windows offers no reauth command");
+  assert.throws(() => reauthenticate({ t3Bin: cmd, t3Home: h.t3Home, tokenFile: h.tokenFile, platform: "win32", spawnImpl: () => assert.fail("never") }),
+    /Windows is not supported yet/);
+  assert.equal(fs.readFileSync(h.tokenFile, "utf8"), OLD);
 });

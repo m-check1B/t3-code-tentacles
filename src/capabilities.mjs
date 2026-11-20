@@ -601,6 +601,9 @@ export function labsFromDoctor(report) {
   })).filter((lab) => lab.instanceId);
 }
 
+// Doctor answers JSON when T3 is down or unauthorized (KRA-10852); both mean "unavailable", never "ok, no labs".
+const labsUsable = (report) => Boolean(report) && report.t3?.reachable !== false && report.t3?.auth?.status !== "invalid";
+
 export async function scanCapabilities({
   env = process.env,
   platform = process.platform,
@@ -647,8 +650,8 @@ export async function scanCapabilities({
       mcp: mcp.rows.map(withMcpFix),
       plugins: plugins.rows,
       skills: skills.rows,
-      labs: doctorReport ? labsFromDoctor(doctorReport) : null,
-      labsState: doctorReport === undefined ? "skipped" : doctorReport ? "ok" : "unavailable",
+      labs: labsUsable(doctorReport) ? labsFromDoctor(doctorReport) : null,
+      labsState: doctorReport === undefined ? "skipped" : labsUsable(doctorReport) ? "ok" : "unavailable",
       // KRA-8715: labs the T3 managed policy forbids; doctor already left them out of `labs`.
       blockedByPolicy: Array.isArray(doctorReport?.blockedByPolicy)
         ? doctorReport.blockedByPolicy.map((lab) => ({ instanceId: lab.instanceId, driver: lab.driver ?? null, code: "policy_refused" }))
