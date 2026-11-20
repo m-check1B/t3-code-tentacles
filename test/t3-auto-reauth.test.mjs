@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { createServer } from "node:http";
 import { test } from "node:test";
 import { T3Client, T3AuthError } from "../src/t3-client.mjs";
-import { createAutoReauth, reauthenticate, resolveT3Bin } from "../src/t3-auth.mjs";
+import { createAutoReauth, policyT3Bin, reauthenticate, resolveT3Bin } from "../src/t3-auth.mjs";
 
 // Synthetic T3 homes only: nothing here reads or issues against the real ~/.t3.
 const OLD = "synthetic-expired-bearer-1111";
@@ -485,4 +485,91 @@ test("CLI doctor on a home with a stale runtime launcher signs in through bin/t3
   assert.ok(!String(stdout).includes(stale), "no doctor hint names the stale launcher");
   assert.deepEqual(leaked(stdout + stderr), []);
   assert.equal(fs.readFileSync(f.tokenFile, "utf8"), `${NEW}\n`);
+});
+
+// B3 P1-1 on PR 96: one snapshot of the token file covers every launcher tried.
+const WRITER = "synthetic-concurrent-writer-9999";
+const rewrite = tokenFile => { fs.writeFileSync(`${tokenFile}.w`, `${WRITER}\n`, { mode: 0o600 }); fs.renameSync(`${tokenFile}.w`, tokenFile); };
+
+test("a writer that replaces the token file while a rejected launcher is probed is never overwritten by the next launcher (KRA-10860 B3 P1-1)", async t => {
+  const h = staleHome(t);
+  const probe = h.client.fetchImpl;
+  h.client.fetchImpl = async (url, init) => {
+    if (init.headers.authorization === `Bearer ${STALE}`) rewrite(h.tokenFile);
+    return probe(url, init);
+  };
+  await assert.rejects(h.client.snapshot(), error => {
+    assert.ok(error instanceof T3AuthError);
+    assert.ok(error.message.includes(`The token file changed during reauthentication; the newer file was preserved (${h.tokenFile})`));
+    assert.deepEqual(leaked(error.message + error.action).filter(token => token !== WRITER), []);
+    return true;
+  });
+  assert.equal(fs.readFileSync(h.tokenFile, "utf8"), `${WRITER}\n`, "the newer file survives");
+  assert.deepEqual(h.spawned, [h.stale], "no further launcher issues once the file changed");
+});
+
+test("a writer that replaces the file while the next launcher issues is caught at commit and survives (KRA-10860 B3 P1-1)", async t => {
+  const f = fixture(t, ["0.0.45"]);
+  const stale = fs.realpathSync(path.join(f.t3Home, "runtime", "versions", "0.0.45", "t3"));
+  const launcher = addLauncher(f.t3Home);
+  const spawned = [];
+  // Rewrite while bin/t3 issues: the snapshot that launcher sees is not the one taken before the loop.
+  const reauth = createAutoReauth({ env: { PATH: "" }, t3Home: f.t3Home, log: () => {},
+    spawnImpl: bin => { spawned.push(bin); if (bin === launcher) rewrite(f.tokenFile); return { status: 0, stdout: `${bin === launcher ? NEW : STALE}\n` }; } });
+  let probes = 0;
+  const accepts = async token => { probes++; return token === NEW; };
+  await assert.rejects(reauth({ tokenFile: f.tokenFile, accepts }), error => error.message.includes(`newer file was preserved (${f.tokenFile})`));
+  assert.deepEqual(spawned, [stale, launcher]);
+  assert.equal(probes, 2);
+  assert.equal(fs.readFileSync(f.tokenFile, "utf8"), `${WRITER}\n`);
+});
+
+test("every issuance failing names the official bin/t3 in the hint, never a stale launcher (KRA-10860 B3 P3-2)", async t => {
+  const f = fixture(t, ["0.0.45"]);
+  const stale = fs.realpathSync(path.join(f.t3Home, "runtime", "versions", "0.0.45", "t3"));
+  const launcher = addLauncher(f.t3Home);
+  const spawned = [];
+  const reauth = createAutoReauth({ env: { PATH: "" }, t3Home: f.t3Home, log: () => assert.fail("no success"),
+    spawnImpl: bin => { spawned.push(bin); return { status: 1, stdout: "" }; } });
+  await assert.rejects(reauth({ tokenFile: f.tokenFile, accepts: async () => true }), error => {
+    assert.match(error.message, /T3 session issuance failed/);
+    assert.equal(error.action, `tentacles reauth --t3-bin '${launcher}' --t3-home '${f.t3Home}' --token-file '${f.tokenFile}'`);
+    assert.ok(!error.action.includes(stale));
+    return true;
+  });
+  assert.deepEqual(spawned, [stale, launcher]);
+  assert.equal(fs.readFileSync(f.tokenFile, "utf8"), OLD);
+});
+
+test("doctor's policy show uses the official bin/t3 when it exists, else the first launcher; explicit stays explicit (KRA-10860 B3 P3-3)", t => {
+  const f = fixture(t, ["0.0.45"]);
+  const stale = fs.realpathSync(path.join(f.t3Home, "runtime", "versions", "0.0.45", "t3"));
+  assert.equal(policyT3Bin({ t3Home: f.t3Home, pathEnv: "" }), stale, "a runtime-only host is unchanged");
+  const launcher = addLauncher(f.t3Home);
+  assert.equal(policyT3Bin({ t3Home: f.t3Home, pathEnv: "" }), launcher);
+  const onPath = path.join(f.dir, "onpath");
+  fs.mkdirSync(onPath);
+  fs.writeFileSync(path.join(onPath, "t3"), "#!/bin/sh\n", { mode: 0o755 });
+  assert.equal(policyT3Bin({ t3Home: f.t3Home, pathEnv: onPath }), launcher);
+  assert.equal(policyT3Bin({ t3Bin: stale, t3Home: f.t3Home, pathEnv: onPath }), stale);
+  assert.equal(policyT3Bin({ t3Bin: path.join(f.dir, "missing"), t3Home: f.t3Home, pathEnv: "" }), null);
+});
+
+test("an old t3 on PATH whose session the running T3 rejects falls through to the official bin/t3 (KRA-10860, Pro's second Mac)", async t => {
+  const f = fixture(t, []);
+  const personal = path.join(f.dir, "personal-bin");
+  fs.mkdirSync(personal);
+  fs.writeFileSync(path.join(personal, "t3"), "#!/bin/sh\n", { mode: 0o755 });
+  const old = fs.realpathSync(path.join(personal, "t3"));
+  const launcher = addLauncher(f.t3Home);
+  const spawned = [], logs = [];
+  const reauth = createAutoReauth({ env: { PATH: personal }, t3Home: f.t3Home, log: line => logs.push(line),
+    spawnImpl: bin => { spawned.push(bin); return { status: 0, stdout: `${bin === launcher ? NEW : STALE}\n` }; } });
+  const client = new T3Client({ orchestrationProtocol: 1, tokenFile: f.tokenFile, reauth, fetchImpl: async (url, init) =>
+    init.headers.authorization === `Bearer ${NEW}` ? new Response('{"accepted":true}') : new Response(OLD, { status: 401 }) });
+  assert.equal(resolveT3Bin({ t3Home: f.t3Home, pathEnv: personal }), old, "PATH is the first candidate");
+  assert.deepEqual(await client.snapshot(), { accepted: true });
+  assert.deepEqual(spawned, [old, launcher]);
+  assert.equal(fs.readFileSync(f.tokenFile, "utf8"), `${NEW}\n`);
+  assert.equal(logs[0], `Tentacles: skipped T3 CLI ${old}: the running T3 rejected the session it issued`);
 });
