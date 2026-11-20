@@ -118,8 +118,8 @@ arrows and two different proof claims.
                         without the T3 GUI
                                 |
               [Tentacles adapter: protocol V1 / V2]
-               V2: patched atomic mode + message RPC
-               Talk: patched turn-result contract
+               V2: stock T3 Code (Beta) 0.1.8+
+               Talk: exact run joined to messageId
                                 |
                             [T3 Code]
                                 |
@@ -149,10 +149,10 @@ flowchart TB
     Chairs --> ChairCLI["Tentacles chair CLI"]
     ChairCLI --> Adapter["Tentacles adapter: negotiated V1 / V2"]
     Adapter --> V1["V1 orchestration API"]
-    Adapter --> V2["V2: patched atomic mode + message RPC"]
+    Adapter --> V2["V2: stock T3 Code (Beta), see config/t3-support.json"]
     V1 --> T3["T3 Code"]
     V2 --> T3
-    T3 --> Result["Talk requires patched turn-result correlation"]
+    T3 --> Result["Talk: exact turn result from the thread projection"]
     T3 --> Native["T3 native: Codex CLI, Claude Code CLI, Grok Code CLI, OpenCode CLI, Cursor CLI, Antigravity (Gemini), t3 pair / app.t3.codes"]
     T3 --> Additive["Tentacles additive: Kimi CLI, DeepSeek CLI, Hermes, Pi CLI"]
 ```
@@ -165,13 +165,14 @@ flowchart TB
 | --- | --- |
 | Tentacles version | This is the 0.5 source line; identify the exact commit as well as the package version. It does not identify the installed or running build. |
 | Negotiated protocol | The T3 environment descriptor selects V1 or V2. An absent protocol field or descriptor selects V1; an unknown protocol refuses. Tentacles 0.5 can still use V1. |
-| Required patched T3 extensions | V2 turns require `orchestration.dispatchMessageWithMode` to accept mode and message atomically. Local Talk also requires the patched `turn-result` contract with exact command/message/run correlation. A V2 descriptor alone proves neither extension. |
+| Supported T3 Code | The official, unmodified T3 Code (Beta) in the range stated in `config/t3-support.json` (today 0.1.8 through 0.1.11, tested on v0.1.11). No fork or patched build is needed or asked for. Doctor reports `t3.support` (`supported`, `untested`, `unsupported`, `legacy`, `unknown`) and, outside the range, one recovery line with the official download. TPLUS fork builds (0.0.42-tplus.*) still work through the legacy patched route until the estate has moved; that path is marked for removal. |
 | Staged runtime proof | Verify exact installed/running T3 and Tentacles builds, selected protocol, extensions, and real flows on each host through the authorized rollout gates. Source tests and a ready lab row do not prove a cutover. |
 
-The V2 T3 source of record is `m-check1B/t3code-hermes-private-archive`, branch
-`jack/upstream-0.1.0` (audited stage-1 commit `e027af1a`). The 24 October 2026
-audit found every inspected live host still using V1; the staged estate V2
-cutover remains incomplete. This documentation changes no runtime or host pin.
+The T3 source of record is upstream `pingdotgg/t3code` (official releases only;
+nightlies are not supported). The supported range lives in one machine-readable
+file, `config/t3-support.json`, which Agent Jack's lock and installer read. A
+scheduled job (`.github/workflows/upstream-t3-stable.yml`) proves every new
+upstream stable release against Tentacles without any lab login.
 See [protocol support and limits](docs/orchestration.md#protocol-support-and-runtime-proof).
 
 Remote clients use Tentacles only after the optional outbound pairing path has
@@ -237,7 +238,8 @@ Local Talk support is separate from lab readiness. Doctor probes T3's
 `GET /api/orchestration/turn-result` and publishes `capabilities.talkTurnResult`
 only for the exact `"v1"` contract. The bounded `t3.talk` finding carries
 `status`, `code`, and one-line `action` text for inline recovery. A missing route,
-SPA response, or absent contract reports `t3_not_patched`; timeout, connection,
+SPA response, or absent contract reports `t3_not_patched` (machine code kept for
+compatibility; its action names the supported stock range and the official download); timeout, connection,
 and authentication failures remain unavailable. Local doctor and the paired
 `doctor-status` report use the same outcome. No response bodies are published.
 
@@ -515,8 +517,8 @@ output or concurrent replacement preserve the existing file. Besides an explicit
 
 Stock v0.0.42 and the exact V2 nightly v0.0.46-nightly.20261003.2610 expose the
 same session-issue flags and no local refresh grant (source comparison). This is
-an authentication-CLI comparison only. Tentacles' V1/V2 adapter and required
-patched T3 extensions are described in
+an authentication-CLI comparison only. Tentacles' V1/V2 adapter and the supported
+stock T3 range are described in
 [protocol support and limits](docs/orchestration.md#protocol-support-and-runtime-proof);
 neither that source support nor this flag comparison proves an installed V2
 runtime or the estate cutover.

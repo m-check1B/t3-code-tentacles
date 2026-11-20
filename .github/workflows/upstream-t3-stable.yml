@@ -1,0 +1,78 @@
+name: upstream-t3-stable
+run-name: upstream T3 Code ${{ inputs.tag || 'latest stable' }} vs Tentacles
+
+# Proves each upstream T3 Code (Beta) stable release against Tentacles with no
+# AI and no lab login (scripts/stock-t3-smoke.mjs). A failure opens one issue
+# per upstream tag in this repo, titled with the tag, and fails the run. No
+# Linear route is configured for this repo.
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Upstream tag to test (default latest stable)
+        required: false
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: upstream-t3-stable
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: jack-ci-x64
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Resolve upstream stable tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_TAG:-}" ]; then tag="$INPUT_TAG"; else
+            # /releases/latest never returns a prerelease or nightly.
+            tag=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/pingdotgg/t3code/releases/latest | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).tag_name))')
+          fi
+          case "$tag" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "unexpected tag '$tag'"; exit 1 ;; esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          node -e 'const s=require("./config/t3-support.json");console.log(`supported range ${s.minimum}..${s.testedThrough}; testing ${process.argv[1]}`)' "$tag"
+      - name: Download and verify the official release asset
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/t3-$VERSION"; mkdir -p "$dir/dl" "$dir/bin"; cd "$dir/dl"
+          base="https://github.com/pingdotgg/t3code/releases/download/$TAG"
+          curl -fsSLO "$base/SHA256SUMS"
+          curl -fsSLO "$base/t3-$VERSION-linux-x64.tar.gz"
+          grep " t3-$VERSION-linux-x64.tar.gz\$" SHA256SUMS | sha256sum -c -
+          tar -xzf "t3-$VERSION-linux-x64.tar.gz" -C "$dir/bin"
+          echo "T3_BIN=$dir/bin/t3-$VERSION-linux-x64/t3" >> "$GITHUB_ENV"
+      - name: Stock T3 smoke (no lab login)
+        run: node scripts/stock-t3-smoke.mjs --t3-bin "$T3_BIN"
+      - name: Open an issue for this upstream tag
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="Upstream T3 Code ${TAG:-unknown} fails the Tentacles stock smoke"
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY/issues"
+          existing=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "$api?state=open&per_page=100" | TITLE="$title" node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(String(JSON.parse(s).some(i=>i.title===process.env.TITLE))))')
+          if [ "$existing" = "true" ]; then echo "issue already open: $title"; exit 0; fi
+          body=$(TITLE="$title" RUN_URL="$RUN_URL" node -e 'process.stdout.write(JSON.stringify({title:process.env.TITLE,body:`The scheduled stock-T3 smoke failed.\n\nRun: ${process.env.RUN_URL}\n\nDo not widen config/t3-support.json until this passes. Customers on T3 auto-update may already run this release: check Tentacles doctor t3.support and t3.talk on one Mac.`}))')
+          curl -fsSL -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" "$api" -d "$body" > /dev/null
+          echo "::error title=$title::opened issue"

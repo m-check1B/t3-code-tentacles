@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- KRA-10804: Tentacles states the T3 Code versions it supports in one machine-readable file, `config/t3-support.json` (official, unmodified T3 Code (Beta), minimum 0.1.8, tested through v0.1.11). Doctor adds `t3.support` (`supported`, `untested`, `unsupported`, `legacy`, `unknown`) with one inline recovery line and the official download when T3 is outside the range.
+- KRA-10804: `scripts/stock-t3-smoke.mjs` and the scheduled `upstream-t3-stable` workflow prove each new upstream stable T3 release against Tentacles with no AI and no lab login: every paired remote RPC, interrupt, the doctor range and the DeepSeek adapter through a local fake `dsh-acp`. A failure opens one issue titled with the upstream tag.
+
+### Changed
+
+- KRA-10804: the `t3_not_patched` recovery text no longer asks for a patched build. It says to update T3 Code to the tested release from the official download. The machine code is unchanged.
+- KRA-10804: docs describe stock T3 Code (Beta) as the supported path. The TPLUS fork's patched route stays only for 0.0.42-tplus.* hosts until the estate rollout and is marked for removal.
+
+### Fixed
+
+- KRA-10804: the DeepSeek adapter runs DSH read-only for T3's headless runs (commit, PR and title generation, provider probes; ACP client `t3-code-git-text` / `t3-code-provider-probe`) and stops the run on any `session/request_permission`, whatever its id. On stock T3 these runs use the repository as cwd, and DSH's default `workspace-write` could change files without asking. This replaces the TPLUS fork's DeepSeek latches.
+
 ## [0.5.0-jack.16] - 2026-11-08
 
 ### Fixed

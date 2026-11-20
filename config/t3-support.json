@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "product": "T3 Code (Beta)",
+  "source": "https://github.com/pingdotgg/t3code",
+  "download": "https://github.com/pingdotgg/t3code/releases/latest",
+  "minimum": "0.1.8",
+  "testedThrough": "0.1.11",
+  "testedTag": "v0.1.11",
+  "testedCommit": "59651c1761f6c63e9b6056839067066968e6a406",
+  "orchestrationProtocol": 2,
+  "legacy": {
+    "versions": "0.0.42-tplus.*",
+    "note": "TPLUS fork builds keep the legacy patched turn-result route until the estate has moved to stock T3; remove after rollout."
+  }
+}

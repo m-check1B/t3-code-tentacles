@@ -488,3 +488,71 @@ setInterval(() => {}, 1000);
     await once(child, "exit");
   }
 });
+
+// Stock T3 headless text generation (replaces the TPLUS fork's DeepSeek latches).
+test("headless T3 clients are detected from the ACP initialize clientInfo", async () => {
+  const { isHeadlessInitialize, HEADLESS_ACP_CLIENTS } = await import("../src/deepseek-acp-launch.mjs");
+  for (const name of HEADLESS_ACP_CLIENTS) {
+    assert.equal(isHeadlessInitialize(JSON.stringify({ jsonrpc: "2.0", id: 0, method: "initialize", params: { clientInfo: { name } } })), true);
+  }
+  assert.equal(isHeadlessInitialize(JSON.stringify({ jsonrpc: "2.0", id: 0, method: "initialize", params: { clientInfo: { name: "t3-code" } } })), false);
+  assert.equal(isHeadlessInitialize(JSON.stringify({ jsonrpc: "2.0", id: 0, method: "session/new", params: { clientInfo: { name: "t3-code-git-text" } } })), false);
+  assert.equal(isHeadlessInitialize("not json"), false);
+});
+
+test("peekFirstLine returns the first line and replays the exact bytes", async () => {
+  const { peekFirstLine } = await import("../src/deepseek-acp-launch.mjs");
+  const source = new PassThrough();
+  const peeked = peekFirstLine(source);
+  source.write('{"a":1}\n{"b"');
+  const { firstLine, stdin } = await peeked;
+  assert.equal(firstLine, '{"a":1}');
+  source.end(':2}\n');
+  let replayed = "";
+  for await (const chunk of stdin) replayed += chunk.toString("utf8");
+  assert.equal(replayed, '{"a":1}\n{"b":2}\n');
+});
+
+for (const frame of [
+  { name: "omitted id", line: { jsonrpc: "2.0", method: "session/request_permission", params: { sessionId: "s1" } } },
+  { name: "empty id", line: { jsonrpc: "2.0", id: "", method: "session/request_permission", params: { sessionId: "s1" } } },
+  { name: "numeric id", line: { jsonrpc: "2.0", id: 7, method: "session/request_permission", params: { sessionId: "s1" } } },
+]) {
+  test(`headless proxy stops on a permission request (${frame.name}) and forwards no later output`, { timeout: 10_000 }, async () => {
+    const fakeAgent = `
+process.stdin.once("data", () => {
+  process.stdout.write(JSON.stringify(${JSON.stringify(frame.line)}) + "\\n");
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "LEAK" } } } }) + "\\n");
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { stopReason: "end_turn" } }) + "\\n");
+});
+setInterval(() => {}, 1000);
+`;
+    const stdin = new PassThrough();
+    const stdout = new PassThrough();
+    let output = "";
+    stdout.on("data", (chunk) => { output += chunk.toString("utf8"); });
+    const exited = new Promise((resolve) => {
+      const child = startDeepSeekAcpProxy({
+        plan: { binary: process.execPath, args: ["--input-type=module", "-e", fakeAgent], env: { ...process.env } },
+        stdin, stdout, headless: true, exitImpl: resolve,
+      });
+      child.on("error", () => {});
+    });
+    stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "session/prompt", params: { sessionId: "s1" } }) + "\n");
+    await exited;
+    assert.equal(output, "");
+  });
+}
+
+test("buildLaunchPlan forces read-only for headless runs only", async () => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const { buildLaunchPlan } = await import("../src/deepseek-acp-launch.mjs");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "dsh-plan-"));
+  const tokenFile = path.join(home, "openrouter.token");
+  fs.writeFileSync(tokenFile, "sk-or-test-value\n", { mode: 0o600 });
+  const env = { PATH: "", OPENROUTER_TOKEN_FILE: tokenFile, DSH_ACP_BIN: process.execPath, DSH_SESSIONS_ROOT: path.join(home, "s"), DSH_PERMISSION_MODE: "workspace-write" };
+  assert.equal(buildLaunchPlan({ env, home }).env.DSH_PERMISSION_MODE, "workspace-write");
+  assert.equal(buildLaunchPlan({ env, home, headless: true }).env.DSH_PERMISSION_MODE, "read-only");
+});

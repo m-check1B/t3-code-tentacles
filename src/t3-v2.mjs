@@ -35,6 +35,7 @@ export const isUnknownTagError = (error, tag) => error instanceof T3RpcRejectedE
 // Patched T3 v2 (jack/upstream-0.1.0) carries runtime mode atomically on its
 // own message RPC. Upstream T3 >= 0.1.8 removed that tag; it takes
 // message.dispatch through orchestration.dispatchCommand.
+// shortcut: legacy TPLUS path, remove with the patched branches in t3-client.mjs after the stock-T3 rollout.
 export const PATCHED_MESSAGE_METHOD = "orchestration.dispatchMessageWithMode";
 export const UPSTREAM_MESSAGE_METHOD = "orchestration.dispatchCommand";
 
