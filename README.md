@@ -2,7 +2,8 @@
 
 **Tentacles lets one AI agent hire and steer other AI agents.**
 [T3 Code](https://github.com/pingdotgg/t3code) is an app that runs many coding
-agents side by side (Claude Code, Codex, Cursor, Grok Code, OpenCode), but a
+agents side by side (Claude Code, Codex, Cursor, Grok Code, OpenCode,
+Antigravity), but a
 person drives it by clicking. Tentacles is a small command line that lets an
 agent drive it instead. Your orchestrator, the "chair" (the Grok Bot, Agent
 Jack, Claude Code or a plain script), asks `tentacles doctor` which labs are
@@ -20,7 +21,7 @@ The public command is `tentacles`; `t3-agent-bridge` is an exact compatibility
 alias.
 
 T3 Code already orchestrates Codex CLI, Claude Code CLI, Grok Code CLI, OpenCode CLI,
-and Cursor CLI, plus its own `t3 pair` / `app.t3.codes` remote path. Those are
+Cursor CLI and Antigravity (Gemini), plus its own `t3 pair` / `app.t3.codes` remote path. Those are
 T3-native capabilities, not Tentacles inventions or Tentacles proof claims.
 T3's native `codex` driver can host multiple named instances with different
 Codex binaries. Tentacles uses that existing seam to keep the standalone CLI
@@ -129,7 +130,7 @@ arrows and two different proof claims.
                  |                             |
   [Codex CLI] [Claude Code CLI]     [Kimi CLI] [DeepSeek CLI]
   [Grok Code CLI] [OpenCode CLI]   [Hermes] [Pi CLI]
-  [Cursor CLI]
+  [Cursor CLI] [Antigravity]
   [t3 pair / app.t3.codes]
 ```
 
@@ -152,7 +153,7 @@ flowchart TB
     V1 --> T3["T3 Code"]
     V2 --> T3
     T3 --> Result["Talk requires patched turn-result correlation"]
-    T3 --> Native["T3 native: Codex CLI, Claude Code CLI, Grok Code CLI, OpenCode CLI, Cursor CLI, t3 pair / app.t3.codes"]
+    T3 --> Native["T3 native: Codex CLI, Claude Code CLI, Grok Code CLI, OpenCode CLI, Cursor CLI, Antigravity (Gemini), t3 pair / app.t3.codes"]
     T3 --> Additive["Tentacles additive: Kimi CLI, DeepSeek CLI, Hermes, Pi CLI"]
 ```
 
