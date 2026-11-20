@@ -484,7 +484,9 @@ rotated that file. It never retries a network error or an ambiguous server failu
 If the file was not rotated, local CLI commands (not `--computer`) run the
 `reauth` flow below once per process and retry the rejected request once (a 401
 means T3 acted on nothing). The T3 CLI is `TENTACLES_T3_BIN`, else `t3` on PATH,
-else the newest semantic version under `<T3 home>/runtime/versions/*/t3`
+else the newest semantic version under `<T3 home>/runtime/versions/*/t3`,
+else `<T3 home>/bin/t3` (`bin\t3.cmd` on Windows), the launcher stock T3 Code (Beta)
+installs when it first opens
 (`TENTACLES_T3_HOME`, default `~/.t3`; symlinks leaving the T3 home are ignored,
 and a symlink inside it runs as its checked real path). An invalid
 `TENTACLES_T3_BIN` is reported as rejected and never falls through to PATH.

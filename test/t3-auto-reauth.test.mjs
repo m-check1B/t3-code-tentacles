@@ -99,6 +99,8 @@ test("no T3 CLI found fails closed without issuing and names the T3 home", async
   await assert.rejects(h.client.snapshot(), error => {
     assert.ok(error instanceof T3AuthError);
     assert.match(error.message, /found no executable T3 CLI/);
+    assert.ok(error.message.includes(path.join(h.t3Home, "bin")), "names the stock launcher directory");
+    assert.match(error.message, /open T3 Code \(Beta\) once/);
     assert.equal(error.action, `tentacles reauth --t3-bin "$(command -v t3)" --t3-home '${h.t3Home}' --token-file '${h.tokenFile}'`);
     assert.deepEqual(tokens(error.message), []);
     return true;
@@ -213,4 +215,53 @@ test("CLI doctor reauthenticates through a synthetic T3 home and never prints a 
   }
   assert.match(fs.readFileSync(marker, "utf8"), /^auth session issue --base-dir /);
   assert.equal(fs.readFileSync(f.tokenFile, "utf8"), `${NEW}\n`);
+});
+
+// KRA-10852: stock T3 Code (Beta) v0.1.11 writes its CLI launcher to <T3 home>/bin/t3
+// (bin/t3.cmd on Windows) and has no runtime/versions directory.
+function addLauncher(t3Home, name = "t3", mode = 0o755) {
+  fs.mkdirSync(path.join(t3Home, "bin"), { recursive: true });
+  fs.writeFileSync(path.join(t3Home, "bin", name), `#!/bin/sh\necho ${NEW}\n`, { mode });
+  return fs.realpathSync(path.join(t3Home, "bin", name));
+}
+
+test("a fresh stock T3 home with only bin/t3 reauthenticates on 401 with no flag (KRA-10852)", async t => {
+  const h = harness(t, { versions: [], responses: byBearer });
+  const launcher = addLauncher(h.t3Home);
+  assert.equal(resolveT3Bin({ t3Home: h.t3Home, pathEnv: "" }), launcher);
+  assert.deepEqual(await h.client.snapshot(), { accepted: true });
+  assert.equal(h.spawned.length, 1);
+  assert.equal(h.spawned[0].bin, launcher);
+  assert.deepEqual(h.spawned[0].args.slice(0, 5), ["auth", "session", "issue", "--base-dir", h.t3Home]);
+  assert.equal(fs.readFileSync(h.tokenFile, "utf8"), `${NEW}\n`);
+  assert.deepEqual(tokens(h.logs.join("\n")), []);
+});
+
+test("runtime/versions keeps priority over bin/t3; PATH and an explicit flag win over both (KRA-10852)", t => {
+  const f = fixture(t, ["0.0.46"]);
+  const launcher = addLauncher(f.t3Home);
+  const versioned = fs.realpathSync(path.join(f.t3Home, "runtime", "versions", "0.0.46", "t3"));
+  assert.equal(resolveT3Bin({ t3Home: f.t3Home, pathEnv: "" }), versioned);
+  const onPath = path.join(f.dir, "onpath");
+  fs.mkdirSync(onPath);
+  fs.writeFileSync(path.join(onPath, "t3"), "#!/bin/sh\n", { mode: 0o755 });
+  assert.equal(resolveT3Bin({ t3Home: f.t3Home, pathEnv: onPath }), fs.realpathSync(path.join(onPath, "t3")));
+  assert.equal(resolveT3Bin({ t3Bin: launcher, t3Home: f.t3Home, pathEnv: onPath }), launcher);
+  fs.rmSync(path.join(f.t3Home, "runtime"), { recursive: true });
+  assert.equal(resolveT3Bin({ t3Home: f.t3Home, pathEnv: "" }), launcher);
+});
+
+test("bin/t3 that is not executable or escapes the T3 home is ignored; Windows looks for bin/t3.cmd (KRA-10852)", t => {
+  const f = fixture(t, []);
+  fs.mkdirSync(f.t3Home);
+  assert.equal(resolveT3Bin({ t3Home: f.t3Home, pathEnv: "" }), null, "an empty fresh home finds nothing");
+  addLauncher(f.t3Home, "t3", 0o644);
+  assert.equal(resolveT3Bin({ t3Home: f.t3Home, pathEnv: "" }), null);
+  fs.rmSync(path.join(f.t3Home, "bin", "t3"));
+  const outside = path.join(f.dir, "outside-t3");
+  fs.writeFileSync(outside, "#!/bin/sh\n", { mode: 0o755 });
+  fs.symlinkSync(outside, path.join(f.t3Home, "bin", "t3"));
+  assert.equal(resolveT3Bin({ t3Home: f.t3Home, pathEnv: "" }), null);
+  const cmd = addLauncher(f.t3Home, "t3.cmd");
+  assert.equal(resolveT3Bin({ t3Home: f.t3Home, pathEnv: "", platform: "win32" }), cmd);
 });

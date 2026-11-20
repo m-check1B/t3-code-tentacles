@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- KRA-10852: automatic T3 re-authentication finds the CLI on a fresh official T3 Code (Beta) home. After an explicit `TENTACLES_T3_BIN`, `t3` on PATH and the newest `<T3 home>/runtime/versions/*/t3`, it now also tries `<T3 home>/bin/t3` (`bin\t3.cmd` on Windows), the launcher T3 Code (Beta) v0.1.11 installs. Hosts that already resolve keep the same binary. `doctor` on such a home signs itself in without `tentacles reauth --t3-bin`. If no CLI is found, the error names `<T3 home>/bin` and says to open T3 Code (Beta) once.
+
 ## [0.5.0-jack.17] - 2026-11-20
 
 ### Added

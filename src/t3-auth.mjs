@@ -98,22 +98,25 @@ function executableFile(file) {
   } catch { return false; }
 }
 
-// Resolution order: explicit path, PATH, then the newest semver under
-// <t3Home>/runtime/versions/*/t3 whose real path stays inside the T3 home.
-export function resolveT3Bin({ t3Bin, t3Home, pathEnv = process.env.PATH || "" } = {}) {
+// Resolution order: explicit path, PATH, the newest semver under
+// <t3Home>/runtime/versions/*/t3, then <t3Home>/bin/t3 (t3.cmd on Windows), the
+// launcher stock T3 Code (Beta) v0.1.11 writes (DesktopCliShim.launcherPath).
+// The launcher is last so hosts that already resolve keep their binary (KRA-10852).
+// Every T3-home candidate must keep its real path inside the T3 home.
+export function resolveT3Bin({ t3Bin, t3Home, pathEnv = process.env.PATH || "", platform = process.platform } = {}) {
   if (t3Bin) return path.isAbsolute(t3Bin) && executableFile(t3Bin) ? t3Bin : null;
   try {
     const onPath = resolveExecutable("t3", pathEnv);
     if (executableFile(onPath)) return onPath;
   } catch { /* not on PATH */ }
-  let home, entries;
-  try {
-    home = fs.realpathSync(t3Home);
-    entries = fs.readdirSync(path.join(t3Home, "runtime", "versions"));
-  } catch { return null; }
+  let home;
+  try { home = fs.realpathSync(t3Home); } catch { return null; }
+  let entries = [];
+  try { entries = fs.readdirSync(path.join(t3Home, "runtime", "versions")); } catch { /* fresh stock home */ }
   const versions = entries.map(name => SEMVER.exec(name)).filter(Boolean).sort((a, b) => compareVersions(b, a));
-  for (const version of versions) {
-    const candidate = path.join(t3Home, "runtime", "versions", version[0], "t3");
+  const candidates = [...versions.map(version => path.join(t3Home, "runtime", "versions", version[0], "t3")),
+    path.join(t3Home, "bin", platform === "win32" ? "t3.cmd" : "t3")];
+  for (const candidate of candidates) {
     let real;
     try { real = fs.realpathSync(candidate); } catch { continue; }
     // Return what was checked: executing the candidate would re-resolve a swappable symlink.
@@ -144,7 +147,7 @@ export function createAutoReauth({
     if (!resolved && t3Bin) {
       throw fail(`automatic reauthentication rejected TENTACLES_T3_BIN ${t3Bin}: ${path.isAbsolute(t3Bin) ? "not an executable file" : "not an absolute path"}`);
     }
-    if (!resolved) throw fail(`automatic reauthentication found no executable T3 CLI (TENTACLES_T3_BIN, PATH or ${path.join(t3Home, "runtime", "versions")})`);
+    if (!resolved) throw fail(`automatic reauthentication found no executable T3 CLI (TENTACLES_T3_BIN, PATH, ${path.join(t3Home, "runtime", "versions")} or ${path.join(t3Home, "bin")}); open T3 Code (Beta) once so it installs its t3 launcher`);
     try {
       reauthenticate({ t3Bin: resolved, t3Home, tokenFile, spawnImpl });
     } catch (error) {
