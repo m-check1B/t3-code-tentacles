@@ -19,12 +19,19 @@ function ownedDirectory(directory) {
 // never edits T3's database or guesses a new credential from local secrets.
 // remote: t3Bin and t3Home live on another computer and spawnImpl reaches it
 // (computers.mjs remoteIssueSpawn), so the local file checks do not apply.
-export function reauthenticate({ t3Bin, t3Home, tokenFile = process.env.T3_HERMES_TOKEN_FILE || DEFAULT_TOKEN_FILE, spawnImpl = spawnSync, remote = false } = {}) {
+// KRA-10852: Node >= 22 refuses to spawn a .cmd/.bat without a shell (EINVAL), and
+// T3 Code (Beta) on Windows ships its CLI only as bin\t3.cmd. Windows is not supported yet.
+export const WINDOWS_LAUNCHER_UNSUPPORTED = "Windows is not supported yet: the T3 Code (Beta) CLI there is a .cmd launcher that Tentacles cannot run";
+const WINDOWS_ACTION = `${WINDOWS_LAUNCHER_UNSUPPORTED}; run Tentacles on macOS or Linux.`;
+const windowsLauncher = (file, platform) => platform === "win32" && /\.(?:cmd|bat)$/i.test(file);
+
+export function reauthenticate({ t3Bin, t3Home, tokenFile = process.env.T3_HERMES_TOKEN_FILE || DEFAULT_TOKEN_FILE, spawnImpl = spawnSync, remote = false, platform = process.platform } = {}) {
   const absolute = remote ? path.posix.isAbsolute : path.isAbsolute;
   if (![t3Bin, t3Home].every(value => typeof value === "string" && absolute(value)) || typeof tokenFile !== "string" || !path.isAbsolute(tokenFile)) {
     throw new Error("reauth requires absolute --t3-bin, --t3-home and token-file paths");
   }
   if (!remote) {
+    if (windowsLauncher(t3Bin, platform)) throw new Error(`${WINDOWS_LAUNCHER_UNSUPPORTED} (${t3Bin})`);
     fs.accessSync(t3Bin, fs.constants.X_OK);
     if (!fs.statSync(t3Bin).isFile()) throw new Error("T3 CLI must be an executable file");
     if (!fs.statSync(t3Home).isDirectory()) throw new Error("T3 home must already exist");
@@ -137,26 +144,34 @@ export function createAutoReauth({
   t3Home = env.TENTACLES_T3_HOME || path.join(os.homedir(), ".t3"),
   spawnImpl = spawnSync,
   log = message => process.stderr.write(`${message}\n`),
+  platform = process.platform,
 } = {}) {
   if (["0", "false", "off", "no"].includes(String(env.TENTACLES_T3_AUTO_REAUTH ?? "").toLowerCase())) return null;
-  return ({ tokenFile }) => {
-    const resolved = resolveT3Bin({ t3Bin, t3Home, pathEnv: env.PATH || "" });
+  return ({ tokenFile, cause = "401" }) => {
+    const resolved = resolveT3Bin({ t3Bin, t3Home, pathEnv: env.PATH || "", platform });
+    if (resolved && windowsLauncher(resolved, platform)) {
+      // Never offer a reauth command that cannot work; the action is the one-line truth.
+      throw Object.assign(new Error(`automatic reauthentication found ${resolved}, but ${WINDOWS_LAUNCHER_UNSUPPORTED}`),
+        { action: WINDOWS_ACTION });
+    }
     const shown = resolved ?? t3Bin;
     // Nothing found: name the launcher stock T3 Code (Beta) installs when it first opens (KRA-10852).
-    const command = ["tentacles reauth --t3-bin", shellQuote(shown ?? path.join(t3Home, "bin", process.platform === "win32" ? "t3.cmd" : "t3")), "--t3-home", shellQuote(t3Home),
+    const command = ["tentacles reauth --t3-bin", shellQuote(shown ?? path.join(t3Home, "bin", "t3")), "--t3-home", shellQuote(t3Home),
       ...(tokenFile === DEFAULT_TOKEN_FILE ? [] : ["--token-file", shellQuote(tokenFile)])].join(" ");
-    const action = shown ? command : `Open T3 Code (Beta) once, then run: ${command}`;
+    const action = shown ? command : platform === "win32" ? WINDOWS_ACTION
+      : `Open T3 Code (Beta) once, then run: ${command}`;
     const fail = reason => Object.assign(new Error(reason), { action });
     if (!resolved && t3Bin) {
       throw fail(`automatic reauthentication rejected TENTACLES_T3_BIN ${t3Bin}: ${path.isAbsolute(t3Bin) ? "not an executable file" : "not an absolute path"}`);
     }
     if (!resolved) throw fail(`automatic reauthentication found no executable T3 CLI (TENTACLES_T3_BIN, PATH, ${path.join(t3Home, "runtime", "versions")} or ${path.join(t3Home, "bin")}); open T3 Code (Beta) once so it installs its t3 launcher`);
     try {
-      reauthenticate({ t3Bin: resolved, t3Home, tokenFile, spawnImpl });
+      reauthenticate({ t3Bin: resolved, t3Home, tokenFile, spawnImpl, platform });
     } catch (error) {
       throw fail(`automatic reauthentication failed: ${error.message}`);
     }
-    log(`Tentacles: T3 rejected the bearer (401); issued a new session with ${resolved}`);
+    log(cause === "first-run" ? `Tentacles: no T3 bearer yet; issued a new session with ${resolved}`
+      : `Tentacles: T3 rejected the bearer (401); issued a new session with ${resolved}`);
     return { action };
   };
 }

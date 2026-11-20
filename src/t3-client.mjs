@@ -127,15 +127,16 @@ export class T3Client {
 
   // retried: false, "rotated" (operator replaced the token file) or "reauth".
   // Concurrent callers (first run and 401s alike) share one issuance; a failed attempt is never repeated.
-  runReauth() {
-    this.reauthAttempt ??= Promise.resolve().then(() => this.reauth({ tokenFile: this.tokenFile }))
+  // cause: "first-run" (no bearer yet, nothing sent) or "401" (T3 rejected the bearer).
+  runReauth(cause) {
+    this.reauthAttempt ??= Promise.resolve().then(() => this.reauth({ tokenFile: this.tokenFile, cause }))
       .then(result => ({ action: result?.action }), error => ({ action: error.action, reason: error.message }));
     return this.reauthAttempt;
   }
 
   async request(pathname, { method = "GET", body, signal } = {}, retried = false) {
     if (this.token === null && this.tokenFile) {
-      const { action, reason } = await this.runReauth();
+      const { action, reason } = await this.runReauth("first-run");
       try { if (!reason) this.token = readToken(this.tokenFile); } catch { /* fail closed below */ }
       if (this.token === null) throw new T3AuthError({ method, pathname, action, reason: reason ?? "the issued bearer could not be read", missing: this.tokenFile });
     }
@@ -163,7 +164,7 @@ export class T3Client {
       };
       if (!retried && this.tokenFile && rotated()) return this.request(pathname, { method, body, signal }, "rotated");
       if (this.reauth && this.tokenFile && (!retried || this.reauthAttempt)) {
-        const { action, reason } = await this.runReauth();
+        const { action, reason } = await this.runReauth("401");
         // Safe to retry once even for dispatches: a 401 means T3 rejected the request before acting.
         if (!retried && !reason && rotated()) return this.request(pathname, { method, body, signal }, "reauth");
         const rejected = { rotated: "the replaced bearer in the token file was also rejected", reauth: "a newly issued session was also rejected" }[retried];

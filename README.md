@@ -485,8 +485,10 @@ If the file was not rotated, local CLI commands (not `--computer`) run the
 `reauth` flow below once per process and retry the rejected request once (a 401
 means T3 acted on nothing). The T3 CLI is `TENTACLES_T3_BIN`, else `t3` on PATH,
 else the newest semantic version under `<T3 home>/runtime/versions/*/t3`,
-else `<T3 home>/bin/t3` (`bin\t3.cmd` on Windows), the launcher stock T3 Code (Beta)
-installs when it first opens
+else `<T3 home>/bin/t3`, the launcher stock T3 Code (Beta) installs when it
+first opens. Windows is not supported yet: T3 Code (Beta) ships its CLI there
+only as `bin\t3.cmd`, which Node cannot run without a shell, so Tentacles
+names it as unsupported instead of trying it
 (`TENTACLES_T3_HOME`, default `~/.t3`; symlinks leaving the T3 home are ignored,
 and a symlink inside it runs as its checked real path). An invalid
 `TENTACLES_T3_BIN` is reported as rejected and never falls through to PATH.
@@ -494,8 +496,10 @@ A missing CLI, a failed issuance or a second 401 fails as before, naming the
 exact manual command with the resolved (or rejected configured) paths.
 A first run with no token file (or a zero-byte one) takes the same path before
 its first request instead of failing at startup. `doctor --json` reports a
-missing CLI as `t3_reauth_required` and T3 not running as `t3_unreachable`,
-each with a one-line action, and exits 1. Because
+missing CLI as `t3_reauth_required` and T3 not running (connection refused)
+as `t3_unreachable`, each with a one-line action, and exits 1. Other network
+failures keep their error. `capabilities scan` reports `labsState:
+"unavailable"` (`labs: null`) for both. Because
 of this, `doctor` and `capabilities scan` may issue a new 30-day T3 session on a
 401; set `TENTACLES_T3_AUTO_REAUTH=0` to keep them read-only and to disable it. Library `T3Client` instances do this only with a `reauth` hook.
 Explicit in-memory bearers are not replaced from disk. `doctor` reports

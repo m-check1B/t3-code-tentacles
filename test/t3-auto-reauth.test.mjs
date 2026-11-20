@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { createServer } from "node:http";
 import { test } from "node:test";
 import { T3Client, T3AuthError } from "../src/t3-client.mjs";
-import { createAutoReauth, resolveT3Bin } from "../src/t3-auth.mjs";
+import { createAutoReauth, reauthenticate, resolveT3Bin } from "../src/t3-auth.mjs";
 
 // Synthetic T3 homes only: nothing here reads or issues against the real ~/.t3.
 const OLD = "synthetic-expired-bearer-1111";
@@ -291,6 +291,7 @@ for (const state of ["missing", "empty"]) {
     assert.equal(fs.readFileSync(h.tokenFile, "utf8"), `${NEW}\n`);
     assert.equal(fs.statSync(h.tokenFile).mode & 0o777, 0o600);
     assert.deepEqual(tokens(h.logs.join("\n")), []);
+    assert.deepEqual(h.logs, [`Tentacles: no T3 bearer yet; issued a new session with ${h.spawned[0].bin}`], "no request was sent, so no 401 is claimed");
   });
 }
 
@@ -330,4 +331,28 @@ test("without a reauth hook a missing or empty token file still fails in the con
   fs.writeFileSync(target, "", { mode: 0o600 });
   fs.symlinkSync(target, f.tokenFile);
   assert.throws(() => new T3Client({ tokenFile: f.tokenFile, reauth: () => assert.fail("never") }), /must not be a symlink/, "a symlinked token file is never a first run");
+});
+
+test("a 401 reissue still logs the 401 (KRA-10852 P3-2)", async t => {
+  const h = harness(t, { versions: [], responses: byBearer });
+  addLauncher(h.t3Home);
+  await h.client.snapshot();
+  assert.deepEqual(h.logs, [`Tentacles: T3 rejected the bearer (401); issued a new session with ${h.spawned[0].bin}`]);
+});
+
+test("Windows: the bin\\t3.cmd launcher is named as unsupported, never offered or spawned (KRA-10852 P3-1)", async t => {
+  const h = harness(t, { versions: [], responses: byBearer });
+  const cmd = addLauncher(h.t3Home, "t3.cmd");
+  const reauth = createAutoReauth({ env: { PATH: "" }, t3Home: h.t3Home, platform: "win32", log: line => h.logs.push(line),
+    spawnImpl: () => assert.fail("a .cmd is never spawned") });
+  assert.throws(() => reauth({ tokenFile: h.tokenFile }), error => {
+    assert.match(error.message, /found .*t3\.cmd, but Windows is not supported yet: the T3 Code \(Beta\) CLI there is a \.cmd launcher/);
+    assert.equal(error.action, "Windows is not supported yet: the T3 Code (Beta) CLI there is a .cmd launcher that Tentacles cannot run; run Tentacles on macOS or Linux.");
+    return true;
+  });
+  fs.rmSync(cmd);
+  assert.throws(() => reauth({ tokenFile: h.tokenFile }), error => /^Windows is not supported yet/.test(error.action), "nothing found on Windows offers no reauth command");
+  assert.throws(() => reauthenticate({ t3Bin: cmd, t3Home: h.t3Home, tokenFile: h.tokenFile, platform: "win32", spawnImpl: () => assert.fail("never") }),
+    /Windows is not supported yet/);
+  assert.equal(fs.readFileSync(h.tokenFile, "utf8"), OLD);
 });

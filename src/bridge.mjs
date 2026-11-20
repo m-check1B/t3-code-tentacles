@@ -1610,8 +1610,8 @@ async function doctorReport(client, {
     settings = await withinDoctorDeadline(signal, () => client.getSettings({ signal }));
     config = await withinDoctorDeadline(signal, () => client.rpc("server.getConfig", {}, { signal }));
   } catch (error) {
-    // KRA-10852: a refused connection is T3 not running; report it as JSON instead of an empty stdout.
-    if (error instanceof TypeError && error.message === "fetch failed" && !signal?.aborted) {
+    // KRA-10852: only a refused connection is T3 not running; other network failures keep their error.
+    if (error instanceof TypeError && error.cause?.code === "ECONNREFUSED" && !signal?.aborted) {
       const action = "Open T3 Code (Beta), then rerun tentacles doctor.";
       return {
         product: "Tentacles",
