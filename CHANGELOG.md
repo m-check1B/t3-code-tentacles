@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.5.0-jack.17] - 2026-11-20
+
 ### Added
 
 - KRA-10804: Tentacles states the T3 Code versions it supports in one machine-readable place, `T3_SUPPORT` in `src/t3-support.mjs`, which every vendored copy carries (official, unmodified T3 Code (Beta), minimum 0.1.8, tested through v0.1.11). Doctor adds `t3.support` (`supported`, `untested`, `unsupported`, `legacy`, `unknown`) with one inline recovery line and the official download when T3 is outside the range. Patched `-tplus.` and `-jack.` builds report `legacy`. The check never throws, so doctor and every RPC keep working.
