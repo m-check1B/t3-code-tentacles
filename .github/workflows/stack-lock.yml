@@ -1,0 +1,27 @@
+# KRA-10845: this repo's pins and prose agree with its copy of the agent-jack-3 stack lock.
+name: stack-lock
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  stack-lock:
+    # The public twin gets this file but not always the lock copy.
+    if: github.repository == 'm-check1B/t3-code-tentacles-private'
+    runs-on: jack-ci-x64
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # The check reads T3_SUPPORT from src/t3-support.mjs with node.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - run: python3 stack-lock/check-stack-lock.py --self-test
+      - run: python3 stack-lock/check-stack-lock.py tentacles
