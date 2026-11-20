@@ -492,6 +492,11 @@ names it as unsupported instead of trying it
 (`TENTACLES_T3_HOME`, default `~/.t3`; symlinks leaving the T3 home are ignored,
 and a symlink inside it runs as its checked real path). An invalid
 `TENTACLES_T3_BIN` is reported as rejected and never falls through to PATH.
+Each issued session is checked against the running T3 before it is stored. If
+T3 rejects it (for example a leftover launcher of an older T3 app under
+`runtime/versions`), it is dropped and the next CLI in that order is tried, so a
+rejected session is never stored. An explicit `TENTACLES_T3_BIN` is the only
+candidate and is never replaced; its error says to repoint or unset it.
 A missing CLI, a failed issuance or a second 401 fails as before, naming the
 exact manual command with the resolved (or rejected configured) paths.
 A first run with no token file (or a zero-byte one) takes the same path before

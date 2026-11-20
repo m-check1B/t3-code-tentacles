@@ -129,9 +129,24 @@ export class T3Client {
   // Concurrent callers (first run and 401s alike) share one issuance; a failed attempt is never repeated.
   // cause: "first-run" (no bearer yet, nothing sent) or "401" (T3 rejected the bearer).
   runReauth(cause) {
-    this.reauthAttempt ??= Promise.resolve().then(() => this.reauth({ tokenFile: this.tokenFile, cause }))
+    this.reauthAttempt ??= Promise.resolve().then(() => this.reauth({ tokenFile: this.tokenFile, cause, accepts: token => this.accepts(token) }))
       .then(result => ({ action: result?.action }), error => ({ action: error.action, reason: error.message }));
     return this.reauthAttempt;
+  }
+
+  // KRA-10860: does the running T3 accept this bearer? Only a 401 is a rejection;
+  // an unreachable or failing T3 cannot judge it, so the issued bearer is kept as before.
+  async accepts(token) {
+    try {
+      const response = await this.fetchImpl(`${this.baseUrl}/api/orchestration/shell`, {
+        method: "GET",
+        redirect: "error",
+        signal: AbortSignal.timeout(this.requestTimeoutMs),
+        headers: { authorization: `Bearer ${token}`, ...(this.protocolVersion === V2_PROTOCOL ? { [V2_PROTOCOL_HEADER]: "2" } : {}) },
+      });
+      try { await response.body?.cancel(); } catch { /* the status alone decides */ }
+      return response.status !== 401;
+    } catch { return true; }
   }
 
   async request(pathname, { method = "GET", body, signal } = {}, retried = false) {
@@ -168,7 +183,8 @@ export class T3Client {
         // Safe to retry once even for dispatches: a 401 means T3 rejected the request before acting.
         if (!retried && !reason && rotated()) return this.request(pathname, { method, body, signal }, "reauth");
         const rejected = { rotated: "the replaced bearer in the token file was also rejected", reauth: "a newly issued session was also rejected" }[retried];
-        throw new T3AuthError({ method, pathname, action, reason: reason ?? rejected });
+        // After an operator rotation the replaced bearer is the latest news, even when the shared reauth failed.
+        throw new T3AuthError({ method, pathname, action, reason: retried === "rotated" ? rejected : reason ?? rejected });
       }
       throw new T3AuthError({ method, pathname });
     }

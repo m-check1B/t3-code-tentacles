@@ -25,7 +25,39 @@ export const WINDOWS_LAUNCHER_UNSUPPORTED = "Windows is not supported yet: the T
 const WINDOWS_ACTION = `${WINDOWS_LAUNCHER_UNSUPPORTED}; run Tentacles on macOS or Linux.`;
 const windowsLauncher = (file, platform) => platform === "win32" && /\.(?:cmd|bat)$/i.test(file);
 
-export function reauthenticate({ t3Bin, t3Home, tokenFile = process.env.T3_HERMES_TOKEN_FILE || DEFAULT_TOKEN_FILE, spawnImpl = spawnSync, remote = false, platform = process.platform } = {}) {
+export function reauthenticate(options = {}) {
+  return issueSession(options).commit();
+}
+
+// KRA-10860: issues a session into a private temporary file without storing it,
+// so a caller can check it against the running T3 first. commit() stores it with
+// the same race checks; discard() drops it. reauthenticate commits at once.
+// The token file as it was before issuance; a caller trying several launchers takes it once (KRA-10860 B3 P1-1).
+export function snapshotTokenFile(tokenFile) {
+  let original = null;
+  let originalToken = null;
+  try {
+    original = fs.lstatSync(tokenFile);
+    // Same symlink, ownership, permission and bounds gate as runtime reads; a first-run empty file has no bearer to keep.
+    originalToken = tokenFileUnset(tokenFile) ? "" : readToken(tokenFile);
+  } catch (error) { if (error.code !== "ENOENT") throw error; }
+  return { original, originalToken };
+}
+
+export const TOKEN_FILE_CHANGED = "The token file changed during reauthentication; the newer file was preserved";
+
+export function tokenFileUnchanged(tokenFile, { original, originalToken }) {
+  let current = null;
+  try { current = fs.lstatSync(tokenFile); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  if (original ? !current || current.ino !== original.ino || current.dev !== original.dev || current.mtimeMs !== original.mtimeMs || current.size !== original.size : current) {
+    return false;
+  }
+  // ext4 reuses a freed inode and mtime is tick-coarse, so a same-size
+  // replacement can match every stat field; the content cannot.
+  return !current || (tokenFileUnset(tokenFile) ? "" : readToken(tokenFile)) === originalToken;
+}
+
+export function issueSession({ t3Bin, t3Home, tokenFile = process.env.T3_HERMES_TOKEN_FILE || DEFAULT_TOKEN_FILE, spawnImpl = spawnSync, remote = false, platform = process.platform, snapshot = null } = {}) {
   const absolute = remote ? path.posix.isAbsolute : path.isAbsolute;
   if (![t3Bin, t3Home].every(value => typeof value === "string" && absolute(value)) || typeof tokenFile !== "string" || !path.isAbsolute(tokenFile)) {
     throw new Error("reauth requires absolute --t3-bin, --t3-home and token-file paths");
@@ -39,14 +71,10 @@ export function reauthenticate({ t3Bin, t3Home, tokenFile = process.env.T3_HERME
   const directory = path.dirname(tokenFile);
   if (!fs.existsSync(directory)) fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   ownedDirectory(directory);
-  let original = null;
-  let originalToken = null;
-  try {
-    original = fs.lstatSync(tokenFile);
-    // Same symlink, ownership, permission and bounds gate as runtime reads; a first-run empty file has no bearer to keep.
-    originalToken = tokenFileUnset(tokenFile) ? "" : readToken(tokenFile);
-  } catch (error) { if (error.code !== "ENOENT") throw error; }
+  const before = snapshot ?? snapshotTokenFile(tokenFile);
   const temporary = path.join(directory, `.t3-token-${randomUUID()}.tmp`);
+  const discard = () => { try { fs.unlinkSync(temporary); } catch (error) { if (error.code !== "ENOENT") throw error; } };
+  let token;
   try {
     // Never stream stdout/stderr: both may contain bearer material.
     let result;
@@ -59,23 +87,20 @@ export function reauthenticate({ t3Bin, t3Home, tokenFile = process.env.T3_HERME
       throw new Error("T3 session issuance failed; the existing bearer was preserved");
     }
     fs.writeFileSync(temporary, result.stdout.trim() + "\n", { mode: 0o600, flag: "wx" });
-    try { readToken(temporary); } catch { throw new Error("T3 returned an invalid bearer; the existing bearer was preserved"); }
-    ownedDirectory(directory);
-    let current = null;
-    try { current = fs.lstatSync(tokenFile); } catch (error) { if (error.code !== "ENOENT") throw error; }
-    if (original ? !current || current.ino !== original.ino || current.dev !== original.dev || current.mtimeMs !== original.mtimeMs || current.size !== original.size : current) {
-      throw new Error("The token file changed during reauthentication; the newer file was preserved");
-    }
-    // ext4 reuses a freed inode and mtime is tick-coarse, so a same-size
-    // replacement can match every stat field; the content cannot.
-    if (current && (tokenFileUnset(tokenFile) ? "" : readToken(tokenFile)) !== originalToken) {
-      throw new Error("The token file changed during reauthentication; the newer file was preserved");
-    }
-    fs.renameSync(temporary, tokenFile);
-    return { authenticated: true, tokenStored: true, mechanism: remote ? "t3-auth-session-issue-over-ssh" : "t3-auth-session-issue" };
-  } finally {
-    try { fs.unlinkSync(temporary); } catch (error) { if (error.code !== "ENOENT") throw error; }
+    try { token = readToken(temporary); } catch { throw new Error("T3 returned an invalid bearer; the existing bearer was preserved"); }
+  } catch (error) {
+    discard();
+    throw error;
   }
+  const commit = () => {
+    try {
+      ownedDirectory(directory);
+      if (!tokenFileUnchanged(tokenFile, before)) throw new Error(TOKEN_FILE_CHANGED);
+      fs.renameSync(temporary, tokenFile);
+      return { authenticated: true, tokenStored: true, mechanism: remote ? "t3-auth-session-issue-over-ssh" : "t3-auth-session-issue" };
+    } finally { discard(); }
+  };
+  return { token, commit, discard };
 }
 
 export const SEMVER = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
@@ -109,16 +134,19 @@ function executableFile(file) {
 // Resolution order: explicit path, PATH, the newest semver under
 // <t3Home>/runtime/versions/*/t3, then <t3Home>/bin/t3 (t3.cmd on Windows), the
 // launcher stock T3 Code (Beta) v0.1.11 writes (DesktopCliShim.launcherPath).
-// The launcher is last so hosts that already resolve keep their binary (KRA-10852).
+// The launcher is last so hosts that already resolve keep their binary (KRA-10852);
+// automatic sign-in tries the others in order when T3 rejects a session (KRA-10860).
 // Every T3-home candidate must keep its real path inside the T3 home.
-export function resolveT3Bin({ t3Bin, t3Home, pathEnv = process.env.PATH || "", platform = process.platform } = {}) {
-  if (t3Bin) return path.isAbsolute(t3Bin) && executableFile(t3Bin) ? t3Bin : null;
+// An explicit path is the only candidate: it is never replaced.
+export function t3BinCandidates({ t3Bin, t3Home, pathEnv = process.env.PATH || "", platform = process.platform } = {}) {
+  if (t3Bin) return path.isAbsolute(t3Bin) && executableFile(t3Bin) ? [t3Bin] : [];
+  const found = [];
   try {
     const onPath = resolveExecutable("t3", pathEnv);
-    if (executableFile(onPath)) return onPath;
+    if (executableFile(onPath)) found.push(onPath);
   } catch { /* not on PATH */ }
   let home;
-  try { home = fs.realpathSync(t3Home); } catch { return null; }
+  try { home = fs.realpathSync(t3Home); } catch { return found; }
   let entries = [];
   try { entries = fs.readdirSync(path.join(t3Home, "runtime", "versions")); } catch { /* fresh stock home */ }
   const versions = entries.map(name => SEMVER.exec(name)).filter(Boolean).sort((a, b) => compareVersions(b, a));
@@ -128,9 +156,23 @@ export function resolveT3Bin({ t3Bin, t3Home, pathEnv = process.env.PATH || "", 
     let real;
     try { real = fs.realpathSync(candidate); } catch { continue; }
     // Return what was checked: executing the candidate would re-resolve a swappable symlink.
-    if (real.startsWith(home + path.sep) && executableFile(real)) return real;
+    if (real.startsWith(home + path.sep) && executableFile(real) && !found.includes(real)) found.push(real);
   }
-  return null;
+  return found;
+}
+
+export function resolveT3Bin(options = {}) {
+  return t3BinCandidates(options)[0] ?? null;
+}
+
+const realOr = file => { try { return fs.realpathSync(file); } catch { return file; } };
+
+// KRA-10860 B3 P3-3: the CLI whose `policy show` doctor reads. With several launchers, the
+// official bin/t3 the running T3 Code (Beta) wrote, never a leftover first candidate.
+export function policyT3Bin(options = {}) {
+  const candidates = t3BinCandidates(options);
+  const stock = realOr(path.join(options.t3Home ?? "", "bin", "t3"));
+  return candidates.find(bin => bin === stock) ?? candidates[0] ?? null;
 }
 
 const shellQuote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -147,31 +189,62 @@ export function createAutoReauth({
   platform = process.platform,
 } = {}) {
   if (["0", "false", "off", "no"].includes(String(env.TENTACLES_T3_AUTO_REAUTH ?? "").toLowerCase())) return null;
-  return ({ tokenFile, cause = "401" }) => {
-    const resolved = resolveT3Bin({ t3Bin, t3Home, pathEnv: env.PATH || "", platform });
+  // accepts(token): optional async check against the running T3 (T3Client.accepts); false = T3 rejects it (KRA-10860).
+  return async ({ tokenFile, cause = "401", accepts = null }) => {
+    const candidates = t3BinCandidates({ t3Bin, t3Home, pathEnv: env.PATH || "", platform });
+    const resolved = candidates[0] ?? null;
     if (resolved && windowsLauncher(resolved, platform)) {
       // Never offer a reauth command that cannot work; the action is the one-line truth.
       throw Object.assign(new Error(`automatic reauthentication found ${resolved}, but ${WINDOWS_LAUNCHER_UNSUPPORTED}`),
         { action: WINDOWS_ACTION });
     }
-    const shown = resolved ?? t3Bin;
-    // Nothing found: name the launcher stock T3 Code (Beta) installs when it first opens (KRA-10852).
-    const command = ["tentacles reauth --t3-bin", shellQuote(shown ?? path.join(t3Home, "bin", "t3")), "--t3-home", shellQuote(t3Home),
+    const stock = path.join(t3Home, "bin", "t3");
+    const commandFor = bin => ["tentacles reauth --t3-bin", shellQuote(bin), "--t3-home", shellQuote(t3Home),
       ...(tokenFile === DEFAULT_TOKEN_FILE ? [] : ["--token-file", shellQuote(tokenFile)])].join(" ");
-    const action = shown ? command : platform === "win32" ? WINDOWS_ACTION
-      : `Open T3 Code (Beta) once, then run: ${command}`;
-    const fail = reason => Object.assign(new Error(reason), { action });
+    // P3-2: with several launchers, a hint names the official bin/t3 when it is one of them, never a stale one.
+    const official = candidates.length > 1 ? candidates.find(bin => bin === realOr(stock)) : null;
+    const shown = official ?? resolved ?? t3Bin;
+    // Nothing found: name the launcher stock T3 Code (Beta) installs when it first opens (KRA-10852).
+    const action = shown ? commandFor(shown) : platform === "win32" ? WINDOWS_ACTION
+      : `Open T3 Code (Beta) once, then run: ${commandFor(stock)}`;
+    const fail = (reason, hint = action) => Object.assign(new Error(reason), { action: hint });
     if (!resolved && t3Bin) {
       throw fail(`automatic reauthentication rejected TENTACLES_T3_BIN ${t3Bin}: ${path.isAbsolute(t3Bin) ? "not an executable file" : "not an absolute path"}`);
     }
     if (!resolved) throw fail(`automatic reauthentication found no executable T3 CLI (TENTACLES_T3_BIN, PATH, ${path.join(t3Home, "runtime", "versions")} or ${path.join(t3Home, "bin")}); open T3 Code (Beta) once so it installs its t3 launcher`);
-    try {
-      reauthenticate({ t3Bin: resolved, t3Home, tokenFile, spawnImpl, platform });
-    } catch (error) {
-      throw fail(`automatic reauthentication failed: ${error.message}`);
+    const REJECTED = "the running T3 rejected the session it issued";
+    const changed = () => fail(`automatic reauthentication failed: ${TOKEN_FILE_CHANGED} (${tokenFile})`, `Rerun the command; Tentacles now uses ${tokenFile}`);
+    // One snapshot for every launcher: a writer that replaces the file while one is probed is never overwritten (B3 P1-1).
+    let snapshot;
+    try { snapshot = snapshotTokenFile(tokenFile); } catch (error) { throw fail(`automatic reauthentication failed: ${error.message}`); }
+    const failures = [];
+    for (const bin of candidates) {
+      if (failures.length && !tokenFileUnchanged(tokenFile, snapshot)) throw changed();
+      let session;
+      try {
+        session = issueSession({ t3Bin: bin, t3Home, tokenFile, spawnImpl, platform, snapshot });
+      } catch (error) { failures.push([bin, error.message]); continue; }
+      try {
+        // A rejected session is dropped, never stored: the next launcher is tried (a stale runtime/versions/*/t3).
+        if (accepts && !(await accepts(session.token))) { failures.push([bin, REJECTED]); continue; }
+        // A commit error (the token file changed meanwhile) stops here: trying on would overwrite the newer file.
+        try { session.commit(); } catch (error) {
+          throw error.message === TOKEN_FILE_CHANGED ? changed() : fail(`automatic reauthentication failed: ${error.message}`, commandFor(bin));
+        }
+      } finally { session.discard(); }
+      for (const [skipped, why] of failures) log(`Tentacles: skipped T3 CLI ${skipped}: ${why}`);
+      log(cause === "first-run" ? `Tentacles: no T3 bearer yet; issued a new session with ${bin}`
+        : `Tentacles: T3 rejected the bearer (401); issued a new session with ${bin}`);
+      return { action: commandFor(bin) };
     }
-    log(cause === "first-run" ? `Tentacles: no T3 bearer yet; issued a new session with ${resolved}`
-      : `Tentacles: T3 rejected the bearer (401); issued a new session with ${resolved}`);
-    return { action };
+    const reason = failures.length === 1 ? failures[0][1] : failures.map(([bin, why]) => `${bin}: ${why}`).join("; ");
+    if (!failures.some(([, why]) => why === REJECTED)) throw fail(`automatic reauthentication failed: ${reason}`);
+    if (t3Bin) {
+      // Explicit stays explicit: say so and name the next step instead of falling back.
+      throw fail(`automatic reauthentication with TENTACLES_T3_BIN ${t3Bin} failed: ${reason}; TENTACLES_T3_BIN is never replaced automatically`,
+        `Point TENTACLES_T3_BIN at the launcher of the running T3 Code (Beta) (usually ${stock}) or unset it, then run: ${commandFor(stock)}`);
+    }
+    throw fail(`automatic reauthentication failed: ${reason}`,
+      `Check that ${t3Home} is the home of the running T3 Code (Beta) (set TENTACLES_T3_HOME), open T3 Code (Beta) once, then run: ${commandFor(stock)}`);
   };
 }
