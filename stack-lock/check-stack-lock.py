@@ -152,6 +152,15 @@ def run(mode, root, lock_dir):
 
 
 def self_test():
+    base = Path(tempfile.mkdtemp(prefix="stack-lock-self-test-"))
+    try:
+        _self_test(base)
+    finally:
+        shutil.rmtree(base, ignore_errors=True)  # the self-test leaves no temporary repos behind
+    assert not base.exists(), base
+
+
+def _self_test(base):
     lock = {"schema": 1, "revision": 1,
             "tentacles": {"tag": "v0.5.0-x", "version": "0.5.0-x", "commit": "", "t3Contract": "c/v1"},
             "t3": {"publisherRepo": "https://example.invalid/t3", "tag": PENDING, "minimum": PENDING, "testedThrough": PENDING},
@@ -160,7 +169,7 @@ def self_test():
             "flySandbox": {"tentacles": "desktop/resources/tentacles"}}
 
     def repo(files):
-        d = Path(tempfile.mkdtemp())
+        d = Path(tempfile.mkdtemp(dir=base))
         for name, text in files.items():
             (d / name).parent.mkdir(parents=True, exist_ok=True)
             (d / name).write_text(text)
