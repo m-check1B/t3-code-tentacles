@@ -14,7 +14,7 @@ patched or forked build. This supersedes the patched `0.1.0-jack.1` row and the
 | --- | --- |
 | T3 Code (upstream) | `pingdotgg/t3code` tag `v0.1.11`, commit `59651c1761f6c63e9b6056839067066968e6a406` |
 | Linux x64 runtime | release asset `t3-0.1.11-linux-x64.tar.gz`, SHA-256 `2b691c07f5bcb5adea4a863d5324aae7db21bd6d82280cec7787836dcaa013e1` (matches the release `SHA256SUMS`) |
-| Supported range | `config/t3-support.json` in this repo (minimum 0.1.8, tested through 0.1.11) |
+| Supported range | `T3_SUPPORT` in `src/t3-support.mjs` in this repo (minimum 0.1.8, tested through 0.1.11) |
 
 Staging-only follow-up steps (nothing here was run on staging or prod; each
 needs the usual admitted staging packet):

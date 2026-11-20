@@ -17,6 +17,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { waitForTicket } from "./stock-t3-ready.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -77,6 +78,10 @@ async function main() {
   if (issued.status === 0) fs.writeFileSync(tokenFile, `${issued.stdout.trim()}\n`, { mode: 0o600 });
   check("t3 auth session issue", issued.status === 0);
   if (issued.status !== 0) return;
+
+  const ready = await waitForTicket(baseUrl, fs.readFileSync(tokenFile, "utf8").trim());
+  check("t3 auth ready (websocket ticket)", ready.status === 200, ready);
+  if (ready.status !== 200) return;
 
   // Tentacles derives its ledger and state paths from HOME at import: keep them in scratch.
   process.env.HOME = scratch;

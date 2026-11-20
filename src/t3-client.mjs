@@ -267,8 +267,8 @@ export class T3Client {
     return isPlainRecord(capabilities) ? capabilities : {};
   }
 
-  // shortcut: the "patched" branches below serve only TPLUS fork builds (0.0.42-tplus.*);
-  // remove them once the estate runs stock T3 (STOCK-T3-ROLLOUT.md, config/t3-support.json legacy).
+  // shortcut: the "patched" branches below serve only patched builds (0.0.42-tplus.*, 0.1.0-jack.*);
+  // remove them once the estate runs stock T3 (STOCK-T3-ROLLOUT.md, T3_SUPPORT.legacy in t3-support.mjs).
   // KRA-10175: talkTurnResult/v1 capabilities. A patched T3 answers the GET with
   // a JSON record. Upstream T3 v2 has no such route (its SPA fallback answers
   // HTML, or 404/405); there the record is derived from server.getConfig and

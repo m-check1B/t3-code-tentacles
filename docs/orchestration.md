@@ -20,7 +20,7 @@ Keep four facts separate:
    a missing (404) descriptor selects V1. Unknown versions and other descriptor
    failures refuse. Tentacles 0.5 with protocol 1 is a supported pairing.
 3. **Stock T3 Code (Beta).** Tentacles supports the official, unmodified T3
-   Code in the range in `config/t3-support.json` (minimum 0.1.8, the first
+   Code in the range in `src/t3-support.mjs` (`T3_SUPPORT`) (minimum 0.1.8, the first
    stable release with orchestration protocol 2; tested through v0.1.11). It
    uses feature detection, never a fork: an exact `Unknown request tag` reply
    moves turns to `orchestration.dispatchCommand` (`message.dispatch`, with

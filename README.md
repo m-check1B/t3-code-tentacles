@@ -149,7 +149,7 @@ flowchart TB
     Chairs --> ChairCLI["Tentacles chair CLI"]
     ChairCLI --> Adapter["Tentacles adapter: negotiated V1 / V2"]
     Adapter --> V1["V1 orchestration API"]
-    Adapter --> V2["V2: stock T3 Code (Beta), see config/t3-support.json"]
+    Adapter --> V2["V2: stock T3 Code (Beta), see src/t3-support.mjs"]
     V1 --> T3["T3 Code"]
     V2 --> T3
     T3 --> Result["Talk: exact turn result from the thread projection"]
@@ -165,12 +165,13 @@ flowchart TB
 | --- | --- |
 | Tentacles version | This is the 0.5 source line; identify the exact commit as well as the package version. It does not identify the installed or running build. |
 | Negotiated protocol | The T3 environment descriptor selects V1 or V2. An absent protocol field or descriptor selects V1; an unknown protocol refuses. Tentacles 0.5 can still use V1. |
-| Supported T3 Code | The official, unmodified T3 Code (Beta) in the range stated in `config/t3-support.json` (today 0.1.8 through 0.1.11, tested on v0.1.11). No fork or patched build is needed or asked for. Doctor reports `t3.support` (`supported`, `untested`, `unsupported`, `legacy`, `unknown`) and, outside the range, one recovery line with the official download. TPLUS fork builds (0.0.42-tplus.*) still work through the legacy patched route until the estate has moved; that path is marked for removal. |
+| Supported T3 Code | The official, unmodified T3 Code (Beta) in the range stated in `src/t3-support.mjs` (`T3_SUPPORT`) (today 0.1.8 through 0.1.11, tested on v0.1.11). No fork or patched build is needed or asked for. Doctor reports `t3.support` (`supported`, `untested`, `unsupported`, `legacy`, `unknown`) and, outside the range, one recovery line with the official download. Patched builds (TPLUS fork 0.0.42-tplus.*, staging Server labs 0.1.0-jack.*) report `legacy` and still work through the legacy patched route until the estate has moved; that path is marked for removal. |
 | Staged runtime proof | Verify exact installed/running T3 and Tentacles builds, selected protocol, extensions, and real flows on each host through the authorized rollout gates. Source tests and a ready lab row do not prove a cutover. |
 
 The T3 source of record is upstream `pingdotgg/t3code` (official releases only;
 nightlies are not supported). The supported range lives in one machine-readable
-file, `config/t3-support.json`, which Agent Jack's lock and installer read. A
+place, `T3_SUPPORT` in `src/t3-support.mjs`, so every vendored copy carries it;
+`tentacles doctor --json` reports it as `t3.support`. A
 scheduled job (`.github/workflows/upstream-t3-stable.yml`) proves every new
 upstream stable release against Tentacles without any lab login.
 See [protocol support and limits](docs/orchestration.md#protocol-support-and-runtime-proof).
