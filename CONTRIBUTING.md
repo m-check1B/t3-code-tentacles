@@ -62,3 +62,7 @@ Version tags use `v<package-version>`. Pushing a matching tag runs checks and
 tests, packs the npm-compatible tarball, writes its SHA-256 checksum, and creates
 a GitHub Release in `m-check1B/t3-code-tentacles-private` using existing `gh` authentication or the workflow token. The workflow does not publish to npm. It requires an existing matching tag and
 a version entry in `CHANGELOG.md`; assets are never overwritten.
+
+## Stack lock (KRA-10845)
+
+`stack-lock/` holds a byte copy of the Agent Jack stack lock (`stack.lock.json`), the agent-jack-3 commit it came from (`FROM`) and the shared checker. CI runs `python3 stack-lock/check-stack-lock.py tentacles`; it fails with one line naming the file to change when the locked Tentacles tag, its commit and version, or `config/t3-support.json`, disagrees with the lock. Never edit the copy by hand: change the canonical lock in agent-jack-3 first, then copy it here. The stack bump procedure (order: Tentacles release, agent-jack-3, agent-jack-setup, onboarding; one shared proof; nothing tagged until every lock check passes) is in agent-jack-3 `docs/LOCAL-STACK.md`.
