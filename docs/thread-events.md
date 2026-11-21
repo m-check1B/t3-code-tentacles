@@ -30,7 +30,9 @@ as observed at first synchronization; this is not historical Git reconstruction.
 The per-thread journal is private (0700 directory, 0600 file), bounded to 128 MiB,
 and atomically replaced after fsync. Existing owner/PID locks serialize writers
 and recover dead processes; live contention returns unavailable for retry.
-Source IDs are immutable; source content drift fails closed. Reconnects replay
+Source IDs are immutable; source content drift fails closed. Two kinds are exempt: a `turn_end` is recorded once and a later
+observation of the same turn is dropped, and a `tool_summary` whose wording changed
+keeps the line already journaled. A change of kind for a journaled ID still fails closed. Reconnects replay
 identical event IDs and sequences. A cursor ahead of the journal is refused;
 the journal is never silently reset. The default location is the existing
 Tentacles state directory's `thread-events` subdirectory. VM callers may pass

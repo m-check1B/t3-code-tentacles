@@ -395,4 +395,7 @@ test("B3 P3-1 on #106: a new wording for a journaled tool line keeps the stored 
   // Only tool lines relax: a tool_summary id reused for another kind still fails closed.
   assert.throws(() => recordThreadEvents(THREAD, [{ eventId: "tool:item:i1", kind: "message", occurredAt: WHEN,
     payload: { role: "assistant", text: "x", messageId: "x" } }], { directory }), /Source event changed/);
+  // And the other direction: a journaled message id coming back as a tool line still fails closed.
+  assert.throws(() => recordThreadEvents(THREAD, [{ eventId: "message:a9", kind: "tool_summary", occurredAt: WHEN,
+    payload: { summary: "Used tool: web.search (jack)" } }], { directory }), /Source event changed/);
 });
