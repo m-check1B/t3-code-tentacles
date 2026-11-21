@@ -50,6 +50,9 @@ export const CODEX_FILE = path.join(CODEX_DIR, "config.toml");
 // full-access turns; its local loader reads this file with approvals ignored.
 export const CURSOR_DIR = ".cursor";
 export const CURSOR_FILE = path.join(CURSOR_DIR, "mcp.json");
+// sha256 of the .cursor/mcp.json Tentacles last wrote; any other file there refuses.
+export const CURSOR_MARKER = ".jack-cursor-mcp";
+const sha256 = text => createHash("sha256").update(text).digest("hex");
 
 const NAME = /^[A-Za-z0-9_-]{1,100}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -179,14 +182,27 @@ function realDirectory(directory) {
  * would refuse later. `.claude` and `.codex` must be real directories (or
  * absent) and the four files must not be directories. The Bot can plant either.
  */
-export function checkBotConnectorPaths(workspace) {
+export function checkBotConnectorPaths(workspace, { cursor = false } = {}) {
   const kind = file => { try { return lstatSync(file); } catch (error) { if (error.code === "ENOENT") return null; throw error; } };
-  for (const directory of [path.dirname(GUARD_FILE), CODEX_DIR, CURSOR_DIR]) {
+  for (const directory of [path.dirname(GUARD_FILE), CODEX_DIR, ...(cursor ? [CURSOR_DIR] : [])]) {
     const info = kind(path.join(workspace, directory));
     if (info && (!info.isDirectory() || info.isSymbolicLink())) throw new Error(R.realDirectory);
   }
-  for (const file of [MCP_FILE, CODEX_FILE, CURSOR_FILE, GUARD_FILE, GROK_TRUST_MARKER]) {
+  for (const file of [MCP_FILE, CODEX_FILE, GUARD_FILE, GROK_TRUST_MARKER, ...(cursor ? [CURSOR_FILE, CURSOR_MARKER] : [])]) {
     if (kind(path.join(workspace, file))?.isDirectory()) throw new Error(R.fileIsDirectory);
+  }
+  // Unproven Cursor road: only an admitted Cursor turn looks at Cursor's files.
+  if (!cursor) return;
+  // Cursor reads the git top level's .cursor/mcp.json, which may be the owner's.
+  for (let dir = path.dirname(workspace); ; dir = path.dirname(dir)) {
+    if (existsSync(path.join(dir, ".git"))) throw new Error(R.cursorGitRepo);
+    if (path.dirname(dir) === dir) break;
+  }
+  const info = kind(path.join(workspace, CURSOR_FILE));
+  if (info) {
+    let mark = null;
+    try { if (kind(path.join(workspace, CURSOR_MARKER))?.isFile()) mark = readFileSync(path.join(workspace, CURSOR_MARKER), "utf8").trim(); } catch { /* none */ }
+    if (!info.isFile() || mark !== sha256(readFileSync(path.join(workspace, CURSOR_FILE), "utf8"))) throw new Error(R.cursorFileNotOurs);
   }
 }
 
@@ -398,7 +414,7 @@ function listedServers(workspace) {
  * `codexTrust` is a planCodexTrust plan made before the restart; it wins over `codexHome`.
  * The caller restarts a live session first (connectorsNeedRestart), then writes.
  */
-export function writeBotConnectors(workspace, prepared, servers, { codexHome, codexTrust } = {}) {
+export function writeBotConnectors(workspace, prepared, servers, { codexHome, codexTrust, cursor = false } = {}) {
   if (servers === undefined) return false;
   if (prepared !== true) {
     if (servers.length) throw new Error(R.notBotWorkspace);
@@ -411,8 +427,12 @@ export function writeBotConnectors(workspace, prepared, servers, { codexHome, co
     ...(server.headers.length ? { headers: Object.fromEntries(server.headers.map(header => [header.name, header.value])) } : {}),
   }]));
   writePrivate(path.join(workspace, MCP_FILE), `${JSON.stringify({ mcpServers }, null, 2)}\n`);
-  realDirectory(path.join(workspace, CURSOR_DIR));
-  writePrivate(path.join(workspace, CURSOR_FILE), `${JSON.stringify({ mcpServers }, null, 2)}\n`);
+  if (cursor) {
+    const text = `${JSON.stringify({ mcpServers }, null, 2)}\n`;
+    realDirectory(path.join(workspace, CURSOR_DIR));
+    writePrivate(path.join(workspace, CURSOR_FILE), text);
+    writePrivate(path.join(workspace, CURSOR_MARKER), `${sha256(text)}\n`);
+  }
   realDirectory(path.join(workspace, CODEX_DIR));
   writePrivate(path.join(workspace, CODEX_FILE), `# Written by Tentacles before every Jack Bot turn.\n${codexToml(servers)}`);
   // Claude Code asks before it loads a project `.mcp.json`; a Bot turn has

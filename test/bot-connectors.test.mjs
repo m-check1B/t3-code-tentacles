@@ -392,7 +392,6 @@ test("B3 P3-2 on #101: a planted .codex or .claude link, or a directory file tar
     [".claude", () => { fs.rmSync(path.join(workspace, ".claude"), { recursive: true }); fs.symlinkSync(elsewhere, path.join(workspace, ".claude")); }, /real directory|director/],
     // B3 P3-3 on #105: the custody guard refuses with a fixed text and leaves no temp file.
     [".claude/settings.local.json", () => { fs.mkdirSync(path.join(workspace, ".claude"), { recursive: true, mode: 0o700 }); fs.rmSync(path.join(workspace, ".claude/settings.local.json"), { force: true }); fs.mkdirSync(path.join(workspace, ".claude/settings.local.json")); }, { message: "Talk instruction guard file must not be a directory" }],
-    [".cursor", () => { fs.rmSync(path.join(workspace, ".cursor"), { recursive: true, force: true }); fs.symlinkSync(elsewhere, path.join(workspace, ".cursor")); }, /real directory/],
     [".mcp.json", () => { fs.rmSync(path.join(workspace, ".mcp.json")); fs.mkdirSync(path.join(workspace, ".mcp.json")); }, /must not be a directory/],
   ];
   for (const [name, plant, message] of plants) {
@@ -671,6 +670,72 @@ test("Pro rule on #111: Cursor, switched off or on, reads and writes nothing out
   await adapter.continue({ threadId: "t1", message: "clear", ...cursor, ...connectors([]) });
   assert.equal(calls, 0);
   assert.deepEqual(outside(home, path.join(home, ".jack-local-scratch")), owner);
+});
+
+test("B3 P2-1 on #111: with the switch unset, a Claude or Codex turn never reads, checks or writes Cursor's files", async (t) => {
+  const before = process.env.TENTACLES_JACK_TOOLS_TRY;
+  delete process.env.TENTACLES_JACK_TOOLS_TRY;
+  t.after(() => { if (before !== undefined) process.env.TENTACLES_JACK_TOOLS_TRY = before; });
+  const { home, workspace, stops, adapter } = setup();
+  for (const lab of [claude, codex]) await adapter.originate({ workspace, message: "docs", ...lab, ...connectors([jack, learn]) });
+  assert.equal(fs.existsSync(path.join(workspace, ".cursor")), false);
+  // A Cursor-shaped plant does not refuse another lab's turn, and an existing file keeps its bytes.
+  const elsewhere = fs.mkdtempSync(path.join(home, "elsewhere-"));
+  fs.symlinkSync(elsewhere, path.join(workspace, ".cursor"));
+  await adapter.continue({ threadId: "t1", message: "docs", ...codex, ...connectors([learn]) });
+  fs.rmSync(path.join(workspace, ".cursor"));
+  fs.mkdirSync(path.join(workspace, ".cursor"));
+  const file = path.join(workspace, ".cursor", "mcp.json");
+  fs.writeFileSync(file, '{"mcpServers":{"mine":{"url":"https://mine.example/mcp"}}}\n', { mode: 0o644 });
+  for (const lab of [claude, codex]) {
+    await adapter.continue({ threadId: "t1", message: "docs", ...lab, ...connectors([learn]) });
+    await adapter.continue({ threadId: "t1", message: "clear", ...lab, ...connectors([]) });
+  }
+  assert.equal(fs.readFileSync(file, "utf8"), '{"mcpServers":{"mine":{"url":"https://mine.example/mcp"}}}\n');
+  assert.equal(fs.statSync(file).mode & 0o777, 0o644);
+  assert.deepEqual(fs.readdirSync(elsewhere), []);
+  assert.equal(fs.existsSync(path.join(workspace, ".jack-cursor-mcp")), false);
+  assert.ok(stops.length > 0); // the turns ran
+});
+
+test("B3 P3-2/P3-3 on #111: every Cursor plant, a file Tentacles did not write, and a git repository refuse before the stop", async (t) => {
+  tryGrok(t, "cursor");
+  const { home, workspace, stops, adapter } = setup();
+  await adapter.originate({ workspace, message: "hi", ...cursor, ...connectors([learn]) });
+  const dir = path.join(workspace, ".cursor");
+  const file = path.join(dir, "mcp.json");
+  const ours = fs.readFileSync(file, "utf8");
+  const elsewhere = fs.mkdtempSync(path.join(home, "elsewhere-"));
+  fs.writeFileSync(path.join(elsewhere, "target.json"), "{}\n");
+  const reset = () => { fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir); };
+  const plants = [
+    [".cursor link", () => { fs.rmSync(dir, { recursive: true, force: true }); fs.symlinkSync(elsewhere, dir); }, /^Error: Bot connector directory must be a real directory$/],
+    [".cursor file", () => { fs.rmSync(dir, { recursive: true, force: true }); fs.writeFileSync(dir, ""); }, /^Error: Bot connector directory must be a real directory$/],
+    [".cursor dangling link", () => { fs.rmSync(dir, { recursive: true, force: true }); fs.symlinkSync(path.join(home, "missing"), dir); }, /^Error: Bot connector directory must be a real directory$/],
+    ["mcp.json folder", () => { reset(); fs.mkdirSync(file); }, /^Error: Bot connector file must not be a directory$/],
+    ["mcp.json link", () => { reset(); fs.symlinkSync(path.join(elsewhere, "target.json"), file); }, /^Error: This Bot workspace has a \.cursor\/mcp\.json that Tentacles did not write; remove it, then send again$/],
+    ["a file Tentacles did not write", () => { reset(); fs.writeFileSync(file, '{"mcpServers":{}}\n'); }, /did not write/],
+    ["our file, edited since", () => { reset(); fs.writeFileSync(file, ours.replace("microsoft-learn", "microsoft-learm")); }, /did not write/],
+  ];
+  for (const [name, plant, message] of plants) {
+    plant();
+    const snapshot = () => { try { return fs.lstatSync(file).isFile() ? fs.readFileSync(file, "utf8") : "not a file"; } catch (error) { return error.code; } };
+    const before = snapshot();
+    await assert.rejects(adapter.continue({ threadId: "t1", message: "again", ...cursor, ...connectors([learn]) }), message, name);
+    await assert.rejects(adapter.continue({ threadId: "t1", message: "clear", ...cursor, ...connectors([]) }), message, name);
+    assert.deepEqual(stops, [], name);
+    assert.equal(snapshot(), before, name);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  assert.equal(fs.readFileSync(path.join(elsewhere, "target.json"), "utf8"), "{}\n");
+  // Once removed, the next turn writes again.
+  await adapter.continue({ threadId: "t1", message: "again", ...cursor, ...connectors([learn]) });
+  assert.equal(fs.readFileSync(file, "utf8"), ours);
+  // A Bot workspace inside a git repository: Cursor would read that repository's file.
+  fs.mkdirSync(path.join(home, ".git"));
+  const kept = fs.readFileSync(file, "utf8");
+  await assert.rejects(adapter.continue({ threadId: "t1", message: "again", ...cursor, ...connectors([jack]) }), /^Error: This Bot workspace is inside a git repository, where Cursor reads/);
+  assert.equal(fs.readFileSync(file, "utf8"), kept);
 });
 
 test("KRA-10869: Jack's tools reach Local Cursor through the folder's .cursor/mcp.json, opt-in until a real T3 turn proves it", async (t) => {

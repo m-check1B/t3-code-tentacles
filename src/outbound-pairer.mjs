@@ -325,9 +325,10 @@ export class LoopbackRuntimeAdapter {
     const codexTrust = !servers?.length ? undefined
       : instanceId === "codex" ? planCodexTrust(await codexHomeFor(this.client), workspace)
         : instanceId === "grok" ? planGrokTrust(await grokHomeFor(this.client), workspace) : undefined;
-    if (servers !== undefined && prepared === true) checkBotConnectorPaths(workspace);
+    const cursor = instanceId === "cursor" && botConnectorProviders().includes("cursor");
+    if (servers !== undefined && prepared === true) checkBotConnectorPaths(workspace, { cursor });
     if (restartIdleSession && connectorsNeedRestart(workspace, servers)) await restartIdleSession();
-    const written = writeBotConnectors(workspace, prepared, servers, { codexTrust });
+    const written = writeBotConnectors(workspace, prepared, servers, { codexTrust, cursor });
     const marker = path.join(workspace, GROK_TRUST_MARKER);
     // The marker records the table Tentacles itself added, so only that one is ever removed.
     if (instanceId === "grok" && codexTrust && servers?.length) writePrivate(marker, `${codexTrust.decidedAt}\n`);
