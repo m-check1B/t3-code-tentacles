@@ -135,23 +135,26 @@ const RESET_ISO = new RegExp(`${RESET_PREFIX}(\\d{4})-(\\d{2})-(\\d{2})[T ](\\d{
 const RESET_CLOCK = new RegExp(`${RESET_PREFIX}(\\d{1,2}):(\\d{2})(?::(\\d{2}))?(?: ?(AM|PM))?(?: (UTC|GMT|[+-]\\d{2}:?\\d{2}))?${END}`, "i");
 const RESET_IN = new RegExp(`${RESET_PREFIX}(\\d{1,4}) (second|minute|hour|day)(s?)${END}`, "i");
 const two = value => String(Number(value)).padStart(2, "0");
+// B3 P3-4 on #114: an offset is at most ±14:59; a capital-letter zone the reader does not know refuses the time.
+const zoneOk = zone => !zone || !/^[+-]/.test(zone) || (+zone.slice(1, 3) <= 14 && +zone.slice(-2) <= 59);
+const unknownZone = (text, match) => /^ ?[A-Z]{2,5}(?![A-Za-z])/.test(text.slice(match.index + match[0].length));
 export function antigravityResetTime(reply) {
   if (typeof reply !== "string") return null;
   const text = reply.slice(0, 4096);
   let m = RESET_ISO.exec(text);
   if (m) {
     const [, , y, mo, d, h, mi, sec, zone] = m;
-    if (+mo < 1 || +mo > 12 || +d < 1 || +d > 31 || +h > 23 || +mi > 59 || (sec && +sec > 59)) return null;
+    if (+mo < 1 || +mo > 12 || +d < 1 || new Date(Date.UTC(+y, +mo - 1, +d)).getUTCDate() !== +d || +h > 23 || +mi > 59 || (sec && +sec > 59) || !zoneOk(zone) || (!zone && unknownZone(text, m))) return null;
     return `${y}-${mo}-${d} ${h}:${mi}${sec ? `:${sec}` : ""}${zone ? ` ${zone.toUpperCase()}` : ""}`;
   }
   m = RESET_CLOCK.exec(text);
   if (m) {
     const [, , h, mi, sec, half, zone] = m;
-    if (+mi > 59 || (sec && +sec > 59) || (half ? +h < 1 || +h > 12 : +h > 23)) return null;
+    if (+mi > 59 || (sec && +sec > 59) || (half ? +h < 1 || +h > 12 : +h > 23) || !zoneOk(zone) || (!zone && unknownZone(text, m))) return null;
     return `${half ? Number(h) : two(h)}:${mi}${sec ? `:${sec}` : ""}${half ? ` ${half.toUpperCase()}` : ""}${zone ? ` ${zone.toUpperCase()}` : ""}`;
   }
   m = RESET_IN.exec(text);
-  if (m && /^(in|after)$/i.test(m[1])) return `${m[1].toLowerCase()} ${Number(m[2])} ${m[3].toLowerCase()}${Number(m[2]) === 1 ? "" : "s"}`;
+  if (m && /^(in|after)$/i.test(m[1]) && Number(m[2]) >= 1) return `${m[1].toLowerCase()} ${Number(m[2])} ${m[3].toLowerCase()}${Number(m[2]) === 1 ? "" : "s"}`;
   return null;
 }
 export function antigravityQuotaAction(reply) {
@@ -160,20 +163,20 @@ export function antigravityQuotaAction(reply) {
 }
 
 // Antigravity 1.5.13's own out-of-quota reply, which the shared classifier does not
-// know; kept here so other labs' classification stays as it is.
-const ANTIGRAVITY_QUOTA_REPLY = /^You have exhausted your quota on this model\.?$/;
+// know; kept here so other labs' classification stays as it is. A leading sentence, so a
+// trailing reset sentence still reaches the reset-time reader (B3 P3-2 on #114).
+const ANTIGRAVITY_QUOTA_REPLY = /^You have exhausted your quota on this model(?:\.(?:\s|$)|$)/;
 /**
  * The probe outcome for an Antigravity reply that is not OK, or null for main's
- * outcome. Only a reply the shared classifier (or the exact text above) reads as a
- * usage limit is quota; another known failure class gets that class; anything else
- * is left to main. The reply is never echoed.
+ * outcome. Only a reply the shared classifier (or the sentence above) reads as a
+ * usage limit is quota; every other reply is left to main (B3 P3-1 on #114). The
+ * reply is never echoed.
  */
 export function antigravityReplyOutcome(text, classify) {
   const reply = typeof text === "string" ? text.trim() : "";
   if (/^ok\.?$/i.test(reply)) return null;
   const code = ANTIGRAVITY_QUOTA_REPLY.test(reply) ? "usage_limit" : classify(reply);
-  if (code === "usage_limit") return { status: "no_response", code, action: antigravityQuotaAction(reply) };
-  return code ? { status: "error", code } : null;
+  return code === "usage_limit" ? { status: "no_response", code, action: antigravityQuotaAction(reply) } : null;
 }
 
 // KRA-10869: runtime 1.5.13 dropped the effort-suffixed ids (gemini-4-hydrogen-high);

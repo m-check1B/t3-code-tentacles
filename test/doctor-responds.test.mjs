@@ -55,6 +55,7 @@ function fakeT3(t, behaviour, { failProject = false, noTurnResult = false, capab
         // KRA-10869: replies an Antigravity probe may get (synthetic; never echoed).
         const replies = {
           quota: "You have exhausted your quota on this model.",
+          "quota-then-reset": "You have exhausted your quota on this model. SECRET-CANARY Your quota resets in 2 hours.",
           "quota-reset": "Individual quota reached SECRET-CANARY. Your quota resets at 14:05 UTC.",
           timeout: "The request timed out SECRET-CANARY",
           signin: "Please sign in with Google to continue SECRET-CANARY",
@@ -408,12 +409,12 @@ test("KRA-10869 B3 P3-1/P3-3 on #114: only an Antigravity reply the classifier r
   const quota = (reset) => ({ status: "no_response", code: "usage_limit", action: `not responding: quota${reset}; pass --model with another Antigravity model, or wait until its quota resets` });
   assert.deepEqual(await probe("antigravity", "quota"), quota(""));
   assert.deepEqual(await probe("antigravity", "quota-reset"), quota("; resets 14:05 UTC"));
-  // Another known class gets that class and its own action.
-  assert.deepEqual(await probe("antigravity", "timeout"), { status: "error", code: "timeout", action: "The operation timed out before T3 confirmed an outcome." });
-  // Unrecognised replies are main's outcome: the model answered.
-  for (const mode of ["signin", "chatty", "dot", "answer"]) assert.equal((await probe("antigravity", mode)).status, "responds", mode);
+  // B3 P3-2 on #114: the 1.5.13 sentence followed by a reset sentence still reads the reset time.
+  assert.deepEqual(await probe("antigravity", "quota-then-reset"), quota("; resets in 2 hours"));
+  // B3 P3-1 on #114: every other reply, a known failure class included, is main's outcome (responds).
+  for (const mode of ["timeout", "signin", "chatty", "dot", "answer"]) assert.equal((await probe("antigravity", mode)).status, "responds", mode);
   // Every other lab is main for every reply.
-  for (const mode of ["quota", "quota-reset", "timeout", "signin", "chatty", "dot", "answer"]) {
+  for (const mode of ["quota", "quota-reset", "quota-then-reset", "timeout", "signin", "chatty", "dot", "answer"]) {
     assert.deepEqual(await probe("codex", mode), { status: "responds", code: null, action: null }, mode);
   }
 });
