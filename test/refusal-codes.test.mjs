@@ -109,3 +109,43 @@ test("KRA-10870 (B3 P3-6 on #108): a throwing message getter logs unknown, and a
     process.off("unhandledRejection", count);
   }
 });
+
+test("KRA-10870 part 2: a turn RPC that asks with refusalCodes v1 gets the code and fixed words in data.refusal", async () => {
+  const seen = [];
+  const runtime = {
+    originate: async (params) => { seen.push(params); throw new Error("Bot connector admission expired"); },
+    continue: async (params) => { seen.push(params); throw new Error("EISDIR: /home/owner/secret"); },
+  };
+  const shim = new RemoteRpcShim(runtime);
+  const asked = (method) => ({ ...request(method), params: { threadId: "t", refusalCodes: "v1" } });
+  assert.deepEqual((await shim.handle(asked("originate"))).error, {
+    code: "computer.unavailable", message: "Computer unavailable",
+    data: { refusal: { code: "bot_connectors.clock", text: REFUSALS["bot_connectors.clock"] } },
+  });
+  const unknown = (await shim.handle(asked("continue"))).error;
+  assert.deepEqual(unknown.data, { refusal: { code: "unknown", text: REFUSALS.unknown } });
+  assert.doesNotMatch(JSON.stringify(unknown), /owner|secret|EISDIR/);
+  // The runtime never sees the opt-in, so its own parameter allowlist is unchanged.
+  assert.deepEqual(seen, [{ threadId: "t" }, { threadId: "t" }]);
+});
+
+test("KRA-10870 part 2: without the opt-in the frame stays exactly unavailable, and other values are refused", async () => {
+  const seen = [];
+  const runtime = { continue: async (params) => { seen.push(params); throw new Error("Bot connector admission expired"); } };
+  const shim = new RemoteRpcShim(runtime);
+  assert.deepEqual((await shim.handle(request("continue"))).error, UNAVAILABLE); // Sphere closes the relay on any other frame
+  assert.deepEqual((await shim.handle({ ...request("continue"), params: { refusalCodes: "v2" } })).error, UNAVAILABLE);
+  assert.deepEqual(seen.at(-1), { refusalCodes: "v2" }); // left for the runtime to refuse as an unknown parameter
+  // Only turn RPCs take it; an envelope fault before the runtime never carries data.
+  const doctor = new RemoteRpcShim({ doctorStatus: async () => { throw new Error("Bot connector admission expired"); } });
+  assert.deepEqual((await doctor.handle({ ...request("doctor-status"), params: { refusalCodes: "v1" } })).error, UNAVAILABLE);
+  assert.deepEqual((await shim.handle({ ...request("continue"), version: 9, params: { refusalCodes: "v1" } })).error, UNAVAILABLE);
+});
+
+test("KRA-10870 part 2: doctor-status advertises refusalCodes v1 next to the other capabilities", async () => {
+  const shim = new RemoteRpcShim({ doctorStatus: async () => ({ product: "Tentacles", capabilities: { talkTurnResult: "v1" } }) });
+  const reply = await shim.handle(request("doctor-status"));
+  assert.deepEqual(reply.result.capabilities, { talkTurnResult: "v1", refusalCodes: "v1" });
+  const bare = new RemoteRpcShim({ doctorStatus: async () => ({ product: "Tentacles" }) });
+  assert.equal((await bare.handle(request("doctor-status"))).result.capabilities, undefined);
+});
