@@ -49,6 +49,9 @@ export const CODEX_FILE = path.join(CODEX_DIR, "config.toml");
 // OpenCode loads `<directory>/opencode.json` for the folder T3 passes per request,
 // also on the one server T3 shares across threads, and re-reads it on the next turn.
 export const OPENCODE_FILE = "opencode.json";
+// sha256 of the opencode.json Tentacles last wrote; any other file there refuses (B3 P3-1 on #109).
+export const OPENCODE_MARKER = ".jack-opencode-mcp";
+const sha256 = text => createHash("sha256").update(text).digest("hex");
 
 const NAME = /^[A-Za-z0-9_-]{1,100}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -185,8 +188,15 @@ export function checkBotConnectorPaths(workspace, { opencode = false } = {}) {
     const info = kind(path.join(workspace, directory));
     if (info && (!info.isDirectory() || info.isSymbolicLink())) throw new Error(R.realDirectory);
   }
-  for (const file of [MCP_FILE, CODEX_FILE, GUARD_FILE, GROK_TRUST_MARKER, ...(opencode ? [OPENCODE_FILE] : [])]) {
+  for (const file of [MCP_FILE, CODEX_FILE, GUARD_FILE, GROK_TRUST_MARKER, ...(opencode ? [OPENCODE_FILE, OPENCODE_MARKER] : [])]) {
     if (kind(path.join(workspace, file))?.isDirectory()) throw new Error(R.fileIsDirectory);
+  }
+  if (!opencode) return;
+  const info = kind(path.join(workspace, OPENCODE_FILE));
+  if (info) {
+    let mark = null;
+    try { if (kind(path.join(workspace, OPENCODE_MARKER))?.isFile()) mark = readFileSync(path.join(workspace, OPENCODE_MARKER), "utf8").trim(); } catch { /* none */ }
+    if (!info.isFile() || mark !== sha256(readFileSync(path.join(workspace, OPENCODE_FILE), "utf8"))) throw new Error(R.opencodeFileNotOurs);
   }
 }
 
@@ -291,12 +301,15 @@ export function commitCodexTrust(plan) {
  * (T3 merges that list over its own env, last wins), else ~/.grok. A GROK_HOME exported
  * to T3's own process environment is not seen here.
  */
-export async function grokHomeFor(client, { home = os.homedir() } = {}) {
+export async function grokHomeFor(client, { home = os.homedir(), strict = false } = {}) {
   let entries = [];
   try {
     const environment = (await client.getSettings())?.providerInstances?.grok?.environment;
     entries = Array.isArray(environment) ? environment.filter(entry => entry?.name === "GROK_HOME") : [];
-  } catch { /* unreadable settings: Grok's own default below */ }
+  } catch (error) {
+    // strict (B3 P3-1 on #115): a removal must not guess ~/.grok when settings fail.
+    if (strict) throw error;
+  }
   if (!entries.length) return path.join(home, ".grok");
   const value = entries.at(-1).value;
   if (value === "") return path.join(home, ".grok");
@@ -416,10 +429,14 @@ export function writeBotConnectors(workspace, prepared, servers, { codexHome, co
   realDirectory(path.join(workspace, CODEX_DIR));
   writePrivate(path.join(workspace, CODEX_FILE), `# Written by Tentacles before every Jack Bot turn.\n${codexToml(servers)}`);
   // Unproven: only an admitted OpenCode turn reads or writes opencode.json.
-  if (opencode) writePrivate(path.join(workspace, OPENCODE_FILE), `${JSON.stringify({ $schema: "https://opencode.ai/config.json", mcp: Object.fromEntries(servers.map(server => [server.name, {
-    type: "remote", url: server.url, oauth: false,
-    ...(server.headers.length ? { headers: Object.fromEntries(server.headers.map(header => [header.name, header.value])) } : {}),
-  }])) }, null, 2)}\n`);
+  if (opencode) {
+    const text = `${JSON.stringify({ $schema: "https://opencode.ai/config.json", mcp: Object.fromEntries(servers.map(server => [server.name, {
+      type: "remote", url: server.url, oauth: false,
+      ...(server.headers.length ? { headers: Object.fromEntries(server.headers.map(header => [header.name, header.value])) } : {}),
+    }])) }, null, 2)}\n`;
+    writePrivate(path.join(workspace, OPENCODE_FILE), text);
+    writePrivate(path.join(workspace, OPENCODE_MARKER), `${sha256(text)}\n`);
+  }
   // Claude Code asks before it loads a project `.mcp.json`; a Bot turn has
   // nobody to ask. Only this file, which is rewritten every turn, is approved.
   const settings = path.join(workspace, GUARD_FILE);

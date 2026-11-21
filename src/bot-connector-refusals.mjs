@@ -7,6 +7,7 @@ export const BOT_CONNECTOR_REFUSALS = Object.freeze({
   notBotWorkspace: "Bot connectors need a Bot workspace",
   realDirectory: "Bot connector directory must be a real directory",
   fileIsDirectory: "Bot connector file must not be a directory",
+  opencodeFileNotOurs: "This Bot workspace has an opencode.json that Tentacles did not write; remove it, then send again",
   guardFileIsDirectory: "Talk instruction guard file must not be a directory",
   codexHomeNotDirectory: "Codex home is not a directory",
   codexLinkMissing: "Codex home config.toml links to a missing file; fix the link first",

@@ -41,6 +41,14 @@ const CONTINUE_PARAM_KEYS = new Set([
   "threadId", "message", "instanceId", "model", "options", "budget", "runtimeMode", "turnCommandId", "messageId", "freshProviderContext", ...BOT_CONNECTOR_PARAM_KEYS,
 ]);
 
+// `<decided_at>\n<Grok home>\n` (older markers: the first line only); anything else is no marker.
+function readGrokMarker(file) {
+  try {
+    const found = fs.lstatSync(file).isFile() && /^(\d{1,15})\n?(?:(\/[^\n]+)\n)?$/.exec(fs.readFileSync(file, "utf8"));
+    return found ? { decidedAt: found[1], home: found[2] ? path.normalize(found[2]) : undefined } : null;
+  } catch { return null; }
+}
+
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -321,30 +329,37 @@ export class LoopbackRuntimeAdapter {
     // Idempotent and leaves .mcp.json alone, so it cannot change the restart decision.
     const prepared = await this.prepareTalkWorkspaceImpl(workspace);
     if (servers?.length && prepared !== true) throw new Error(BOT_CONNECTOR_REFUSALS.notBotWorkspace);
+    const marker = path.join(workspace, GROK_TRUST_MARKER);
+    const grokHome = instanceId === "grok" && servers?.length ? await grokHomeFor(this.client) : undefined;
+    // B3 P3-2 on #115: a table left in another Grok home (GROK_HOME moved) is removed
+    // first; if that throws, the turn refuses before the stop and the marker stays.
+    const left = grokHome && prepared === true ? readGrokMarker(marker) : null;
+    if (left?.home && left.home !== grokHome) {
+      commitCodexTrust(planGrokUntrust(left.home, workspace, left.decidedAt));
+      fs.rmSync(marker, { force: true });
+    }
     // The lab's own folder-trust table (Codex or Grok), planned before the stop.
     const codexTrust = !servers?.length ? undefined
       : instanceId === "codex" ? planCodexTrust(await codexHomeFor(this.client), workspace)
-        : instanceId === "grok" ? planGrokTrust(await grokHomeFor(this.client), workspace) : undefined;
+        : grokHome ? planGrokTrust(grokHome, workspace) : undefined;
     const opencode = instanceId === "opencode" && botConnectorProviders().includes("opencode");
     if (servers !== undefined && prepared === true) checkBotConnectorPaths(workspace, { opencode });
     if (restartIdleSession && connectorsNeedRestart(workspace, servers)) await restartIdleSession();
     const written = writeBotConnectors(workspace, prepared, servers, { codexTrust, opencode });
-    const marker = path.join(workspace, GROK_TRUST_MARKER);
     // The marker records the table Tentacles itself added, so only that one is ever removed.
     // It also names the Grok home written to, so a later GROK_HOME change cannot strand the table.
     if (instanceId === "grok" && codexTrust && servers?.length) writePrivate(marker, `${codexTrust.decidedAt}\n${path.dirname(codexTrust.file)}\n`);
     // B3 P3-5 on #110: a Grok Bot turn without tools drops that table again. With no
     // marker nothing outside the workspace is read. Best effort: never fails the turn.
     if (instanceId === "grok" && prepared === true && !servers?.length) {
-      let found = null;
-      try { if (fs.lstatSync(marker).isFile()) found = /^(\d{1,15})\n?(?:(\/[^\n]+)\n)?$/.exec(fs.readFileSync(marker, "utf8")); } catch { /* no marker */ }
+      const found = readGrokMarker(marker);
       if (found) {
-        const [, decidedAt, recorded] = found;
         // B3 P3-2 on #110: the marker goes only once the table is gone or no longer
         // Tentacles' own (plan null); on any throw it stays so the next turn tries again.
         try {
-          const grokHome = recorded && path.isAbsolute(recorded) ? recorded : await grokHomeFor(this.client);
-          commitCodexTrust(planGrokUntrust(grokHome, workspace, decidedAt));
+          // An old one-line marker has no home: failing settings throw (B3 P3-1 on #115).
+          const home = found.home ?? await grokHomeFor(this.client, { strict: true });
+          commitCodexTrust(planGrokUntrust(home, workspace, found.decidedAt));
           fs.rmSync(marker, { force: true });
         } catch { /* kept for the next turn */ }
       }
