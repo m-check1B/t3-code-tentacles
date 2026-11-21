@@ -1,9 +1,11 @@
 import fs from "node:fs";
+import path from "node:path";
 import { ensureLocalTalkWorkspace } from "./local-talk-workspace.mjs";
 import { BOT_CONNECTOR_REFUSALS } from "./bot-connector-refusals.mjs";
-import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, botConnectorProviders, checkBotConnectorPaths, codexHomeFor, connectorsNeedRestart, grokHomeFor, planGrokTrust, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors } from "./bot-connectors.mjs";
+import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, botConnectorProviders, checkBotConnectorPaths, codexHomeFor, commitCodexTrust, connectorsNeedRestart, GROK_TRUST_MARKER, grokHomeFor, planGrokTrust, planGrokUntrust, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors, writePrivate } from "./bot-connectors.mjs";
 import { privateModeOk } from "./platform.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
+import { refusalOf } from "./refusal-codes.mjs";
 import { randomUUID } from "node:crypto";
 import { continueThread, doctor, originate, probeTalkCapabilities } from "./bridge.mjs";
 import { requireFreshFlags, requireFreshProviderContext } from "./fresh-provider-context.mjs";
@@ -325,7 +327,21 @@ export class LoopbackRuntimeAdapter {
         : instanceId === "grok" ? planGrokTrust(await grokHomeFor(this.client), workspace) : undefined;
     if (servers !== undefined && prepared === true) checkBotConnectorPaths(workspace);
     if (restartIdleSession && connectorsNeedRestart(workspace, servers)) await restartIdleSession();
-    return writeBotConnectors(workspace, prepared, servers, { codexTrust });
+    const written = writeBotConnectors(workspace, prepared, servers, { codexTrust });
+    const marker = path.join(workspace, GROK_TRUST_MARKER);
+    // The marker records the table Tentacles itself added, so only that one is ever removed.
+    if (instanceId === "grok" && codexTrust && servers?.length) writePrivate(marker, `${codexTrust.decidedAt}\n`);
+    // B3 P3-5 on #110: a Grok Bot turn without tools drops that table again. With no
+    // marker nothing outside the workspace is read. Best effort: never fails the turn.
+    if (instanceId === "grok" && prepared === true && !servers?.length) {
+      let decidedAt = null;
+      try { if (fs.lstatSync(marker).isFile()) decidedAt = /^(\d{1,15})\n?$/.exec(fs.readFileSync(marker, "utf8"))?.[1] ?? null; } catch { /* no marker */ }
+      if (decidedAt) {
+        try { commitCodexTrust(planGrokUntrust(await grokHomeFor(this.client), workspace, decidedAt)); } catch { /* left as it is */ }
+        fs.rmSync(marker, { force: true });
+      }
+    }
+    return written;
   }
 
   continue(params) {
@@ -548,9 +564,10 @@ function unavailable(id) {
 }
 
 export class RemoteRpcShim {
-  constructor(runtime, { enableInterrupt = false } = {}) {
+  constructor(runtime, { enableInterrupt = false, onRefusal = () => {} } = {}) {
     if (!runtime) throw new Error("Remote RPC shim requires a runtime");
     this.runtime = runtime;
+    this.onRefusal = onRefusal;
     this.rpcMethods = Object.freeze([...REMOTE_RPC_METHODS, ...(enableInterrupt === true ? ["interrupt"] : [])]);
   }
 
@@ -564,7 +581,14 @@ export class RemoteRpcShim {
       const params = message.params === undefined ? {} : requireRecord(message.params, "RPC params");
       const method = ({ "doctor-status": "doctorStatus", "turn-result": "turnResult", "thread-events": "threadEvents", "thread-artifact": "threadArtifact" })[message.method] ?? message.method;
       if (typeof this.runtime[method] !== "function") throw new Error("Runtime method is unavailable");
-      const result = await this.runtime[method](params);
+      let result;
+      try { result = await this.runtime[method](params); } catch (error) {
+        // KRA-10870: the relay still gets only "Computer unavailable"; this computer's
+        // log gets the typed code and its fixed words, never the raw error text.
+        // A rejecting async hook must not become an unhandled rejection that ends the pairer.
+        try { this.onRefusal({ method: message.method, ...refusalOf(error) })?.catch?.(() => {}); } catch {}
+        throw error;
+      }
       return { version: PAIR_PROTOCOL_VERSION, type: "rpc.result", id, result: result ?? null };
     } catch {
       return unavailable(id);
@@ -667,7 +691,7 @@ export class OutboundPairer {
     }
     reconnectDelayMs(0, { baseMs: reconnectBaseMs, capMs: reconnectCapMs, random: () => 0 });
     if (typeof random !== "function") throw new Error("Reconnect jitter source must be a function");
-    this.shim = new RemoteRpcShim(runtime, { enableInterrupt });
+    this.shim = new RemoteRpcShim(runtime, { enableInterrupt, onRefusal: (refusal) => this.emit({ event: "rpc.refused", ...refusal }) });
     this.runtime = runtime;
     this.WebSocketImpl = WebSocketImpl;
     this.pairStateFile = pairStateFile;
