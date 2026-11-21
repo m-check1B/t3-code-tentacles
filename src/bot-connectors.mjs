@@ -85,7 +85,6 @@ export function pinnedJackOrigin(value) {
   }
 }
 
-export const LAB_WITHOUT_JACK_TOOLS = "This lab cannot use Jack tools on Local yet; run this Bot on Server to use them";
 export const REPAIR_FOR_JACK_TOOLS = "Jack tools need this computer paired again from an updated Agent Jack (Settings > Local labs > pair this computer)";
 
 /**
@@ -112,8 +111,7 @@ export function admitBotConnectors(params, { now = Date.now, jackOrigin = null }
     throw new Error("Bot connector admission expired");
   }
   if (mcpServers.length && !BOT_CONNECTOR_PROVIDERS.includes(rest.instanceId)) {
-    // Fixed text (KRA-10870 attaches codes): name the road that works today.
-    throw new Error(LAB_WITHOUT_JACK_TOOLS);
+    throw new Error(R.labWithoutJackTools);
   }
   // B3 P1-1 on #99: a token and a full-access lab go only to the Jack this
   // computer was paired with. The origin comes from the one-shot pair offer the
@@ -170,7 +168,7 @@ function realDirectory(directory) {
 /**
  * Read-only: refuses, before any session stop, every workspace shape the writer
  * would refuse later. `.claude` and `.codex` must be real directories (or
- * absent) and the three files must not be directories. The Bot can plant either.
+ * absent) and the four files must not be directories. The Bot can plant either.
  */
 export function checkBotConnectorPaths(workspace) {
   const kind = file => { try { return lstatSync(file); } catch (error) { if (error.code === "ENOENT") return null; throw error; } };
@@ -178,7 +176,7 @@ export function checkBotConnectorPaths(workspace) {
     const info = kind(path.join(workspace, directory));
     if (info && (!info.isDirectory() || info.isSymbolicLink())) throw new Error(R.realDirectory);
   }
-  for (const file of [MCP_FILE, CODEX_FILE, GUARD_FILE]) {
+  for (const file of [MCP_FILE, CODEX_FILE, OPENCODE_FILE, GUARD_FILE]) {
     if (kind(path.join(workspace, file))?.isDirectory()) throw new Error(R.fileIsDirectory);
   }
 }

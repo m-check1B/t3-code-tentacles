@@ -381,7 +381,7 @@ test("B3 P3-2 on #101: a planted .codex or .claude link, or a directory file tar
   const { home, workspace, stops, adapter } = setup();
   await adapter.originate({ workspace, message: "hi", ...codex, ...connectors([learn]) });
   const threadId = "11111111-2222-4333-8444-555555555555";
-  const snapshot = () => ["", ".codex/config.toml", ".mcp.json", ".claude/settings.local.json"].map(name => {
+  const snapshot = () => ["", ".codex/config.toml", ".mcp.json", "opencode.json", ".claude/settings.local.json"].map(name => {
     try { return fs.readFileSync(path.join(workspace, name), "utf8"); } catch (error) { return error.code; }
   });
   const elsewhere = fs.mkdtempSync(path.join(home, "elsewhere-"));
@@ -390,6 +390,7 @@ test("B3 P3-2 on #101: a planted .codex or .claude link, or a directory file tar
     [".claude", () => { fs.rmSync(path.join(workspace, ".claude"), { recursive: true }); fs.symlinkSync(elsewhere, path.join(workspace, ".claude")); }, /real directory|director/],
     // B3 P3-3 on #105: the custody guard refuses with a fixed text and leaves no temp file.
     [".claude/settings.local.json", () => { fs.mkdirSync(path.join(workspace, ".claude"), { recursive: true, mode: 0o700 }); fs.rmSync(path.join(workspace, ".claude/settings.local.json"), { force: true }); fs.mkdirSync(path.join(workspace, ".claude/settings.local.json")); }, { message: "Talk instruction guard file must not be a directory" }],
+    ["opencode.json", () => { fs.rmSync(path.join(workspace, "opencode.json"), { force: true }); fs.mkdirSync(path.join(workspace, "opencode.json")); }, /must not be a directory/],
     [".mcp.json", () => { fs.rmSync(path.join(workspace, ".mcp.json")); fs.mkdirSync(path.join(workspace, ".mcp.json")); }, /must not be a directory/],
   ];
   for (const [name, plant, message] of plants) {
