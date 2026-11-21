@@ -49,6 +49,7 @@ export const BOT_CONNECTOR_CODES = Object.freeze({
   grokGitRepo: "bot_connectors.lab_not_covered",
   grokChanged: "try_again",
   cursorGitRepo: "bot_connectors.lab_not_covered",
+  antigravityGitRepo: "bot_connectors.lab_not_covered",
   cursorFileNotOurs: "bot_connectors.bot_folder",
   antigravityFileNotOurs: "bot_connectors.bot_folder",
 });

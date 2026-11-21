@@ -8,7 +8,7 @@ import path from "node:path";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
 import { BOT_CONNECTOR_CAPABILITIES, GROK_TRUST_MARKER, PUBLIC_MCP_URL, codexHomeFor, codexServerNames, commitCodexTrust, grokHomeFor, planGrokTrust, planGrokUntrust, trustCodexWorkspace } from "../src/bot-connectors.mjs";
-import { continueThread, doctor, formatDoctor } from "../src/bridge.mjs";
+import { continueThread, doctor, formatDoctor, readSmallRegularFile } from "../src/bridge.mjs";
 import { freshCapability } from "./helpers/fresh-context-wire.mjs";
 import { ensureLocalTalkWorkspace } from "../src/local-talk-workspace.mjs";
 import { LoopbackRuntimeAdapter, OutboundPairer, readPairOffer } from "../src/outbound-pairer.mjs";
@@ -795,6 +795,39 @@ test("B3 P3-1 on #109: an opencode.json Tentacles did not write refuses before t
   assert.equal(fs.readFileSync(target, "utf8"), "{}\n");
 });
 
+test("B3 P3-3 on #117: a GROK_HOME with a trailing slash is the recorded home, so a second tools turn leaves the owner's file as it is", async (t) => {
+  tryGrok(t);
+  const { home, workspace, adapter } = setup();
+  const grokHome = path.join(home, "grok-home");
+  const settings = await adapter.client.getSettings();
+  settings.providerInstances.grok = { environment: [{ name: "GROK_HOME", value: `${grokHome}/` }] };
+  await adapter.originate({ workspace, message: "hi", ...grok, ...connectors([learn]) });
+  const trustFile = path.join(grokHome, "trusted_folders.toml");
+  const first = fs.readFileSync(trustFile, "utf8");
+  const stat = fs.statSync(trustFile);
+  await adapter.continue({ threadId: "t1", message: "again", ...grok, ...connectors([learn]) });
+  assert.equal(fs.readFileSync(trustFile, "utf8"), first);
+  assert.equal(fs.statSync(trustFile).ino, stat.ino); // not rewritten (a commit renames a new file in)
+  assert.match(fs.readFileSync(path.join(workspace, GROK_TRUST_MARKER), "utf8"), new RegExp(`\\n${grokHome}\\n$`));
+});
+
+test("B3 P3-4 on #117: with TRY=opencode, a Codex or Claude turn never reads, refuses on or writes an opencode.json", async (t) => {
+  tryLab(t, "opencode");
+  const { workspace, stops, adapter } = setup();
+  await adapter.originate({ workspace, message: "plain", ...codex });
+  const file = path.join(workspace, "opencode.json");
+  const owner = '{"mcp":{"mine":{"type":"local","command":["x"]}}}\n';
+  fs.writeFileSync(file, owner, { mode: 0o644 });
+  for (const lab of [codex, claude]) {
+    await adapter.continue({ threadId: "t1", message: "docs", ...lab, ...connectors([learn]) });
+    await adapter.continue({ threadId: "t1", message: "clear", ...lab, ...connectors([]) });
+  }
+  assert.equal(fs.readFileSync(file, "utf8"), owner);
+  assert.equal(fs.statSync(file).mode & 0o777, 0o644);
+  assert.equal(fs.existsSync(path.join(workspace, ".jack-opencode-mcp")), false);
+  assert.ok(stops.length > 0); // the turns ran
+});
+
 test("delta P2-1 on #110: switched off and with no marker, a Grok turn reads nothing outside the Bot workspace", async (t) => {
   const before = process.env.TENTACLES_JACK_TOOLS_TRY;
   delete process.env.TENTACLES_JACK_TOOLS_TRY;
@@ -903,7 +936,7 @@ test("KRA-10891: an owner's Codex server named like a Bot's refuses before the s
   // (codex-cli 0.169.0: "url is not supported for stdio"), and an owner's http `jack` adds its own keys to ours.
   const clash = "The Codex config in the Codex home T3 uses already has a server named like one of this Bot's Jack tools (for example jack), and Codex would merge the two; rename or remove that server there, then send again";
   const form = "The Codex config in the Codex home T3 uses keeps servers in a form Tentacles does not read; write each server as its own [mcp_servers.<name>] table, then send again";
-  for (const [owner, message] of [['[mcp_servers.jack]\ncommand = "owner-jack"\n', clash], ['[mcp_servers."jack"]\nurl = "https://owner.example/mcp"\nbearer_token_env_var = "OWNER_TOKEN"\n', clash], ['mcp_servers.jack.enabled = false\n', clash], ['[mcp_servers.linear.env]\nX = "1"\n', clash], ['mcp_servers = { other = { command = "x" } }\n', form], ['["mcp_servers".other]\ncommand = "x"\n', form], ['[mcp_servers."\\u006aack"]\ncommand = "x"\n', form]]) {
+  for (const [owner, message] of [['[mcp_servers.jack]\ncommand = "owner-jack"\n', clash], ['[mcp_servers."jack"]\nurl = "https://owner.example/mcp"\nbearer_token_env_var = "OWNER_TOKEN"\n', clash], ['mcp_servers.jack.enabled = false\n', clash], ['[mcp_servers.linear.env]\nX = "1"\n', clash], ['mcp_servers = { other = { command = "x" } }\n', form], ['["mcp_servers".other]\ncommand = "x"\n', form], ['[mcp_servers."\\u006aack"]\ncommand = "x"\n', form], ['["\\u006dcp_servers".jack]\ncommand = "x"\n', form], ['"\\u006dcp_servers".jack.command = "x"\n', form], ['developer_instructions = """\n[x]\n"""\nmcp_servers.jack.command = "x"\n', clash]]) {
     fs.writeFileSync(file, owner, { mode: 0o640 });
     await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack, linear, learn]) }), { message }, owner);
     assert.equal(fs.readFileSync(file, "utf8"), owner);
@@ -948,6 +981,19 @@ test("KRA-10891: codexServerNames reads every form Codex accepts for a server na
     '[profiles.p]\nmcp_servers = { jack = {} }\n', // inline under a profile
     '[profiles.p.mcp_servers.jack]\ncommand = "x"\n',
   ]) assert.deepEqual(read(text), { names: [], inline: false, form: false }, text);
+  // B3 P3-1 on #116: a `[` line inside a multi-line string is not a header (codex-cli 0.169.0 reads `jack` in each).
+  for (const [text, want] of [
+    ['developer_instructions = """\n[x]\n"""\nmcp_servers.jack.command = "x"\n', ["jack"]],
+    ['developer_instructions = """\n[x]\n"""\nmcp_servers.jack.url = "u"\nmcp_servers.jack.bearer_token_env_var = "OWNER_TOKEN_NAME"\n', ["jack"]],
+    ['[mcp_servers]\nother = { command = "x", args = ["""\n[y]\n"""] }\njack = { command = "x" }\n', ["other", "jack"]],
+    ["notes = '''\n[mcp_servers.fake]\n'''\n[mcp_servers.real]\n", ["real"]],
+    ['notes = """\nno brackets here \\""" still inside\n"""\n[mcp_servers.jack]\n', ["jack"]], // no [ line: unchanged
+    ['a = "x\"\"\"" # """\n[mcp_servers.jack]\n', ["jack"]], // quotes in a basic string or a comment open nothing
+  ]) assert.deepEqual(read(text).names, want, text);
+  // B3 P3-2 on #116: an escaped root key, as a header and as a dotted key, is `form`.
+  for (const text of ['["\\u006dcp_servers".jack]\ncommand = "x"\n', '"\\u006dcp_servers".jack.command = "x"\n']) {
+    assert.deepEqual(read(text), { names: [], inline: false, form: true }, text);
+  }
 });
 
 test("KRA-10891: doctor names a stale agent-jack server in the Codex home T3 uses, with one fix", async (t) => {
@@ -978,6 +1024,17 @@ test("KRA-10891: doctor names a stale agent-jack server in the Codex home T3 use
   const fifo = await doctor(client, { fetchImpl });
   assert.equal(fifo.labs.find(lab => lab.instanceId === "codex").staleJackServer, undefined);
   assert.doesNotMatch(formatDoctor(fifo), /Stale Codex server/);
+  assert.equal(readSmallRegularFile(config, 1024 * 1024), null);
+  // B3 P3-3 on #116: a link to a character device (size 0) is not read at all.
+  if (fs.existsSync("/dev/zero")) {
+    fs.rmSync(config);
+    fs.symlinkSync("/dev/zero", config);
+    assert.equal(readSmallRegularFile(config, 1024 * 1024), null);
+    assert.equal((await doctor(client, { fetchImpl })).labs.find(lab => lab.instanceId === "codex").staleJackServer, undefined);
+  }
+  fs.rmSync(config);
+  fs.writeFileSync(config, "[mcp_servers.agent-jack]\n");
+  assert.equal(readSmallRegularFile(config, 1024 * 1024), "[mcp_servers.agent-jack]\n");
 });
 
 // Every file under `root` outside `skip`, with its bytes: the owner's files, compared whole.
@@ -1158,6 +1215,42 @@ test("KRA-10869: Jack's tools reach Local Antigravity as a workspace plugin, opt
   await adapter.continue({ threadId: "t1", message: "again", ...antigravity, ...connectors([]) });
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(plugin, "mcp_config.json"), "utf8")).mcpServers, {});
   assert.equal(JSON.stringify(sent).includes("synthetic-turn-token"), false);
+});
+
+test("B3 P3-1/P3-2 on #113: Antigravity refuses inside a git repository and never adopts an owner's jack-tools folder", async (t) => {
+  tryLab(t, "antigravity");
+  const { home, workspace, stops, adapter } = setup();
+  await adapter.originate({ workspace, message: "plain", ...antigravity });
+  const dir = path.join(workspace, ".agents", "plugins", "jack-tools");
+  const notOurs = /^Error: This Bot workspace has a \.agents\/plugins\/jack-tools plugin that Tentacles did not write; remove that folder, then send again$/;
+  const inGit = /^Error: This Bot workspace is inside a git repository, where Antigravity reads the repository's own \.agents plugins; run this Bot on Server to use Jack tools$/;
+  // P3-2: a hooks.json-only folder, and our two files plus one extra entry, refuse whatever the marker says.
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "hooks.json"), "{}\n");
+  for (const message of ["again", "clear"]) {
+    await assert.rejects(adapter.continue({ threadId: "t1", message, ...antigravity, ...connectors(message === "clear" ? [] : [learn]) }), notOurs);
+  }
+  assert.deepEqual(fs.readdirSync(dir), ["hooks.json"]);
+  fs.rmSync(path.join(workspace, ".agents"), { recursive: true });
+  await adapter.continue({ threadId: "t1", message: "again", ...antigravity, ...connectors([learn]) });
+  const config = fs.readFileSync(path.join(dir, "mcp_config.json"), "utf8");
+  fs.mkdirSync(path.join(dir, "rules"));
+  const stopped = stops.length;
+  await assert.rejects(adapter.continue({ threadId: "t1", message: "again", ...antigravity, ...connectors([learn]) }), notOurs);
+  assert.equal(fs.readFileSync(path.join(dir, "mcp_config.json"), "utf8"), config);
+  assert.equal(stops.length, stopped);
+  fs.rmSync(path.join(dir, "rules"), { recursive: true });
+  // P3-1: a .git in a parent or in the Bot workspace itself refuses before the stop, and nothing is written.
+  for (const repo of [home, workspace]) {
+    fs.mkdirSync(path.join(repo, ".git"));
+    await assert.rejects(adapter.continue({ threadId: "t1", message: "again", ...antigravity, ...connectors([jack]) }), inGit);
+    assert.equal(fs.readFileSync(path.join(dir, "mcp_config.json"), "utf8"), config);
+    assert.equal(stops.length, stopped);
+    fs.rmSync(path.join(repo, ".git"), { recursive: true });
+  }
+  // Another lab's turn never walks for Antigravity.
+  fs.mkdirSync(path.join(home, ".git"));
+  await adapter.continue({ threadId: "t1", message: "docs", ...claude, ...connectors([learn]) });
 });
 
 test("KRA-10869: an Antigravity plugin Tentacles did not write refuses before the stop; switched off, nothing is read or written", async (t) => {

@@ -11,7 +11,7 @@
  * workspace is trusted there once. T3 keeps a lab process alive across turns,
  * so the caller stops an idle live session before the files change.
  */
-import { closeSync, constants, existsSync, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, constants, existsSync, fchmodSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash, randomBytes } from "node:crypto";
@@ -62,7 +62,8 @@ export const OPENCODE_FILE = "opencode.json";
 export const ANTIGRAVITY_DIRS = Object.freeze([".agents", path.join(".agents", "plugins"), path.join(".agents", "plugins", "jack-tools")]);
 export const ANTIGRAVITY_PLUGIN = path.join(".agents", "plugins", "jack-tools", "plugin.json");
 export const ANTIGRAVITY_FILE = path.join(".agents", "plugins", "jack-tools", "mcp_config.json");
-// sha256 of the plugin.json and mcp_config.json Tentacles last wrote; any other files there refuse.
+// sha256 of the plugin.json and mcp_config.json Tentacles last wrote. Those two files
+// without a matching marker refuse, and so does any other entry in jack-tools.
 export const ANTIGRAVITY_MARKER = ".jack-antigravity-mcp";
 // sha256 of the opencode.json Tentacles last wrote; any other file there refuses (B3 P3-1 on #109).
 export const OPENCODE_MARKER = ".jack-opencode-mcp";
@@ -191,6 +192,16 @@ function realDirectory(directory) {
   if (!info.isDirectory() || info.isSymbolicLink()) throw new Error(R.realDirectory);
 }
 
+// A lab that finds project config by walking up to the git top level (Cursor, Grok,
+// Antigravity) would read the owner's repository: refuse when `start` or any parent
+// has a `.git` entry. Git variables in T3's own environment are not seen.
+function refuseGitAncestor(start, text) {
+  for (let dir = start; ; dir = path.dirname(dir)) {
+    if (existsSync(path.join(dir, ".git"))) throw new Error(text);
+    if (path.dirname(dir) === dir) return;
+  }
+}
+
 /**
  * Read-only: refuses, before any session stop, every workspace shape the writer
  * would refuse later. `.claude` and `.codex` must be real directories (or
@@ -215,6 +226,11 @@ export function checkBotConnectorPaths(workspace, { opencode = false, cursor = f
   }
   // Unproven Antigravity road: only an admitted Antigravity turn looks at its plugin files.
   if (antigravity) {
+    // Antigravity walks up from its cwd to the repository root for customizations (B3 P3-1 on #113).
+    refuseGitAncestor(workspace, R.antigravityGitRepo);
+    // An owner's folder with anything else (hooks.json, rules/) is never adopted (B3 P3-2 on #113).
+    const plugin = path.join(workspace, path.dirname(ANTIGRAVITY_PLUGIN));
+    if (kind(plugin) && readdirSync(plugin).some(name => name !== "plugin.json" && name !== "mcp_config.json")) throw new Error(R.antigravityFileNotOurs);
     const files = [ANTIGRAVITY_PLUGIN, ANTIGRAVITY_FILE].map(file => [file, kind(path.join(workspace, file))]);
     if (files.some(([, info]) => info)) {
       let mark = null;
@@ -225,10 +241,7 @@ export function checkBotConnectorPaths(workspace, { opencode = false, cursor = f
   // Unproven Cursor road: only an admitted Cursor turn looks at Cursor's files.
   if (!cursor) return;
   // Cursor reads the git top level's .cursor/mcp.json, which may be the owner's.
-  for (let dir = workspace; ; dir = path.dirname(dir)) {
-    if (existsSync(path.join(dir, ".git"))) throw new Error(R.cursorGitRepo);
-    if (path.dirname(dir) === dir) break;
-  }
+  refuseGitAncestor(workspace, R.cursorGitRepo);
   const info = kind(path.join(workspace, CURSOR_FILE));
   if (info) {
     let mark = null;
@@ -266,8 +279,8 @@ export function codexHomeFromSettings(settings, { home = os.homedir(), instanceI
 // project `[mcp_servers.<name>]` into the home's table of the same name, so an
 // owner's keys (`command`, `bearer_token_env_var`, headers, `enabled`) would join a
 // Bot's entry. `inline` is a top-level `mcp_servers = {…}` (names not parsed); `form`
-// is a quoted `mcp_servers` root or an escaped name, which Codex reads but this does not.
-// shortcut: a header inside a multi-line string still counts; Codex's own writer never emits one.
+// is a quoted `mcp_servers` root, an escaped first key or an escaped name, which Codex
+// reads but this does not. Lines inside a multi-line string are skipped (B3 P3-1 on #116).
 export function codexServerNames(text) {
   const names = new Set();
   let inline = false, form = false, table = false, headerSeen = false;
@@ -277,11 +290,17 @@ export function codexServerNames(text) {
   const bare = value => value.replace(/^"(.*)"$|^'(.*)'$/s, "$1$2");
   const add = name => { if (name.startsWith('"') && name.includes("\\")) form = true; else names.add(bare(name)); };
   const isRoot = name => {
+    // An escaped quoted first key may spell mcp_servers (B3 P3-2 on #116).
+    if (name.startsWith('"') && name.includes("\\")) { form = true; return false; }
     if (bare(name) !== "mcp_servers") return false;
     if (name !== "mcp_servers") form = true; // a quoted root key
     return true;
   };
+  let multi = null;
   for (const raw of String(text).split(/\r?\n/)) {
+    const inside = multi;
+    multi = openMultiline(raw, multi);
+    if (inside) continue;
     const line = raw.trim();
     if (line.startsWith("[")) {
       headerSeen = true;
@@ -298,6 +317,25 @@ export function codexServerNames(text) {
     else if (!headerSeen && isRoot(match[1])) { if (match[2]) add(match[2]); else inline = true; }
   }
   return { names, inline, form };
+}
+
+// The multi-line string ("""…""" or '''…''') still open at the end of `line`, given the
+// one open at its start; single-line strings and comments are skipped over.
+function openMultiline(line, open) {
+  let state = open;
+  for (let i = 0; i < line.length;) {
+    if (state === '"""' || state === "'''") {
+      if (state === '"""' && line[i] === "\\") i += 2;
+      else if (line.startsWith(state, i)) { i += 3; state = null; }
+      else i += 1;
+    } else if (state) {
+      if (state === '"' && line[i] === "\\") i += 2;
+      else { if (line[i] === state) state = null; i += 1; }
+    } else if (line[i] === "#") break;
+    else if (line.startsWith('"""', i) || line.startsWith("'''", i)) { state = line.slice(i, i + 3); i += 3; }
+    else { if (line[i] === '"' || line[i] === "'") state = line[i]; i += 1; }
+  }
+  return state === '"""' || state === "'''" ? state : null;
 }
 
 export function checkCodexServerNames(codexHome, names) {
@@ -401,7 +439,8 @@ export async function grokHomeFor(client, { home = os.homedir(), strict = false 
   // T3 passes the value as it is; Grok would resolve a relative one from the thread folder.
   const expanded = typeof value !== "string" ? null : value === "~" ? home : value.startsWith("~/") ? path.join(home, value.slice(2)) : value;
   if (!expanded || expanded !== expanded.trim() || !path.isAbsolute(expanded)) throw new Error(R.grokHomeForm);
-  return path.normalize(expanded);
+  // resolve, not normalize: no trailing slash, so it equals the home a marker records (B3 P3-3 on #117).
+  return path.resolve(expanded);
 }
 
 /**
@@ -413,10 +452,7 @@ export async function grokHomeFor(client, { home = os.homedir(), strict = false 
  * and so does a folder inside a git repository (Grok decides at the repository root).
  */
 export function planGrokTrust(grokHome, workspace, { now = Date.now } = {}) {
-  for (let dir = path.dirname(workspace); ; dir = path.dirname(dir)) {
-    if (existsSync(path.join(dir, ".git"))) throw new Error(R.grokGitRepo);
-    if (path.dirname(dir) === dir) break;
-  }
+  refuseGitAncestor(path.dirname(workspace), R.grokGitRepo);
   const { file, text, mode, tables } = readGrokTrust(grokHome, { create: true });
   const header = `[folders.${JSON.stringify(workspace)}]`;
   if (tables.has(header)) {

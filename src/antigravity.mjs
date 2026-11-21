@@ -135,9 +135,15 @@ const RESET_ISO = new RegExp(`${RESET_PREFIX}(\\d{4})-(\\d{2})-(\\d{2})[T ](\\d{
 const RESET_CLOCK = new RegExp(`${RESET_PREFIX}(\\d{1,2}):(\\d{2})(?::(\\d{2}))?(?: ?(AM|PM))?(?: (UTC|GMT|[+-]\\d{2}:?\\d{2}))?${END}`, "i");
 const RESET_IN = new RegExp(`${RESET_PREFIX}(\\d{1,4}) (second|minute|hour|day)(s?)${END}`, "i");
 const two = value => String(Number(value)).padStart(2, "0");
-// B3 P3-4 on #114: an offset is at most ±14:59; a capital-letter zone the reader does not know refuses the time.
+// B3 P3-4 on #114: an offset is at most ±14:59. A time followed by any other word or a
+// bracket (a zone the reader does not know, in any spelling) gives no reset time, except
+// a few plain words (B3 P3-1 on #117).
 const zoneOk = zone => !zone || !/^[+-]/.test(zone) || (+zone.slice(1, 3) <= 14 && +zone.slice(-2) <= 59);
-const unknownZone = (text, match) => /^ ?[A-Z]{2,5}(?![A-Za-z])/.test(text.slice(match.index + match[0].length));
+const AFTER_TIME = new Set(["today", "tomorrow", "and", "on", "in"]);
+const unknownZone = (text, match) => {
+  const next = /^\s*([A-Za-z(][A-Za-z]*)/.exec(text.slice(match.index + match[0].length));
+  return Boolean(next) && !AFTER_TIME.has(next[1].toLowerCase());
+};
 export function antigravityResetTime(reply) {
   if (typeof reply !== "string") return null;
   const text = reply.slice(0, 4096);

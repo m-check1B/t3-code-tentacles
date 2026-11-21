@@ -208,6 +208,10 @@ test("KRA-10869 B3 P2-2 on #114: an old effort id maps only on evidence from T3'
   // xhigh is never produced, and is not an alias source.
   assert.deepEqual(await liveModelSelection(live(level("low", "medium", "high", "xhigh")), { instanceId: "antigravity", model: "gemini-4-argon-xhigh" }), { instanceId: "antigravity", model: "gemini-4-argon-xhigh" });
   await assert.rejects(liveModelSelection(live(all), { ...old, options: [{ id: "thought_level", value: "low" }] }), /conflicts with option thought_level/);
+  // B3 P3-2 on #117: the conflict refuses before the evidence gate, mapped or not, with no T3 call.
+  const noCall = { rpc: async () => assert.fail("no T3 call") };
+  await assert.rejects(liveModelSelection(noCall, { ...old, options: [{ id: "thought_level", value: "low" }] }), /^Error: Antigravity model alias gemini-4-argon-high conflicts with option thought_level$/);
+  assert.deepEqual(await liveModelSelection(live(slugs("gemini-4-argon")), { ...old, options: [{ id: "thought_level", value: "high" }] }), { ...old, options: [{ id: "thought_level", value: "high" }] });
   // Other labs and plain ids make no T3 call.
   const none = { rpc: async () => assert.fail("no T3 call") };
   assert.deepEqual(await liveModelSelection(none, { instanceId: "codex", model: "gpt-5-high" }), { instanceId: "codex", model: "gpt-5-high" });
@@ -244,6 +248,18 @@ test("KRA-10869 B3 P2-1 on #114: only a strictly parsed reset time reaches the a
     ["resets at 2026-11-22 07:00 CET", null],
     ["resets at 9:05 PM PST.", null],
     ["resets at 14:05 tomorrow", "14:05"],
+    // B3 P3-1 on #117: any other word or a bracket after the time is an unknown zone; only plain words pass.
+    ["resets at 14:05 est", null],
+    ["resets at 14:05 Europe/Prague", null],
+    ["resets at 14:05 (PST)", null],
+    ["resets at 14:05 Pacific Time", null],
+    ["resets at 14:05\u00a0UTC", null],
+    ["resets at 14:05 today", "14:05"],
+    ["resets at 14:05 and then some", "14:05"],
+    ["resets at 14:05 on Monday", "14:05"],
+    ["resets at 14:05 in your region", "14:05"],
+    ["resets at 2026-11-22 07:00 est", null],
+    ["resets at 2026-11-22 07:00 GMT", "2026-11-22 07:00 GMT"],
     ["resets on Monday", null],
     ["resets at 2026-13-01T00:00Z", null],
     ["no time here", null],

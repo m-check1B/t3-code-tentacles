@@ -45,7 +45,7 @@ const CONTINUE_PARAM_KEYS = new Set([
 function readGrokMarker(file) {
   try {
     const found = fs.lstatSync(file).isFile() && /^(\d{1,15})\n?(?:(\/[^\n]+)\n)?$/.exec(fs.readFileSync(file, "utf8"));
-    return found ? { decidedAt: found[1], home: found[2] ? path.normalize(found[2]) : undefined } : null;
+    return found ? { decidedAt: found[1], home: found[2] ? path.resolve(found[2]) : undefined } : null;
   } catch { return null; }
 }
 
