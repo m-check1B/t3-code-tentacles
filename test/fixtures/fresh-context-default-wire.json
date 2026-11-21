@@ -132,7 +132,8 @@
           "jackMcpConfig": "v1",
           "jackMcpProviders": [
             "claudeAgent",
-            "codex"
+            "codex",
+            "opencode"
           ],
           "jackMcpHeaders": false,
           "jackMcpPublicUrls": [
@@ -310,7 +311,8 @@
           "jackMcpConfig": "v1",
           "jackMcpProviders": [
             "claudeAgent",
-            "codex"
+            "codex",
+            "opencode"
           ],
           "jackMcpHeaders": false,
           "jackMcpPublicUrls": [

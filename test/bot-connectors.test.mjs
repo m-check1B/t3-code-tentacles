@@ -19,6 +19,7 @@ const jack = { name: "jack", type: "http", url: `${ORIGIN}/mcp`, headers: bearer
 const connectors = (servers, extra = {}) => ({ mcpServers: servers, mcpScope: scope, mcpExpiresAt: Date.now() + 60_000, ...extra });
 const claude = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
 const codex = { instanceId: "codex", model: "gpt-6-astra" };
+const opencode = { instanceId: "opencode", model: "opencode-go/glm-5.3-flash" };
 // Jack's paired_mcp_workspace for this scope.
 const seatDigest = (value = scope) => createHash("sha256").update(`${value.businessId}:${value.seatId}`).digest("hex");
 
@@ -113,8 +114,8 @@ test("anything Jack's gate would not admit is refused before the workspace or T3
     [connectors([learn], { mcpScope: { ...scope, agentId: "nope" } }), /exact ownership/],
     [connectors([learn], { mcpExpiresAt: Date.now() - 1 }), /expired/],
     [connectors([learn], { mcpExpiresAt: Date.now() + 600_000 }), /expired/],
-    [connectors([learn], { instanceId: "antigravity" }), /not supported on this lab/],
-    [connectors([learn], { instanceId: undefined }), /not supported on this lab/],
+    [connectors([learn], { instanceId: "antigravity" }), /This lab cannot use Jack tools on Local yet; run this Bot on Server to use them$/],
+    [connectors([learn], { instanceId: undefined }), /cannot use Jack tools on Local yet/],
     [connectors([{ ...jack, headers: [] }]), /not an admitted list/],
     [connectors([{ ...jack, name: "jack2" }]), /not an admitted list/],
     [connectors([{ ...jack, url: `${ORIGIN}/mcp/` }]), /not an admitted list/],
@@ -196,7 +197,7 @@ test("doctor-status advertises exactly what Jack's gate reads, only with Local T
   };
   const { capabilities } = await report({ talkTurnResult: "v1", turnInterrupt: null });
   assert.deepEqual({ ...capabilities, jackMcpProviders: [...capabilities.jackMcpProviders], jackMcpPublicUrls: [...capabilities.jackMcpPublicUrls] },
-    { talkTurnResult: "v1", turnInterrupt: null, jackMcpConfig: "v1", jackMcpProviders: ["claudeAgent", "codex"], jackMcpHeaders: false, jackMcpPublicUrls: [PUBLIC_MCP_URL], jackMcpProxy: "v1", jackMcpSelf: "v1" });
+    { talkTurnResult: "v1", turnInterrupt: null, jackMcpConfig: "v1", jackMcpProviders: ["claudeAgent", "codex", "opencode"], jackMcpHeaders: false, jackMcpPublicUrls: [PUBLIC_MCP_URL], jackMcpProxy: "v1", jackMcpSelf: "v1" });
   assert.equal(JSON.parse(JSON.stringify(capabilities)).jackMcpConfig, BOT_CONNECTOR_CAPABILITIES.jackMcpConfig);
   assert.deepEqual((await report({ talkTurnResult: null, turnInterrupt: null })).capabilities, { talkTurnResult: null, turnInterrupt: null });
 });
@@ -358,7 +359,7 @@ test("B3 P2-1 on #102: a pairing without a pinned Jack origin invites no Jack-ho
   assert.equal(Object.hasOwn(unpinned, "jackMcpSelf"), false);
   // The public docs server road is unchanged.
   assert.deepEqual([unpinned.jackMcpConfig, [...unpinned.jackMcpProviders], unpinned.jackMcpHeaders, [...unpinned.jackMcpPublicUrls]],
-    ["v1", ["claudeAgent", "codex"], false, [PUBLIC_MCP_URL]]);
+    ["v1", ["claudeAgent", "codex", "opencode"], false, [PUBLIC_MCP_URL]]);
   // A pairing from an Agent Jack that pins its origin gets the whole advert.
   adapter.jackOrigin = ORIGIN;
   const pinned = (await adapter.doctorStatus()).capabilities;
@@ -380,4 +381,29 @@ test("B3 P2-1 on #102: an older Agent Jack's Bot with no plugins gives T3 the sa
   assert.deepEqual(sent[2], sent[3]);
   assert.deepEqual(stops, []);
   assert.equal(fs.existsSync(path.join(old, ".mcp.json")), false);
+});
+
+test("KRA-10869: Jack's own tools, a connector and the docs server reach Local OpenCode through the folder's opencode.json", async () => {
+  const { home, workspace, sent, stops, adapter } = setup();
+  const reply = await adapter.originate({ workspace, message: "weather?", ...opencode, ...connectors([jack, linear, learn]) });
+  const file = path.join(workspace, "opencode.json");
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { $schema: "https://opencode.ai/config.json", mcp: {
+    jack: { type: "remote", url: `${ORIGIN}/mcp`, oauth: false, headers: { Authorization: "Bearer synthetic-turn-token" } },
+    linear: { type: "remote", url: `${ORIGIN}/mcp/connectors/linear`, oauth: false, headers: { Authorization: "Bearer synthetic-turn-token" } },
+    "microsoft-learn": { type: "remote", url: PUBLIC_MCP_URL, oauth: false },
+  } });
+  // OpenCode needs no trust entry: nothing outside the Bot workspace changes.
+  assert.equal(fs.existsSync(path.join(home, ".codex")), false);
+  assert.equal(fs.existsSync(path.join(home, ".config")), false);
+  assert.equal(JSON.stringify([reply, sent]).includes("synthetic-turn-token"), false);
+  // A new token applies to the next turn: the idle session is stopped first.
+  await adapter.continue({ threadId: "t1", message: "again", ...opencode, ...connectors([jack], { mcpScope: scope }) });
+  assert.deepEqual(stops, ["t1"]);
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(file, "utf8")).mcp), ["jack"]);
+  // An empty list removes the tools.
+  await adapter.continue({ threadId: "t1", message: "again", ...opencode, ...connectors([]) });
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")).mcp, {});
+  assert.equal(JSON.stringify(sent).includes("synthetic-turn-token"), false);
+  assert.equal(sent.some(params => Object.keys(params).some(key => key.startsWith("mcp"))), false);
 });

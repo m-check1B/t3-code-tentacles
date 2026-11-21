@@ -24,7 +24,7 @@ import { GUARD_FILE } from "./talk-instruction-guard.mjs";
 // Jack; the token dies with the turn.
 export const PUBLIC_MCP_URL = "https://learn.microsoft.com/api/mcp";
 export const JACK_SERVER_NAME = "jack";
-export const BOT_CONNECTOR_PROVIDERS = Object.freeze(["claudeAgent", "codex"]);
+export const BOT_CONNECTOR_PROVIDERS = Object.freeze(["claudeAgent", "codex", "opencode"]);
 export const BOT_CONNECTOR_CAPABILITIES = Object.freeze({
   jackMcpConfig: "v1",
   jackMcpProviders: BOT_CONNECTOR_PROVIDERS,
@@ -37,6 +37,9 @@ export const BOT_CONNECTOR_PARAM_KEYS = Object.freeze(["mcpServers", "mcpScope",
 export const MCP_FILE = ".mcp.json";
 export const CODEX_DIR = ".codex";
 export const CODEX_FILE = path.join(CODEX_DIR, "config.toml");
+// OpenCode loads `<directory>/opencode.json` for the folder T3 passes per request,
+// also on the one server T3 shares across threads, and re-reads it on the next turn.
+export const OPENCODE_FILE = "opencode.json";
 
 const NAME = /^[A-Za-z0-9_-]{1,100}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -81,6 +84,7 @@ export function pinnedJackOrigin(value) {
   }
 }
 
+export const LAB_WITHOUT_JACK_TOOLS = "This lab cannot use Jack tools on Local yet; run this Bot on Server to use them";
 export const REPAIR_FOR_JACK_TOOLS = "Jack tools need this computer paired again from an updated Agent Jack (Settings > Local labs > pair this computer)";
 
 /**
@@ -107,7 +111,8 @@ export function admitBotConnectors(params, { now = Date.now, jackOrigin = null }
     throw new Error("Bot connector admission expired");
   }
   if (mcpServers.length && !BOT_CONNECTOR_PROVIDERS.includes(rest.instanceId)) {
-    throw new Error("Bot connectors are not supported on this lab");
+    // Fixed text (KRA-10870 attaches codes): name the road that works today.
+    throw new Error(LAB_WITHOUT_JACK_TOOLS);
   }
   // B3 P1-1 on #99: a token and a full-access lab go only to the Jack this
   // computer was paired with. The origin comes from the one-shot pair offer the
@@ -275,6 +280,10 @@ export function writeBotConnectors(workspace, prepared, servers, { codexHome, co
   writePrivate(path.join(workspace, MCP_FILE), `${JSON.stringify({ mcpServers }, null, 2)}\n`);
   realDirectory(path.join(workspace, CODEX_DIR));
   writePrivate(path.join(workspace, CODEX_FILE), `# Written by Tentacles before every Jack Bot turn.\n${codexToml(servers)}`);
+  writePrivate(path.join(workspace, OPENCODE_FILE), `${JSON.stringify({ $schema: "https://opencode.ai/config.json", mcp: Object.fromEntries(servers.map(server => [server.name, {
+    type: "remote", url: server.url, oauth: false,
+    ...(server.headers.length ? { headers: Object.fromEntries(server.headers.map(header => [header.name, header.value])) } : {}),
+  }])) }, null, 2)}\n`);
   // Claude Code asks before it loads a project `.mcp.json`; a Bot turn has
   // nobody to ask. Only this file, which is rewritten every turn, is approved.
   const settings = path.join(workspace, GUARD_FILE);
