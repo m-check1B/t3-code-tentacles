@@ -189,7 +189,11 @@ test("B3 P2-2: a refused clear changes no file, and its retry still stops the st
 });
 
 test("doctor-status advertises exactly what Jack's gate reads, only with Local Talk support", async () => {
-  const report = capabilities => new LoopbackRuntimeAdapter({ client: {}, doctorImpl: async () => ({ capabilities }) }).doctorStatus();
+  const report = capabilities => {
+    const adapter = new LoopbackRuntimeAdapter({ client: {}, doctorImpl: async () => ({ capabilities }) });
+    adapter.jackOrigin = ORIGIN; // paired by an Agent Jack that pinned its origin
+    return adapter.doctorStatus();
+  };
   const { capabilities } = await report({ talkTurnResult: "v1", turnInterrupt: null });
   assert.deepEqual({ ...capabilities, jackMcpProviders: [...capabilities.jackMcpProviders], jackMcpPublicUrls: [...capabilities.jackMcpPublicUrls] },
     { talkTurnResult: "v1", turnInterrupt: null, jackMcpConfig: "v1", jackMcpProviders: ["claudeAgent", "codex"], jackMcpHeaders: false, jackMcpPublicUrls: [PUBLIC_MCP_URL], jackMcpProxy: "v1", jackMcpSelf: "v1" });
@@ -399,4 +403,37 @@ test("B3 P3-2 on #101: a planted .codex or .claude link, or a directory file tar
   // Without the plants the turn stops once and writes again.
   await adapter.continue({ threadId, message: "again", runtimeMode: "full-access", ...codex, ...connectors([learn]) });
   assert.equal(stops.length, 1);
+});
+
+test("B3 P2-1 on #102: a pairing without a pinned Jack origin invites no Jack-hosted entry", async () => {
+  const adapter = new LoopbackRuntimeAdapter({ client: {}, doctorImpl: async () => ({ capabilities: { talkTurnResult: "v1" } }) });
+  // Paired by today's Agent Jack: its offer names no origin.
+  adapter.jackOrigin = null;
+  const unpinned = (await adapter.doctorStatus()).capabilities;
+  assert.equal(Object.hasOwn(unpinned, "jackMcpProxy"), false);
+  assert.equal(Object.hasOwn(unpinned, "jackMcpSelf"), false);
+  // The public docs server road is unchanged.
+  assert.deepEqual([unpinned.jackMcpConfig, [...unpinned.jackMcpProviders], unpinned.jackMcpHeaders, [...unpinned.jackMcpPublicUrls]],
+    ["v1", ["claudeAgent", "codex"], false, [PUBLIC_MCP_URL]]);
+  // A pairing from an Agent Jack that pins its origin gets the whole advert.
+  adapter.jackOrigin = ORIGIN;
+  const pinned = (await adapter.doctorStatus()).capabilities;
+  assert.deepEqual([pinned.jackMcpProxy, pinned.jackMcpSelf], ["v1", "v1"]);
+});
+
+test("B3 P2-1 on #102: an older Agent Jack's Bot with no plugins gives T3 the same turn as jack.19", async () => {
+  const { home, workspace, sent, stops, adapter, at } = setup({ jackOrigin: null });
+  // A new Talk: that Agent Jack sends an empty list with its scope, in the Bot's own folder.
+  await adapter.originate({ workspace, message: "hi", ...claude, ...connectors([]) });
+  await adapter.originate({ workspace, message: "hi", ...claude });
+  assert.deepEqual(sent[0], sent[1]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8")), { mcpServers: {} });
+  // An existing Talk in its old folder: nothing is written there and no session is stopped.
+  const old = path.join(home, ".jack-local-scratch", "jack-talk", "a".repeat(32), "b".repeat(32));
+  at.workspace = old;
+  await adapter.continue({ threadId: "t1", message: "again", runtimeMode: "full-access", ...claude, ...connectors([]) });
+  await adapter.continue({ threadId: "t1", message: "again", runtimeMode: "full-access", ...claude });
+  assert.deepEqual(sent[2], sent[3]);
+  assert.deepEqual(stops, []);
+  assert.equal(fs.existsSync(path.join(old, ".mcp.json")), false);
 });

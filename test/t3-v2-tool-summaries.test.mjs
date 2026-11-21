@@ -13,8 +13,8 @@ const items = [
   { ...base, id: "i1", ordinal: 1, type: "dynamic_tool", status: "completed", toolName: "mcp__jack__web.search", title: "web.search",
     toolSource: { key: "mcp:jack", name: "jack", kind: "integration" }, input: { query: "SECRET-QUERY Prague weather" },
     output: { content: "SECRET-OUTPUT 7°C" }, completedAt: "2026-11-21T08:00:03.000Z", updatedAt: "2026-11-21T08:00:03.000Z" },
-  // Codex names the tool bare and carries the server in toolSource.
-  { ...base, id: "i2", ordinal: 2, type: "dynamic_tool", status: "failed", toolName: "web.search", toolSource: { key: "mcp:jack", name: "jack" },
+  // Codex: T3 0.1.11 CodexAdapterV2 names an MCP call "<server>.<tool>" and keys its source "mcp:<server>".
+  { ...base, id: "i2", ordinal: 2, type: "dynamic_tool", status: "failed", toolName: "jack.web.search", toolSource: { key: "mcp:jack", name: "jack", kind: "integration" },
     input: {}, completedAt: null, updatedAt: "2026-11-21T08:00:04.000Z" },
   // A built-in lab tool, a running MCP call and a web search.
   { ...base, id: "i3", ordinal: 3, type: "dynamic_tool", status: "completed", toolName: "Read", input: {}, completedAt: "2026-11-21T08:00:05.000Z", updatedAt: "2026-11-21T08:00:05.000Z" },
@@ -39,4 +39,32 @@ test("C4: a Bot's MCP tool calls on official T3 v2 reach Talk as name-only tool 
     ["tool:item:i5", "Searched the web", "2026-11-21T08:00:07.000Z"],
   ]);
   assert.doesNotMatch(JSON.stringify({ v1, events }), /SECRET|Ignore previous/);
+});
+
+test("C4 review P3-1/P3-2 on #103: no title fallback, plain labels only, Codex server once, a fetch is not a search", () => {
+  const at = { completedAt: "2026-11-21T08:01:00.000Z", updatedAt: "2026-11-21T08:01:00.000Z" };
+  const tool = (id, extra) => ({ ...base, ...at, id, ordinal: 1, type: "dynamic_tool", status: "completed", input: {}, ...extra });
+  const web = (id, extra) => ({ ...base, ...at, id, ordinal: 1, type: "web_search", status: "completed", ...extra });
+  const turnItems = [
+    // A name that fails the label check never falls back to a (model-writable) title.
+    tool("t1", { toolName: `mcp__jack__${"x".repeat(81)}`, title: "SECRET-TITLE from input" }),
+    // URL-, email- and path-shaped names are not plain labels.
+    tool("t2", { toolName: "mcp__jack__https://evil.example/x" }),
+    tool("t3", { toolName: "mcp__jack__owner@example.com" }),
+    tool("t4", { toolName: "mcp__jack__/home/owner/secret" }),
+    // Codex: the server is shown once, whatever its case.
+    tool("t5", { toolName: "Linear.list_issues", toolSource: { key: "mcp:linear", name: "Linear" } }),
+    // Claude WebFetch, by its snippet result or by its URL pattern; a real search stays a search.
+    web("w1", { patterns: ["https://SECRET.example/page"], results: [{ url: "https://SECRET.example/page", snippet: "SECRET page text" }] }),
+    web("w2", { patterns: ["https://SECRET.example/other"] }),
+    web("w3", { patterns: ["SECRET weather"], results: [{ title: "SECRET result", url: "https://SECRET.example" }] }),
+  ];
+  const { thread: v1 } = threadDetailToV1({ projection: { thread, runs: [{ id: "run-1", ordinal: 1, status: "completed" }], turnItems } }, thread.id);
+  assert.deepEqual(v1.activities.map(({ id, summary }) => [id, summary]), [
+    ["item:t5", "Used tool: list_issues (Linear)"],
+    ["item:w1", "Read a web page"],
+    ["item:w2", "Read a web page"],
+    ["item:w3", "Searched the web"],
+  ]);
+  assert.doesNotMatch(JSON.stringify(v1.activities), /SECRET|evil|owner/);
 });
