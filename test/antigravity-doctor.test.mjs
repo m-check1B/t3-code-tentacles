@@ -140,8 +140,11 @@ test("Antigravity never invents a default model from a fixed fallback", async ()
 // KRA-10863: T3 0.1.11's two repairable managed-runtime messages get their own code and fix.
 const PREDATES = "Antigravity 1.20.3 predates the Antigravity CLI and no longer works with this T3 Code release. Update it in Antigravity setup.";
 const CHANGED = "The managed Antigravity runtime changed on disk. Reinstall it in Antigravity setup.";
+// B3 P3-2 on #100: a withdrawn managed release, same fix (AntigravityInstallation.ts:659 at v0.1.11).
+const WITHDRAWN = "Antigravity 1.5.9 no longer works with this T3 Code release. Update it in Antigravity setup.";
 for (const [message, installed, code, fix] of [
   [PREDATES, true, "runtime_update_required", /update it in T3 Code's Antigravity setup/],
+  [WITHDRAWN, true, "runtime_update_required", /update it in T3 Code's Antigravity setup/],
   // T3 reports this one as a missing installation; it is still a repair, not an install.
   [CHANGED, false, "runtime_changed", /reinstall it in T3 Code's Antigravity setup/],
 ]) {
@@ -158,7 +161,7 @@ for (const [message, installed, code, fix] of [
 }
 
 test("a near miss of a repairable message stays a plain provider error", async () => {
-  for (const message of [`${CHANGED} SECRET-CANARY`, PREDATES.replace("1.20.3", "1.20.3 /tmp/x"), CHANGED.toLowerCase()]) {
+  for (const message of [`${CHANGED} SECRET-CANARY`, PREDATES.replace("1.20.3", "1.20.3 /tmp/x"), CHANGED.toLowerCase(), WITHDRAWN.replace("1.5.9", "1.5.9 SECRET-CANARY")]) {
     const row = await antigravityRow({ provider: { status: "error", installed: true, auth: { status: "authenticated" }, message } });
     assert.equal(row.code, "provider_error");
     assert.equal(JSON.stringify(row).includes("SECRET-CANARY"), false);

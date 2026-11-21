@@ -257,7 +257,9 @@ Ready means T3 accepts the lab, not that its model answers. To check that, run
 probe costs one model call per lab: it originates one no-tools turn per selected
 lab in a `doctor-probe` workspace under the Tentacles state directory, in threads
 titled `Tentacles doctor probe: <lab>`, and reports `responds`, `no_response` or
-`error` with the time to the first model event. A turn with no answer within
+`error` with the time to the first model event. Only a reply of exactly `OK` is
+`responds`; an out-of-quota reply is `error` / `usage_limit`, and any other reply is
+`error` / `provider_error` (the reply text is never reported). A turn with no answer within
 `--responds-timeout` seconds (default 60), or whose T3 read fails, is
 interrupted through the turn interrupt path and gets a next action. On a T3
 without the turn-result route the turn cannot be interrupted; the row then says

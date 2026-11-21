@@ -52,6 +52,9 @@ function fakeT3(t, behaviour, { failProject = false, noTurnResult = false, capab
         // startfail-recover: only the first read after the turn start gets a 503.
         if (mode === "startfail-recover") recoverOnce.add(command.threadId);
         if (mode === "answer") thread.messages.push({ id: "assistant-1", role: "assistant", text: "OK" });
+        // Antigravity 1.5.13's own out-of-quota reply, and a reply that is not OK.
+        if (mode === "quota") thread.messages.push({ id: "assistant-1", role: "assistant", text: "You have exhausted your quota on this model." });
+        if (mode === "chatty") thread.messages.push({ id: "assistant-1", role: "assistant", text: "Sure! SECRET-CANARY OK" });
         thread.session = mode === "error"
           ? { status: "error", activeTurnId: null, lastError: "rate limit exceeded SECRET-CANARY" }
           : { status: "running", activeTurnId: "turn-1" };
@@ -385,4 +388,16 @@ test("a failed reauth inside the probe start is not repeated by the poll and int
   assert.equal(row.status, "error");
   assert.ok(row.threadId);
   assert.equal(reauthCalls, 1, "a failed reauth runs at most once per client");
+});
+
+test("only a reply of exactly OK responds; a quota reply is usage_limit with a plain action, never echoed", async (t) => {
+  const { client, workspace } = fakeT3(t, { codex: "quota", grok: "chatty", claudeAgent: "answer" });
+  const result = await probeResponds(client, labs, options(workspace));
+  const row = (id) => result.labs.find((lab) => lab.instanceId === id);
+  assert.equal(row("claudeAgent").status, "responds");
+  assert.deepEqual([row("codex").status, row("codex").code], ["error", "usage_limit"]);
+  assert.match(row("codex").action, /out of quota; pass --model with another model/);
+  assert.deepEqual([row("grok").status, row("grok").code], ["error", "provider_error"]);
+  assert.match(row("grok").action, /answered, but not with OK/);
+  assert.doesNotMatch(JSON.stringify(result), /SECRET-CANARY|exhausted your quota/);
 });

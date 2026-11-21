@@ -8,13 +8,15 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { ensureProject, probeTalkCapabilities, startThread } from "./bridge.mjs";
 import { DEFAULT_STATE_DIR, ensurePrivateDirectory } from "./config.mjs";
-import { classifyFailure } from "./failure-codes.mjs";
+import { classifyFailure, classifyFailureText } from "./failure-codes.mjs";
 import { T3HttpError } from "./t3-client.mjs";
 import { createThreadLock, TurnInterrupter } from "./turn-interrupt.mjs";
 
 export const DEFAULT_PROBE_TIMEOUT_MS = 60_000;
 export const DEFAULT_PROBE_WORKSPACE = path.join(DEFAULT_STATE_DIR, "doctor-probe");
 const PROBE_MESSAGE = "Reply with the single word OK. Do not use any tools.";
+const QUOTA_ACTION = "this model is out of quota; pass --model with another model or wait until its quota resets";
+const WRONG_REPLY_ACTION = "the model answered, but not with OK; check the CLI's sign-in and quota, or pass --model with a model that answers";
 const NO_RESPONSE_ACTION = "model accepts requests but never answers; check the CLI's sign-in and quota, or pass --model with a model that answers";
 const NO_MODEL_ACTION = "the lab reports no default model to probe; set one in T3";
 
@@ -93,9 +95,15 @@ async function probeLab(client, lab, { workspace, timeoutMs, intervalMs, interru
       const thread = (await client.thread(turn.threadId))?.thread;
       const messages = Array.isArray(thread?.messages) ? thread.messages : [];
       const index = messages.findIndex((message) => message?.id === turn.messageId);
-      // Only message roles and session status are read; message text never leaves T3.
-      if (index >= 0 && messages.slice(index + 1).some((message) => message?.role === "assistant")) {
-        return { ...row, threadId: turn.threadId, status: "responds", firstEventMs: Date.now() - started };
+      // The reply is compared here and never reported; only exactly OK proves the
+      // model answers (an out-of-quota lab still replies, with its quota error).
+      const reply = index >= 0 ? messages.slice(index + 1).find((message) => message?.role === "assistant" && message.streaming !== true) : undefined;
+      if (reply) {
+        const text = typeof reply.text === "string" ? reply.text.trim() : "";
+        if (/^ok\.?$/i.test(text)) return { ...row, threadId: turn.threadId, status: "responds", firstEventMs: Date.now() - started };
+        const quota = classifyFailureText(text) === "usage_limit";
+        return { ...row, threadId: turn.threadId, status: "error", firstEventMs: Date.now() - started,
+          code: quota ? "usage_limit" : "provider_error", action: quota ? QUOTA_ACTION : WRONG_REPLY_ACTION };
       }
       if (thread?.session?.status === "error") {
         const { code } = classifyFailure({ sessionStatus: "error", error: typeof thread.session.lastError === "string" ? thread.session.lastError : null });

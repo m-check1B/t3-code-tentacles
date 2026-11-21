@@ -7,6 +7,8 @@ All notable changes to this project are documented here.
 ### Fixed
 
 - KRA-10870 (part 1): when a paired turn is refused on this computer, the pairer logs one `rpc.refused` event with a typed code and its plain fix, for example `bot_connectors.codex_home`: "Trust this Bot's folder in Codex first…". Codes are given only to known fixed refusal texts (every Bot connector set-up text has one, a Talk started before plugins worked gets `bot_connectors.new_talk`) and to T3 Code not running (`t3.unreachable`: "Start T3 Code (Beta) on this computer, then send again."); anything else is `unknown`, and the error's own text, paths and tokens are never logged. The relay reply is unchanged (`computer.unavailable`), because Sphere and today's Agent Jack accept only that. Sending the code to Agent Jack needs Sphere and Agent Jack changes (part 2).
+- KRA-10863: `doctor --responds` counts a lab as responding only when it answers exactly "OK". An out-of-quota model still replies (Antigravity: "You have exhausted your quota on this model."), and it used to count as responding. That case is now `usage_limit`, with the action "this model is out of quota; pass --model with another model or wait until its quota resets". Any other reply is `provider_error` and says the model did not answer with OK. The reply is compared on the computer and never reported. The shared `usage_limit` classifier also recognises "exhausted your quota" and "out of quota".
+- KRA-10863: `doctor` also maps T3's third repairable Antigravity runtime message, "Antigravity <version> no longer works with this T3 Code release. Update it in Antigravity setup." (a withdrawn managed release), to `runtime_update_required`, with the same fix and setup link.
 
 ## [0.5.0-jack.20] - 2026-11-21
 

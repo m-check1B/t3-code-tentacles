@@ -30,16 +30,18 @@ export function t3SupportsAntigravity(serverVersion) {
 // whole and never echoed.
 const T3_HEALTH_CHECK_TIMEOUT = /^Antigravity did not respond to its local health check within [0-9]{1,6} [a-z]{1,12}\.$/;
 
-// KRA-10863: T3's two managed-runtime messages that its own Antigravity setup
+// KRA-10863: T3's three managed-runtime messages that its own Antigravity setup
 // repairs (AntigravityInstallation, T3 0.1.11), matched whole and never echoed.
 // "changed on disk" arrives with installed=false, so it is read before that.
 const T3_RUNTIME_PREDATES_CLI = /^Antigravity [0-9A-Za-z.+-]{1,64} predates the Antigravity CLI and no longer works with this T3 Code release\. Update it in Antigravity setup\.$/;
 const T3_RUNTIME_CHANGED = /^The managed Antigravity runtime changed on disk\. Reinstall it in Antigravity setup\.$/;
+// A managed runtime whose release T3 has withdrawn (resolve step); same fix as "predates".
+const T3_RUNTIME_WITHDRAWN = /^Antigravity [0-9A-Za-z.+-]{1,64} no longer works with this T3 Code release\. Update it in Antigravity setup\.$/;
 
 function repairCode(configProvider) {
   if (configProvider.status !== "error" || typeof configProvider.message !== "string") return null;
   const message = configProvider.message.trim();
-  return T3_RUNTIME_PREDATES_CLI.test(message) ? "runtime_update_required"
+  return T3_RUNTIME_PREDATES_CLI.test(message) || T3_RUNTIME_WITHDRAWN.test(message) ? "runtime_update_required"
     : T3_RUNTIME_CHANGED.test(message) ? "runtime_changed" : null;
 }
 

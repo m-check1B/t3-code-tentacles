@@ -36,7 +36,7 @@ const TEXT_PATTERNS = [
   // Context-window and token-limit overflow is a request problem, not a
   // usage limit: a fallback lab or a later retry would fail the same way.
   ["provider_error", /\b(?:context[ _-]?(?:length|window|limit)|context_length_exceeded|tokens?[ _-]?limit|prompt is too long|too many (?:input |prompt )?tokens)\b/i],
-  ["usage_limit", /\b(?:usage[ _-]?limit|rate[ _-]?limit(?:ed)?|insufficient[ _-]?quota|quota (?:exceeded|exhausted|reached)|too many requests|(?:hit|reached) (?:your|the) (?:usage |rate )?limit|limit (?:reached|exceeded)|out of credits|credit balance is too low)\b/i],
+  ["usage_limit", /\b(?:usage[ _-]?limit|rate[ _-]?limit(?:ed)?|insufficient[ _-]?quota|quota (?:exceeded|exhausted|reached)|exhausted (?:your|the) quota|out of quota|too many requests|(?:hit|reached) (?:your|the) (?:usage |rate )?limit|limit (?:reached|exceeded)|out of credits|credit balance is too low)\b/i],
   // A bare `timeout` word (for example a `timeout=30` setting) is not a
   // timeout; only timeout phrases or the whole text `timeout` are.
   ["timeout", /\b(?:timed[ -]?out|deadline exceeded|ETIMEDOUT|(?:request|connection|connect|read|write|gateway|socket|idle|operation|turn|response|upstream)[ _-]timeout|timeout (?:error|exceeded|expired|reached|occurred))\b|^\s*timeout[.!]?\s*$/i],
