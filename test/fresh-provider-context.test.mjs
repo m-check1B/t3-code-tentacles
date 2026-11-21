@@ -73,7 +73,9 @@ test("idempotent fresh originate replays the same identifiers but refuses semant
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 // No pair offer pinned a Jack origin here, so Jack-hosted entries are not invited.
-const { jackMcpProxy: _proxy, jackMcpSelf: _self, ...UNPINNED_CAPABILITIES } = BOT_CONNECTOR_CAPABILITIES;
+const { jackMcpProxy: _proxy, jackMcpSelf: _self, ...UNPINNED_ALL } = BOT_CONNECTOR_CAPABILITIES;
+// These doctors report no OpenCode version, so opencode is not advertised.
+const UNPINNED_CAPABILITIES = { ...UNPINNED_ALL, jackMcpProviders: UNPINNED_ALL.jackMcpProviders.filter(id => id !== "opencode") };
 test("doctor advertises only the exact agreed capability envelope", async () => {
   const exact = { talkTurnResult: "v1" };
   for (const caps of [{}, capability, exact]) {

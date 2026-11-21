@@ -5,7 +5,7 @@ import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEY
 import { privateModeOk } from "./platform.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { randomUUID } from "node:crypto";
-import { continueThread, doctor, originate, probeTalkCapabilities } from "./bridge.mjs";
+import { continueThread, doctor, labVersion, originate, probeTalkCapabilities } from "./bridge.mjs";
 import { requireFreshFlags, requireFreshProviderContext } from "./fresh-provider-context.mjs";
 import { observe, REPORT_MODEL_LABEL, threadReportFailure, threadReportStatus } from "./orchestrate.mjs";
 import { classifyFailure } from "./failure-codes.mjs";
@@ -378,7 +378,13 @@ export class LoopbackRuntimeAdapter {
     // pairing without one (an older Agent Jack) does not invite them: that Agent Jack
     // then refuses its own connector turns as it did on jack.19. Learn still rides.
     const { jackMcpProxy, jackMcpSelf, ...unpinned } = BOT_CONNECTOR_CAPABILITIES;
-    const advert = this.jackOrigin ? BOT_CONNECTOR_CAPABILITIES : unpinned;
+    const advert = { ...(this.jackOrigin ? BOT_CONNECTOR_CAPABILITIES : unpinned) };
+    // Only T3's OpenCode 2 road (one shared server, per-request folder) is proven;
+    // T3 runs OpenCode below 2 through another adapter.
+    const opencode = report.labs?.find(lab => lab.instanceId === "opencode");
+    if (!/^v?([2-9]|[1-9][0-9]+)\./.test(labVersion(opencode) ?? "")) {
+      advert.jackMcpProviders = Object.freeze(advert.jackMcpProviders.filter(id => id !== "opencode"));
+    }
     const result = { ...report, capabilities: capabilities?.talkTurnResult === "v1" ? { ...capabilities, ...advert } : capabilities };
     if (this.capabilityCache) {
       // KRA-7369: the connector inventory rides the lab-catalog answer, because

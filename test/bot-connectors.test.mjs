@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { BOT_CONNECTOR_CAPABILITIES, PUBLIC_MCP_URL, codexHomeFor, trustCodexWorkspace } from "../src/bot-connectors.mjs";
-import { continueThread } from "../src/bridge.mjs";
+import { continueThread, doctor } from "../src/bridge.mjs";
 import { freshCapability } from "./helpers/fresh-context-wire.mjs";
 import { ensureLocalTalkWorkspace } from "../src/local-talk-workspace.mjs";
 import { LoopbackRuntimeAdapter, OutboundPairer, readPairOffer } from "../src/outbound-pairer.mjs";
@@ -85,6 +85,25 @@ test("a signed-in connector reaches the lab as Jack's proxy with the turn token,
   assert.equal(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8").includes("synthetic-turn-token"), false);
   // No temporary file with the token is ever left next to it.
   assert.deepEqual(fs.readdirSync(workspace).filter(name => name.endsWith(".tmp")), []);
+});
+
+test("B3 P3-1 on #109: a token with OpenCode substitution braces refuses before the stop, on every lab", async () => {
+  for (const lab of [claude, codex, opencode]) {
+    for (const value of ["Bearer {env:OPENCODE_PASSWORD}", "Bearer X{file:~/.ssh/id_ed25519}Y", "Bearer a:b"]) {
+      const { workspace, sent, stops, adapter } = setup();
+      const turn = { threadId: "t1", message: "again", ...lab, ...connectors([{ ...linear, headers: [{ name: "Authorization", value }] }]) };
+      await assert.rejects(async () => adapter.continue(turn), /not an admitted list/, `${lab.instanceId} ${value}`);
+      assert.deepEqual(stops, []);
+      assert.deepEqual(sent, []);
+      assert.equal(fs.existsSync(workspace), false);
+    }
+  }
+  // Jack's real token shape (secrets.token_urlsafe(32)) and padded token68 still pass.
+  for (const token of [randomBytes(32).toString("base64url"), "abc+/=="]) {
+    const { workspace, adapter, read } = setup();
+    await adapter.originate({ workspace, message: "hi", ...opencode, ...connectors([{ ...linear, headers: [{ name: "Authorization", value: `Bearer ${token}` }] }]) });
+    assert.equal(read("opencode.json").mcp.linear.headers.Authorization, `Bearer ${token}`);
+  }
 });
 
 test("a turn without connector fields leaves the workspace as it is", async () => {
@@ -197,9 +216,38 @@ test("doctor-status advertises exactly what Jack's gate reads, only with Local T
   };
   const { capabilities } = await report({ talkTurnResult: "v1", turnInterrupt: null });
   assert.deepEqual({ ...capabilities, jackMcpProviders: [...capabilities.jackMcpProviders], jackMcpPublicUrls: [...capabilities.jackMcpPublicUrls] },
-    { talkTurnResult: "v1", turnInterrupt: null, jackMcpConfig: "v1", jackMcpProviders: ["claudeAgent", "codex", "opencode"], jackMcpHeaders: false, jackMcpPublicUrls: [PUBLIC_MCP_URL], jackMcpProxy: "v1", jackMcpSelf: "v1" });
+    { talkTurnResult: "v1", turnInterrupt: null, jackMcpConfig: "v1", jackMcpProviders: ["claudeAgent", "codex"], jackMcpHeaders: false, jackMcpPublicUrls: [PUBLIC_MCP_URL], jackMcpProxy: "v1", jackMcpSelf: "v1" });
   assert.equal(JSON.parse(JSON.stringify(capabilities)).jackMcpConfig, BOT_CONNECTOR_CAPABILITIES.jackMcpConfig);
   assert.deepEqual((await report({ talkTurnResult: null, turnInterrupt: null })).capabilities, { talkTurnResult: null, turnInterrupt: null });
+});
+
+test("B3 P3-2 on #109: opencode is advertised only when T3 reports OpenCode 2 or newer", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bot-connectors-doctor-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const providersFor = async version => {
+    const provider = { instanceId: "opencode", driver: "opencode", status: "ready", installed: true, enabled: true, version, models: [{ slug: opencode.model }] };
+    const client = {
+      snapshot: async () => ({ projects: [], threads: [] }),
+      getSettings: async () => ({ providerInstances: {} }),
+      rpc: async () => ({ environment: { serverVersion: "0.1.11" }, providers: [provider] }),
+      refreshProvider: async () => {},
+      request: async () => ({ talkTurnResult: "v1" }),
+    };
+    const report = await doctor(client, {
+      fetchImpl: async () => new Response(JSON.stringify({ status: "ok" }), { status: 200 }),
+      pairStateFile: path.join(directory, "pair.json"),
+      openrouterTokenFile: path.join(directory, "none"),
+      hermesHome: directory,
+      refreshDirectory: path.join(directory, "refresh"),
+    });
+    const adapter = new LoopbackRuntimeAdapter({ client, doctorImpl: async () => report });
+    adapter.jackOrigin = ORIGIN;
+    const { capabilities } = await adapter.doctorStatus();
+    assert.equal(Object.hasOwn(report.labs.find(lab => lab.instanceId === "opencode"), "version"), false); // kept off the wire
+    return [...capabilities.jackMcpProviders];
+  };
+  for (const version of ["2.3.0", "2.0.0", "10.1.0"]) assert.deepEqual(await providersFor(version), ["claudeAgent", "codex", "opencode"], version);
+  for (const version of ["1.14.2", "0.9.0", null, "garbage"]) assert.deepEqual(await providersFor(version), ["claudeAgent", "codex"], String(version));
 });
 
 test("Jack's own tools and a connector reach Local Codex through a trusted per-folder config", async () => {
@@ -422,7 +470,7 @@ test("B3 P2-1 on #102: a pairing without a pinned Jack origin invites no Jack-ho
   assert.equal(Object.hasOwn(unpinned, "jackMcpSelf"), false);
   // The public docs server road is unchanged.
   assert.deepEqual([unpinned.jackMcpConfig, [...unpinned.jackMcpProviders], unpinned.jackMcpHeaders, [...unpinned.jackMcpPublicUrls]],
-    ["v1", ["claudeAgent", "codex", "opencode"], false, [PUBLIC_MCP_URL]]);
+    ["v1", ["claudeAgent", "codex"], false, [PUBLIC_MCP_URL]]);
   // A pairing from an Agent Jack that pins its origin gets the whole advert.
   adapter.jackOrigin = ORIGIN;
   const pinned = (await adapter.doctorStatus()).capabilities;

@@ -46,7 +46,8 @@ const NAME = /^[A-Za-z0-9_-]{1,100}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const MAX_LIFETIME_MS = 120_000;
 const MAX_SERVERS = 16;
-const BEARER = /^Bearer [\x21-\x7e]{1,16384}$/;
+// token68 only: OpenCode expands {env:...} and {file:...} inside config strings.
+const BEARER = /^Bearer [A-Za-z0-9._~+/-]{1,16384}=*$/;
 
 function exactKeys(value, keys) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -181,7 +182,7 @@ export function checkBotConnectorPaths(workspace) {
   }
 }
 
-// Names match NAME and values are printable ASCII (URL.href, BEARER), so a JSON
+// Names match NAME and values are printable ASCII (URL.href, token68 BEARER), so a JSON
 // string is a valid TOML basic string.
 function codexToml(servers) {
   return servers.map(server => [
