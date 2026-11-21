@@ -137,9 +137,7 @@
           "jackMcpHeaders": false,
           "jackMcpPublicUrls": [
             "https://learn.microsoft.com/api/mcp"
-          ],
-          "jackMcpProxy": "v1",
-          "jackMcpSelf": "v1"
+          ]
         }
       },
       "receipt": {
@@ -317,9 +315,7 @@
           "jackMcpHeaders": false,
           "jackMcpPublicUrls": [
             "https://learn.microsoft.com/api/mcp"
-          ],
-          "jackMcpProxy": "v1",
-          "jackMcpSelf": "v1"
+          ]
         }
       },
       "receipt": {

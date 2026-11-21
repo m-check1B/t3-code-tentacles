@@ -385,7 +385,7 @@ export function archivedShellToV1(shell) {
 // so a Bot's Jack tool call never reached Talk. A finished MCP tool or web search
 // becomes one `tool.completed` activity whose summary names the tool only;
 // the tool's input and output never leave this machine.
-const TOOL_LABEL = /^[\p{L}\p{N} ._:/@()-]{1,80}$/u;
+const TOOL_LABEL = /^[\p{L}\p{N} ._-]{1,80}$/u;
 const toolLabel = (value) => typeof value === "string" && TOOL_LABEL.test(value.trim()) ? value.trim() : null;
 
 export function toolActivities(projection) {
@@ -400,11 +400,22 @@ export function toolActivities(projection) {
       const sourceKey = isRecord(item.toolSource) && typeof item.toolSource.key === "string" ? item.toolSource.key : "";
       if (!qualified && !sourceKey.startsWith("mcp:")) continue; // built-in lab tools stay out of Talk
       const server = toolLabel(isRecord(item.toolSource) ? item.toolSource.name : null) ?? toolLabel(qualified?.[1]) ?? toolLabel(sourceKey.slice(4));
-      const tool = toolLabel(qualified?.[2]) ?? toolLabel(item.toolName) ?? toolLabel(item.title);
+      // Never the item title: T3 can fill it from the model's own tool input.
+      let tool = toolLabel(qualified?.[2] ?? item.toolName);
+      // Codex names an MCP tool "<server>.<tool>"; the server is shown once.
+      const keyServer = sourceKey.startsWith("mcp:") ? sourceKey.slice(4) : "";
+      if (tool && keyServer && tool.toLowerCase().startsWith(`${keyServer.toLowerCase()}.`)) tool = toolLabel(tool.slice(keyServer.length + 1));
       if (!tool) continue;
       summary = `${item.status === "failed" ? "Tool failed" : "Used tool"}: ${tool}${server ? ` (${server})` : ""}`;
     } else if (item.type === "web_search") {
-      summary = item.status === "failed" ? "Web search failed" : "Searched the web";
+      // Claude's WebFetch is a web_search item too: its result is a page snippet, or its
+      // pattern is the URL. Both are read here only to choose the words.
+      const results = Array.isArray(item.results) ? item.results : [];
+      const pattern = Array.isArray(item.patterns) && typeof item.patterns[0] === "string" ? item.patterns[0].trim() : "";
+      const fetched = (results.length > 0 && results.every((result) => isRecord(result) && result.snippet !== undefined && result.title === undefined))
+        || /^https?:\/\//i.test(pattern);
+      summary = fetched ? (item.status === "failed" ? "Reading a web page failed" : "Read a web page")
+        : (item.status === "failed" ? "Web search failed" : "Searched the web");
     } else continue;
     activities.push({ id: `item:${item.id}`, kind: "tool.completed", summary,
       createdAt: at, turnId: item.runId ?? null });
