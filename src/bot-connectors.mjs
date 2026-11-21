@@ -26,6 +26,14 @@ import { GUARD_FILE } from "./talk-instruction-guard.mjs";
 export const PUBLIC_MCP_URL = "https://learn.microsoft.com/api/mcp";
 export const JACK_SERVER_NAME = "jack";
 export const BOT_CONNECTOR_PROVIDERS = Object.freeze(["claudeAgent", "codex"]);
+// Labs whose road is built but not yet proven by a real turn (KRA-10869). They are
+// admitted and advertised only when the owner names them for a proof run:
+// TENTACLES_JACK_TOOLS_TRY=grok. A proven lab moves into BOT_CONNECTOR_PROVIDERS.
+export const UNPROVEN_BOT_CONNECTOR_PROVIDERS = Object.freeze(["grok"]);
+export function botConnectorProviders(env = process.env) {
+  const tried = String(env.TENTACLES_JACK_TOOLS_TRY ?? "").split(",").map(value => value.trim());
+  return Object.freeze([...BOT_CONNECTOR_PROVIDERS, ...UNPROVEN_BOT_CONNECTOR_PROVIDERS.filter(id => tried.includes(id))]);
+}
 export const BOT_CONNECTOR_CAPABILITIES = Object.freeze({
   jackMcpConfig: "v1",
   jackMcpProviders: BOT_CONNECTOR_PROVIDERS,
@@ -89,7 +97,7 @@ export const REPAIR_FOR_JACK_TOOLS = "Jack tools need this computer paired again
  * when Jack sent none (files stay as they are), else the validated list.
  * Every refusal happens here, before the workspace or T3 is touched.
  */
-export function admitBotConnectors(params, { now = Date.now, jackOrigin = null } = {}) {
+export function admitBotConnectors(params, { now = Date.now, jackOrigin = null, env = process.env } = {}) {
   const { mcpServers, mcpScope, mcpExpiresAt, ...rest } = params;
   if (mcpServers === undefined) {
     if (mcpScope !== undefined || mcpExpiresAt !== undefined) throw new Error("Bot connector metadata requires mcpServers");
@@ -107,7 +115,7 @@ export function admitBotConnectors(params, { now = Date.now, jackOrigin = null }
   if (!Number.isInteger(mcpExpiresAt) || mcpExpiresAt <= now() || mcpExpiresAt > now() + MAX_LIFETIME_MS) {
     throw new Error("Bot connector admission expired");
   }
-  if (mcpServers.length && !BOT_CONNECTOR_PROVIDERS.includes(rest.instanceId)) {
+  if (mcpServers.length && !botConnectorProviders(env).includes(rest.instanceId)) {
     throw new Error("Bot connectors are not supported on this lab");
   }
   // B3 P1-1 on #99: a token and a full-access lab go only to the Jack this
@@ -253,7 +261,7 @@ export function planCodexTrust(codexHome, workspace) {
   return { file, text, mode, next };
 }
 
-/** Writes a planCodexTrust plan; a concurrent change since the plan refuses. */
+/** Writes a planCodexTrust or planGrokTrust plan; a concurrent change since the plan refuses. */
 export function commitCodexTrust(plan) {
   if (!plan) return false;
   const { file, text, mode, next } = plan;
@@ -268,6 +276,49 @@ export function commitCodexTrust(plan) {
     renameSync(temporary, file);
   } catch (error) { unlinkSync(temporary); throw error; }
   return true;
+}
+
+/** The Grok home T3's `grok` instance uses: GROK_HOME in its environment list, else ~/.grok. */
+export async function grokHomeFor(client, { home = os.homedir() } = {}) {
+  let configured = "";
+  try {
+    const settings = await client.getSettings();
+    const environment = settings?.providerInstances?.grok?.environment;
+    configured = Array.isArray(environment) ? environment.find(entry => entry?.name === "GROK_HOME")?.value ?? "" : "";
+  } catch { /* unreadable settings: Grok's own default below */ }
+  if (typeof configured !== "string" || !configured.trim()) return path.join(home, ".grok");
+  const value = configured.trim();
+  return path.resolve(value === "~" ? home : value.startsWith("~/") ? path.join(home, value.slice(2)) : value);
+}
+
+/**
+ * Grok starts a folder's own MCP servers (its `.mcp.json` or `.grok/config.toml`)
+ * only when `<Grok home>/trusted_folders.toml` trusts that folder. Grok writes
+ * that file itself as `[folders."<path>"]` tables with `trusted` and
+ * `decided_at`; anything else in it refuses, so the owner's file never breaks.
+ * An existing table for the folder (trusted or not) is the owner's and stays.
+ */
+export function planGrokTrust(grokHome, workspace, { now = Date.now } = {}) {
+  mkdirSync(grokHome, { recursive: true, mode: 0o700 });
+  if (!statSync(grokHome).isDirectory()) throw new Error(R.grokHomeNotDirectory);
+  const file = path.join(grokHome, "trusted_folders.toml");
+  if ((() => { try { return lstatSync(file).isSymbolicLink(); } catch (error) { if (error.code === "ENOENT") return false; throw error; } })()) {
+    throw new Error(R.grokTrustLink);
+  }
+  let text = "";
+  let mode = 0o600;
+  try { text = readFileSync(file, "utf8"); mode = statSync(file).mode & 0o777; } catch (error) { if (error.code !== "ENOENT") throw error; }
+  const header = `[folders.${JSON.stringify(workspace)}]`;
+  let inTable = false;
+  for (const line of text.split(/\r?\n/).map(value => value.trim())) {
+    if (line === "" || line.startsWith("#")) continue;
+    if (line === header) return null;
+    if (/^\[folders\."[^"\\]*"\]$/.test(line)) { inTable = true; continue; }
+    if (inTable && /^(trusted|decided_at) = (true|false|\d{1,15})$/.test(line)) continue;
+    throw new Error(R.grokTrustForm);
+  }
+  const next = `${text}${text && !text.endsWith("\n") ? "\n" : ""}${header}\ntrusted = true\ndecided_at = ${Math.floor(now() / 1000)}\n`;
+  return { file, text, mode, next };
 }
 
 export function trustCodexWorkspace(codexHome, workspace) {

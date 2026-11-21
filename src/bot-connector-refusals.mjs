@@ -10,5 +10,8 @@ export const BOT_CONNECTOR_REFUSALS = Object.freeze({
   codexHomeNotDirectory: "Codex home is not a directory",
   codexLinkMissing: "Codex home config.toml links to a missing file; fix the link first",
   codexProjectsForm: "Codex home config keeps projects in a form Tentacles does not edit; trust this Bot workspace in Codex first",
+  grokHomeNotDirectory: "Grok home is not a directory",
+  grokTrustLink: "Grok trusted_folders.toml is a link; trust this Bot workspace in Grok first",
+  grokTrustForm: "Grok trusted_folders.toml holds a form Tentacles does not edit; trust this Bot workspace in Grok first",
   codexChanged: "Codex home config changed while trusting this Bot workspace; try again",
 });

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { ensureLocalTalkWorkspace } from "./local-talk-workspace.mjs";
 import { BOT_CONNECTOR_REFUSALS } from "./bot-connector-refusals.mjs";
-import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, checkBotConnectorPaths, codexHomeFor, connectorsNeedRestart, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors } from "./bot-connectors.mjs";
+import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, botConnectorProviders, checkBotConnectorPaths, codexHomeFor, connectorsNeedRestart, grokHomeFor, planGrokTrust, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors } from "./bot-connectors.mjs";
 import { privateModeOk } from "./platform.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { randomUUID } from "node:crypto";
@@ -319,8 +319,10 @@ export class LoopbackRuntimeAdapter {
     // Idempotent and leaves .mcp.json alone, so it cannot change the restart decision.
     const prepared = await this.prepareTalkWorkspaceImpl(workspace);
     if (servers?.length && prepared !== true) throw new Error(BOT_CONNECTOR_REFUSALS.notBotWorkspace);
-    const codexTrust = servers?.length && instanceId === "codex"
-      ? planCodexTrust(await codexHomeFor(this.client), workspace) : undefined;
+    // The lab's own folder-trust table (Codex or Grok), planned before the stop.
+    const codexTrust = !servers?.length ? undefined
+      : instanceId === "codex" ? planCodexTrust(await codexHomeFor(this.client), workspace)
+        : instanceId === "grok" ? planGrokTrust(await grokHomeFor(this.client), workspace) : undefined;
     if (servers !== undefined && prepared === true) checkBotConnectorPaths(workspace);
     if (restartIdleSession && connectorsNeedRestart(workspace, servers)) await restartIdleSession();
     return writeBotConnectors(workspace, prepared, servers, { codexTrust });
@@ -378,7 +380,7 @@ export class LoopbackRuntimeAdapter {
     // pairing without one (an older Agent Jack) does not invite them: that Agent Jack
     // then refuses its own connector turns as it did on jack.19. Learn still rides.
     const { jackMcpProxy, jackMcpSelf, ...unpinned } = BOT_CONNECTOR_CAPABILITIES;
-    const advert = this.jackOrigin ? BOT_CONNECTOR_CAPABILITIES : unpinned;
+    const advert = { ...(this.jackOrigin ? BOT_CONNECTOR_CAPABILITIES : unpinned), jackMcpProviders: botConnectorProviders() };
     const result = { ...report, capabilities: capabilities?.talkTurnResult === "v1" ? { ...capabilities, ...advert } : capabilities };
     if (this.capabilityCache) {
       // KRA-7369: the connector inventory rides the lab-catalog answer, because
