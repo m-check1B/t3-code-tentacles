@@ -46,9 +46,66 @@ test("KRA-10870: every mapped text still exists in the source, so a reworded ref
     .map((name) => fs.readFileSync(new URL(`../src/${name}`, import.meta.url), "utf8")).join("\n");
   const table = fs.readFileSync(new URL("../src/refusal-codes.mjs", import.meta.url), "utf8");
   const texts = [...table.matchAll(/^\s*\["(.+)", "([a-z_.]+)"\],$/gm)];
-  assert.ok(texts.length >= 16);
+  assert.ok(texts.length >= 11); // The Bot connector texts are derived from BOT_CONNECTOR_REFUSALS, not listed.
   for (const [, text, code] of texts) {
     assert.ok(source.includes(text.replace(/\\"/g, '"')), `refusal text drifted: ${text}`);
     assert.ok(Object.hasOwn(REFUSALS, code));
+  }
+});
+
+test("KRA-10870 (B3 P3-4 on #108): every Bot connector refusal text has a code, and the old-Talk text says start a new Talk", async () => {
+  const { BOT_CONNECTOR_REFUSALS } = await import("../src/bot-connector-refusals.mjs");
+  const { BOT_CONNECTOR_CODES } = await import("../src/refusal-codes.mjs");
+  assert.deepEqual(Object.keys(BOT_CONNECTOR_CODES).sort(), Object.keys(BOT_CONNECTOR_REFUSALS).sort());
+  for (const [key, text] of Object.entries(BOT_CONNECTOR_REFUSALS)) {
+    assert.equal(refusalOf(new Error(text)).code, BOT_CONNECTOR_CODES[key], key);
+    assert.ok(Object.hasOwn(REFUSALS, BOT_CONNECTOR_CODES[key]), key);
+  }
+  assert.equal(refusalOf(new Error(BOT_CONNECTOR_REFUSALS.oldTalk)).code, "bot_connectors.new_talk");
+});
+
+test("KRA-10870 (B3 P3-1..P3-3, P3-5 on #108): each refusal gets the fix that works", () => {
+  const cases = [
+    ["Bot connectors name a host this computer is not paired with", "bot_connectors.pair_again"],
+    ["Bot connector admission expired", "bot_connectors.clock"],
+    ["Bot connector directory must be a real directory", "bot_connectors.bot_folder"],
+    ["Bot connector file must not be a directory", "bot_connectors.bot_folder"],
+    ["Talk instruction guard file must not be a directory", "bot_connectors.bot_folder"],
+    ["Thread workspace could not be resolved; continue refused before T3", "bot_connectors.new_talk"],
+    ["Bridge state is busy; retry originate after the active watcher operation completes", "try_again"],
+    ["Codex home config changed while trusting this Bot workspace; try again", "try_again"],
+    ["continue does not accept remote parameter refusalCodes", "tentacles.update"],
+    ["T3 RPC orchestration.dispatchCommand websocket failed", "t3.unreachable"],
+  ];
+  for (const [text, code] of cases) assert.equal(refusalOf(new Error(text)).code, code, text);
+  // The parameter name is the only value in that text, and the logged words never carry it.
+  assert.doesNotMatch(JSON.stringify(refusalOf(new Error("continue does not accept remote parameter refusalCodes"))), /refusalCodes/);
+  assert.equal(refusalOf(new Error("continue does not accept remote parameter a b")).code, "unknown");
+});
+
+test("KRA-10870: T3 not running is t3.unreachable, by the same test doctor uses", () => {
+  const refused = new TypeError("fetch failed", { cause: Object.assign(new Error("connect"), { code: "ECONNREFUSED" }) });
+  assert.deepEqual(refusalOf(refused), { code: "t3.unreachable", text: "Start T3 Code (Beta) on this computer, then send again." });
+  const reset = new TypeError("fetch failed", { cause: Object.assign(new Error("reset"), { code: "ECONNRESET" }) });
+  assert.equal(refusalOf(reset).code, "unknown");
+});
+
+test("KRA-10870 (B3 P3-6 on #108): a throwing message getter logs unknown, and a rejecting async hook is contained", async () => {
+  const sly = new Error("x");
+  Object.defineProperty(sly, "message", { get() { throw new Error("getter"); } });
+  assert.equal(refusalOf(sly).code, "unknown");
+  const logged = [];
+  await new RemoteRpcShim(throwing(sly), { onRefusal: (refusal) => logged.push(refusal) }).handle(request("continue"));
+  assert.equal(logged[0].code, "unknown");
+  let unhandled = 0;
+  const count = () => { unhandled += 1; };
+  process.on("unhandledRejection", count);
+  try {
+    const shim = new RemoteRpcShim(throwing(new Error("x")), { onRefusal: async () => { throw new Error("log down"); } });
+    assert.deepEqual((await shim.handle(request("continue"))).error, UNAVAILABLE);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(unhandled, 0);
+  } finally {
+    process.off("unhandledRejection", count);
   }
 });

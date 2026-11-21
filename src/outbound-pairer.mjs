@@ -568,7 +568,8 @@ export class RemoteRpcShim {
       try { result = await this.runtime[method](params); } catch (error) {
         // KRA-10870: the relay still gets only "Computer unavailable"; this computer's
         // log gets the typed code and its fixed words, never the raw error text.
-        try { this.onRefusal({ method: message.method, ...refusalOf(error) }); } catch {}
+        // A rejecting async hook must not become an unhandled rejection that ends the pairer.
+        try { this.onRefusal({ method: message.method, ...refusalOf(error) })?.catch?.(() => {}); } catch {}
         throw error;
       }
       return { version: PAIR_PROTOCOL_VERSION, type: "rpc.result", id, result: result ?? null };
