@@ -155,7 +155,7 @@ function readJson(file) {
   }
 }
 
-function writePrivate(file, text) {
+export function writePrivate(file, text) {
   const temporary = `${file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
   const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW || 0), 0o600);
   try { writeSync(fd, text); } catch (error) { closeSync(fd); unlinkSync(temporary); throw error; }
@@ -181,7 +181,7 @@ export function checkBotConnectorPaths(workspace) {
     const info = kind(path.join(workspace, directory));
     if (info && (!info.isDirectory() || info.isSymbolicLink())) throw new Error(R.realDirectory);
   }
-  for (const file of [MCP_FILE, CODEX_FILE, GUARD_FILE]) {
+  for (const file of [MCP_FILE, CODEX_FILE, GUARD_FILE, GROK_TRUST_MARKER]) {
     if (kind(path.join(workspace, file))?.isDirectory()) throw new Error(R.fileIsDirectory);
   }
 }
@@ -321,26 +321,28 @@ export function planGrokTrust(grokHome, workspace, { now = Date.now } = {}) {
     if (tables.get(header).trusted !== "true") throw new Error(R.grokNotTrusted);
     return null;
   }
-  const next = `${text}${text && !text.endsWith("\n") ? "\n" : ""}${header}\ntrusted = true\ndecided_at = ${Math.floor(now() / 1000)}\n`;
-  return { file, text, mode, next, changed: R.grokChanged };
+  const decidedAt = Math.floor(now() / 1000);
+  const next = `${text}${text && !text.endsWith("\n") ? "\n" : ""}${header}\ntrusted = true\ndecided_at = ${decidedAt}\n`;
+  return { file, text, mode, next, changed: R.grokChanged, decidedAt };
 }
 
 /**
- * B3 P3-5 on #110: a Grok turn in a Bot workspace with no list (or an empty one)
- * drops the folder's trust again, so Bot-written Grok config never runs in a later
- * session without tools. Only a table of exactly `trusted = true` and `decided_at`
- * goes; anything else is left as it is. Null when there is nothing to remove.
+ * B3 P3-5 / delta P2-1 and P2-2 on #110: a Grok turn in a Bot workspace with no list
+ * (or an empty one) drops the trust Tentacles added, so Bot-written Grok config never
+ * runs in a later session without tools. Only Tentacles' own table goes: the marker
+ * Tentacles wrote holds its `decided_at`, and the table must be the header followed
+ * directly by exactly `trusted = true` and that `decided_at`. Null otherwise.
  */
-export function planGrokUntrust(grokHome, workspace) {
-  const { file, text, mode, tables } = readGrokTrust(grokHome, { create: false });
-  const header = `[folders.${JSON.stringify(workspace)}]`;
-  const table = tables.get(header);
-  if (!table || table.trusted !== "true" || table.keys !== 2 || table.decided_at === undefined) return null;
+export const GROK_TRUST_MARKER = ".jack-grok-trust";
+export function planGrokUntrust(grokHome, workspace, decidedAt) {
+  const { file, text, mode } = readGrokTrust(grokHome, { create: false });
+  if (file === undefined) return null;
   const lines = text.split("\n");
-  const at = lines.findIndex(line => line.trim() === header);
-  let end = at + 1;
-  while (end < lines.length && /^\s*(trusted|decided_at) = /.test(lines[end])) end += 1;
-  lines.splice(at, end - at);
+  const at = lines.findIndex(line => line.trim() === `[folders.${JSON.stringify(workspace)}]`);
+  if (at < 0) return null;
+  const pair = lines.slice(at + 1, at + 3).map(line => line.trim()).sort();
+  if (pair[0] !== `decided_at = ${decidedAt}` || pair[1] !== "trusted = true") return null;
+  lines.splice(at, 3);
   return { file, text, mode, next: lines.join("\n"), changed: R.grokChanged };
 }
 

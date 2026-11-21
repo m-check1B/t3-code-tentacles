@@ -4,7 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { BOT_CONNECTOR_CAPABILITIES, PUBLIC_MCP_URL, codexHomeFor, commitCodexTrust, grokHomeFor, planGrokTrust, trustCodexWorkspace } from "../src/bot-connectors.mjs";
+import { spawnSync } from "node:child_process";
+import { BOT_CONNECTOR_CAPABILITIES, GROK_TRUST_MARKER, PUBLIC_MCP_URL, codexHomeFor, commitCodexTrust, grokHomeFor, planGrokTrust, planGrokUntrust, trustCodexWorkspace } from "../src/bot-connectors.mjs";
 import { continueThread } from "../src/bridge.mjs";
 import { freshCapability } from "./helpers/fresh-context-wire.mjs";
 import { ensureLocalTalkWorkspace } from "../src/local-talk-workspace.mjs";
@@ -538,6 +539,57 @@ test("B3 P3-2/P3-5 on #110: an untrusted or git-repo Grok workspace refuses befo
   await assert.rejects(async () => adapter.continue({ threadId: "t1", message: "again", ...grok, ...connectors([learn]) }), /inside a git repository/);
   assert.deepEqual(stops, []);
   assert.equal(fs.readFileSync(trustFile, "utf8"), owner);
+});
+
+test("delta P2-1 on #110: switched off and with no marker, a Grok turn reads nothing outside the Bot workspace", async (t) => {
+  const before = process.env.TENTACLES_JACK_TOOLS_TRY;
+  delete process.env.TENTACLES_JACK_TOOLS_TRY;
+  t.after(() => { if (before !== undefined) process.env.TENTACLES_JACK_TOOLS_TRY = before; });
+  const { home, workspace, adapter } = setup();
+  const grokHome = path.join(home, "grok-home");
+  fs.mkdirSync(grokHome, { mode: 0o700 });
+  const trustFile = path.join(grokHome, "trusted_folders.toml");
+  // The owner trusted this folder in Grok itself: the same three lines Tentacles would write.
+  const owner = `[folders.${JSON.stringify(workspace)}]\ntrusted = true\ndecided_at = 1795247300\n`;
+  fs.writeFileSync(trustFile, owner, { mode: 0o600 });
+  let reads = 0;
+  const settings = { providerInstances: { grok: { environment: [{ name: "GROK_HOME", value: grokHome }] } } };
+  adapter.client = { getSettings: async () => { reads += 1; return settings; } };
+  await adapter.originate({ workspace, message: "plain", ...grok });
+  await adapter.continue({ threadId: "t1", message: "plain", ...grok });
+  await adapter.continue({ threadId: "t1", message: "clear", ...grok, ...connectors([]) });
+  assert.equal(reads, 0);
+  assert.equal(fs.readFileSync(trustFile, "utf8"), owner);
+  // A marker whose decided_at is not the table's removes nothing either.
+  fs.writeFileSync(path.join(workspace, GROK_TRUST_MARKER), "5\n", { mode: 0o600 });
+  await adapter.continue({ threadId: "t1", message: "plain", ...grok });
+  assert.equal(fs.readFileSync(trustFile, "utf8"), owner);
+  assert.equal(fs.existsSync(path.join(workspace, GROK_TRUST_MARKER)), false); // a stale marker is dropped
+});
+
+test("delta P2-2 on #110: the untrust removes only the header plus exactly its two keys, and the file stays valid TOML", (t) => {
+  const python = spawnSync("python3", ["-c", "import tomllib"]);
+  if (python.status !== 0) { t.skip("python3 with tomllib is not available to parse the result"); return; }
+  const parse = text => spawnSync("python3", ["-c", "import sys, tomllib; tomllib.loads(sys.stdin.read())"], { input: text }).status === 0;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "grok-untrust-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const file = path.join(home, "trusted_folders.toml");
+  const above = '[folders."/a"]\ntrusted = false\ndecided_at = 1\n';
+  for (const [middle, removed] of [["", true], ["\n", false], ["# note\n", false]]) {
+    for (const keys of ["trusted = true\ndecided_at = 5\n", "decided_at = 5\ntrusted = true\n"]) {
+      const text = `${above}[folders."/w"]\n${middle}${keys}`;
+      fs.writeFileSync(file, text);
+      const plan = planGrokUntrust(home, "/w", "5");
+      if (!removed) { assert.equal(plan, null, JSON.stringify(middle)); continue; }
+      assert.equal(commitCodexTrust(plan), true);
+      const after = fs.readFileSync(file, "utf8");
+      assert.equal(after, above);
+      assert.ok(parse(after));
+    }
+  }
+  fs.writeFileSync(file, `${above}[folders."/w"]\ntrusted = true\ndecided_at = 6\n`);
+  assert.equal(planGrokUntrust(home, "/w", "5"), null); // not the decided_at Tentacles wrote
+  assert.equal(planGrokUntrust(path.join(home, "missing"), "/w", "5"), null);
 });
 
 test("B3 P3-1/P3-3 on #110: the Grok home is T3's last GROK_HOME, absolute only, and a bad one refuses with a fixed text", async () => {

@@ -1,7 +1,8 @@
 import fs from "node:fs";
+import path from "node:path";
 import { ensureLocalTalkWorkspace } from "./local-talk-workspace.mjs";
 import { BOT_CONNECTOR_REFUSALS } from "./bot-connector-refusals.mjs";
-import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, botConnectorProviders, checkBotConnectorPaths, codexHomeFor, commitCodexTrust, connectorsNeedRestart, grokHomeFor, planGrokTrust, planGrokUntrust, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors } from "./bot-connectors.mjs";
+import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, botConnectorProviders, checkBotConnectorPaths, codexHomeFor, commitCodexTrust, connectorsNeedRestart, GROK_TRUST_MARKER, grokHomeFor, planGrokTrust, planGrokUntrust, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors, writePrivate } from "./bot-connectors.mjs";
 import { privateModeOk } from "./platform.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { refusalOf } from "./refusal-codes.mjs";
@@ -327,10 +328,18 @@ export class LoopbackRuntimeAdapter {
     if (servers !== undefined && prepared === true) checkBotConnectorPaths(workspace);
     if (restartIdleSession && connectorsNeedRestart(workspace, servers)) await restartIdleSession();
     const written = writeBotConnectors(workspace, prepared, servers, { codexTrust });
-    // B3 P3-5 on #110: a Grok Bot turn without tools drops the trust Tentacles added.
-    // Best effort: a no-tools turn never fails on it, and the tools are gone either way.
+    const marker = path.join(workspace, GROK_TRUST_MARKER);
+    // The marker records the table Tentacles itself added, so only that one is ever removed.
+    if (instanceId === "grok" && codexTrust && servers?.length) writePrivate(marker, `${codexTrust.decidedAt}\n`);
+    // B3 P3-5 on #110: a Grok Bot turn without tools drops that table again. With no
+    // marker nothing outside the workspace is read. Best effort: never fails the turn.
     if (instanceId === "grok" && prepared === true && !servers?.length) {
-      try { commitCodexTrust(planGrokUntrust(await grokHomeFor(this.client), workspace)); } catch { /* left as it is */ }
+      let decidedAt = null;
+      try { if (fs.lstatSync(marker).isFile()) decidedAt = /^(\d{1,15})\n?$/.exec(fs.readFileSync(marker, "utf8"))?.[1] ?? null; } catch { /* no marker */ }
+      if (decidedAt) {
+        try { commitCodexTrust(planGrokUntrust(await grokHomeFor(this.client), workspace, decidedAt)); } catch { /* left as it is */ }
+        fs.rmSync(marker, { force: true });
+      }
     }
     return written;
   }
