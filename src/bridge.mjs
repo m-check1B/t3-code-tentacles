@@ -1130,12 +1130,11 @@ export async function liveModelSelection(client, selection) {
   const provider = Array.isArray(providers) ? providers.find((entry) => entry?.instanceId === selection.instanceId) : undefined;
   const slugs = normalizedModelSlugs(provider);
   if (slugs.includes(selection.model) || !slugs.includes(alias.model)) return selection;
-  const target = provider.models.find((entry) => (typeof entry === "string" ? entry : entry?.slug ?? entry?.id) === alias.model);
+  // B3 P3-3 on #114: the same key as the slug list, and no descriptor means no alias.
+  const target = provider.models.find((entry) => modelSlug(entry) === alias.model);
   const descriptors = target?.capabilities?.optionDescriptors;
-  if (Array.isArray(descriptors)) {
-    const level = descriptors.find((entry) => entry?.id === "thought_level");
-    if (!level || !Array.isArray(level.options) || !alias.options.every((wanted) => level.options.some((choice) => choice?.id === wanted.value))) return selection;
-  }
+  const level = Array.isArray(descriptors) ? descriptors.find((entry) => entry?.id === "thought_level") : undefined;
+  if (!level || !Array.isArray(level.options) || !alias.options.every((wanted) => level.options.some((choice) => choice?.id === wanted.value))) return selection;
   const options = [...(selection.options ?? [])];
   for (const required of alias.options) {
     const configured = options.find((entry) => entry.id === required.id);
@@ -1145,16 +1144,18 @@ export async function liveModelSelection(client, selection) {
   return { ...selection, model: alias.model, options };
 }
 
+function modelSlug(model) {
+  const value = typeof model === "string" ? model : model?.slug || model?.id || model?.model || model?.name || null;
+  return typeof value === "string" ? value.trim() : null;
+}
+
 function normalizedModelSlugs(provider) {
   const models = Array.isArray(provider?.models) ? provider.models : [];
   const seen = new Set();
   const normalized = [];
   for (const model of models) {
-    const value = typeof model === "string"
-      ? model
-      : model?.slug || model?.id || model?.model || model?.name || null;
-    if (typeof value !== "string") continue;
-    const slug = value.trim();
+    const slug = modelSlug(model);
+    if (slug === null) continue;
     if (!/^[^\u0000-\u001f\u007f]{1,256}$/.test(slug) || seen.has(slug)) continue;
     seen.add(slug);
     normalized.push(slug);

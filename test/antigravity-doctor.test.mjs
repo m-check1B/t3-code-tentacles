@@ -184,21 +184,30 @@ test("KRA-10869 B3 P2-2 on #114: an old effort id maps only on evidence from T3'
   const slugs = (...ids) => ids.map((slug) => ({ slug }));
   const old = { instanceId: "antigravity", model: "gemini-4-argon-high" };
   const mapped = { instanceId: "antigravity", model: "gemini-4-argon", options: [{ id: "thought_level", value: "high" }] };
-  assert.deepEqual(await liveModelSelection(live(slugs("gemini-4-argon", "gemini-4-neon")), old), mapped);
+  const level = (...ids) => [{ slug: "gemini-4-argon", capabilities: { optionDescriptors: [{ id: "thought_level", type: "select", label: "Thinking", options: ids.map((id) => ({ id, label: id })) }] } }];
+  const all = level("low", "medium", "high");
+  assert.deepEqual(await liveModelSelection(live([...all, ...slugs("gemini-4-neon")]), old), mapped);
+  // B3 P3-3 on #114: a listed base id with no thought_level descriptor is not enough evidence.
+  assert.deepEqual(await liveModelSelection(live(slugs("gemini-4-argon", "gemini-4-neon")), old), old);
+  // The target is found by the slug list's own key: `model`, or `id` after an empty `slug`, and trimmed.
+  const lowOnly = level("low")[0].capabilities;
+  for (const entry of [{ model: "gemini-4-argon", capabilities: lowOnly }, { slug: "", id: "gemini-4-argon", capabilities: lowOnly }, { slug: " gemini-4-argon ", capabilities: lowOnly }]) {
+    assert.deepEqual(await liveModelSelection(live([entry]), old), old, JSON.stringify(entry));
+  }
+  assert.deepEqual(await liveModelSelection(live([{ model: "gemini-4-argon", capabilities: all[0].capabilities }]), old), mapped);
   // No evidence keeps the id: an empty list, no models field, a base id T3 does not list.
   assert.deepEqual(await liveModelSelection(live([]), old), old);
   assert.deepEqual(await liveModelSelection(live(undefined), old), old);
   assert.deepEqual(await liveModelSelection(live(slugs("gemini-4-neon")), old), old);
   // A runtime that still lists the old id keeps it.
   assert.deepEqual(await liveModelSelection(live(slugs("gemini-4-argon-high", "gemini-4-argon")), old), old);
-  // When T3 describes the base model's thought_level, the level must be offered.
-  const level = (...ids) => [{ slug: "gemini-4-argon", capabilities: { optionDescriptors: [{ id: "thought_level", type: "select", label: "Thinking", options: ids.map((id) => ({ id, label: id })) }] } }];
+  // T3's thought_level descriptor must offer the level.
   assert.deepEqual(await liveModelSelection(live(level("low", "medium", "high", "xhigh")), old), mapped);
   assert.deepEqual(await liveModelSelection(live(level("low", "medium")), old), old);
   assert.deepEqual(await liveModelSelection(live([{ slug: "gemini-4-argon", capabilities: { optionDescriptors: [] } }]), old), old);
   // xhigh is never produced, and is not an alias source.
-  assert.deepEqual(await liveModelSelection(live(slugs("gemini-4-argon")), { instanceId: "antigravity", model: "gemini-4-argon-xhigh" }), { instanceId: "antigravity", model: "gemini-4-argon-xhigh" });
-  await assert.rejects(liveModelSelection(live(slugs("gemini-4-argon")), { ...old, options: [{ id: "thought_level", value: "low" }] }), /conflicts with option thought_level/);
+  assert.deepEqual(await liveModelSelection(live(level("low", "medium", "high", "xhigh")), { instanceId: "antigravity", model: "gemini-4-argon-xhigh" }), { instanceId: "antigravity", model: "gemini-4-argon-xhigh" });
+  await assert.rejects(liveModelSelection(live(all), { ...old, options: [{ id: "thought_level", value: "low" }] }), /conflicts with option thought_level/);
   // Other labs and plain ids make no T3 call.
   const none = { rpc: async () => assert.fail("no T3 call") };
   assert.deepEqual(await liveModelSelection(none, { instanceId: "codex", model: "gpt-5-high" }), { instanceId: "codex", model: "gpt-5-high" });
@@ -220,7 +229,21 @@ test("KRA-10869 B3 P2-1 on #114: only a strictly parsed reset time reaches the a
     ["resets at 25:61 UTC", null],
     ["resets at 13:00 PM", null],
     ["resets at 14:05UTCSECRET", null],
-    ["resets at 14:05 UTC-SECRET", "14:05"], // only the parsed clock, never the trailing text
+    ["resets at 14:05 UTC-SECRET", null], // an unknown capital-letter zone refuses the time
+    // B3 P3-4 on #114: offsets in range, real days, counts of at least 1, no dropped zone.
+    ["resets at 14:05 +99:99", null],
+    ["resets at 14:05 +15:00", null],
+    ["resets at 14:05 -14:59", "14:05 -14:59"],
+    ["resets at 2026-11-22 07:00 +14:60", null],
+    ["resets at 2026-02-31 10:00", null],
+    ["resets at 2028-02-29 10:00", "2028-02-29 10:00"],
+    ["resets at 2026-02-29 10:00", null],
+    ["resets in 0 minutes", null],
+    ["resets after 0 days", null],
+    ["resets at 14:05 EST", null],
+    ["resets at 2026-11-22 07:00 CET", null],
+    ["resets at 9:05 PM PST.", null],
+    ["resets at 14:05 tomorrow", "14:05"],
     ["resets on Monday", null],
     ["resets at 2026-13-01T00:00Z", null],
     ["no time here", null],

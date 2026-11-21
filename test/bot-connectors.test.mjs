@@ -713,6 +713,88 @@ test("B3 P3-2 on #110: the marker outlives a failed removal, and the removal use
   assert.equal(fs.existsSync(race.marker), false);
 });
 
+test("B3 P3-1 on #115: an old one-line marker is removed through T3's settings, and stays when settings fail", async (t) => {
+  tryGrok(t);
+  for (const fail of [false, true]) {
+    const { home, workspace, adapter } = setup();
+    const grokHome = path.join(home, "grok-home");
+    const settings = await adapter.client.getSettings();
+    settings.providerInstances.grok = { environment: [{ name: "GROK_HOME", value: grokHome }] };
+    await adapter.originate({ workspace, message: "hi", ...grok, ...connectors([learn]) });
+    const trustFile = path.join(grokHome, "trusted_folders.toml");
+    const marker = path.join(workspace, GROK_TRUST_MARKER);
+    const ours = fs.readFileSync(trustFile, "utf8");
+    // The marker an earlier build wrote: decided_at only.
+    fs.writeFileSync(marker, `${fs.readFileSync(marker, "utf8").split("\n")[0]}\n`, { mode: 0o600 });
+    // No GROK_HOME would mean ~/.grok; a failing call must not guess that.
+    fs.mkdirSync(path.join(home, ".grok"), { mode: 0o700 });
+    const fallback = path.join(home, ".grok", "trusted_folders.toml");
+    fs.writeFileSync(fallback, ours);
+    if (fail) adapter.client = { getSettings: async () => { throw new Error("T3 settings unavailable"); } };
+    await adapter.continue({ threadId: "t1", message: "plain", ...grok });
+    assert.equal(fs.readFileSync(fallback, "utf8"), ours, String(fail));
+    assert.equal(fs.readFileSync(trustFile, "utf8"), fail ? ours : "", String(fail));
+    assert.equal(fs.existsSync(marker), fail, String(fail));
+  }
+});
+
+test("B3 P3-2 on #115: a table left in another Grok home is removed first, and a failure there refuses before the stop", async (t) => {
+  tryGrok(t);
+  const { home, workspace, stops, adapter } = setup();
+  const first = path.join(home, "grok-a");
+  const second = path.join(home, "grok-b");
+  const settings = await adapter.client.getSettings();
+  settings.providerInstances.grok = { environment: [{ name: "GROK_HOME", value: first }] };
+  await adapter.originate({ workspace, message: "hi", ...grok, ...connectors([learn]) });
+  const marker = path.join(workspace, GROK_TRUST_MARKER);
+  const [fileA, fileB] = [first, second].map(dir => path.join(dir, "trusted_folders.toml"));
+  // GROK_HOME moves, and the old file holds a form Tentacles does not edit: refused, nothing changes.
+  settings.providerInstances.grok.environment[0].value = second;
+  fs.appendFileSync(fileA, "version = 2\n");
+  const kept = [fs.readFileSync(fileA, "utf8"), fs.readFileSync(marker, "utf8")];
+  await assert.rejects(adapter.continue({ threadId: "t1", message: "again", ...grok, ...connectors([learn]) }), /^Error: Grok trusted_folders\.toml holds a form Tentacles does not edit/);
+  assert.deepEqual([fs.readFileSync(fileA, "utf8"), fs.readFileSync(marker, "utf8")], kept);
+  assert.equal(fs.existsSync(fileB), false);
+  assert.deepEqual(stops, []);
+  // Fixed: the old table goes, the new home gets one, and the marker names the new home.
+  fs.writeFileSync(fileA, kept[0].replace("version = 2\n", ""));
+  await adapter.continue({ threadId: "t1", message: "again", ...grok, ...connectors([learn]) });
+  assert.equal(fs.readFileSync(fileA, "utf8"), "");
+  assert.ok(fs.readFileSync(fileB, "utf8").includes(`[folders.${JSON.stringify(workspace)}]`));
+  assert.match(fs.readFileSync(marker, "utf8"), new RegExp(`^\\d+\\n${second}\\n$`));
+});
+
+test("B3 P3-1 on #109: an opencode.json Tentacles did not write refuses before the stop and keeps its bytes", async (t) => {
+  tryLab(t, "opencode");
+  const { home, workspace, stops, adapter } = setup();
+  await adapter.originate({ workspace, message: "plain", ...opencode });
+  const file = path.join(workspace, "opencode.json");
+  const owner = '{"mcp":{"mine":{"type":"local","command":["x"]}}}\n';
+  fs.writeFileSync(file, owner, { mode: 0o644 });
+  const text = /^Error: This Bot workspace has an opencode\.json that Tentacles did not write; remove it, then send again$/;
+  await assert.rejects(adapter.continue({ threadId: "t1", message: "hi", ...opencode, ...connectors([learn]) }), text);
+  await assert.rejects(adapter.continue({ threadId: "t1", message: "hi", ...opencode, ...connectors([]) }), text);
+  assert.deepEqual(stops, []);
+  assert.equal(fs.readFileSync(file, "utf8"), owner);
+  assert.equal(fs.statSync(file).mode & 0o777, 0o644);
+  fs.rmSync(file);
+  await adapter.continue({ threadId: "t1", message: "hi", ...opencode, ...connectors([learn]) });
+  const ours = fs.readFileSync(file, "utf8");
+  // Our own file is written again; an edited one or a link is not.
+  await adapter.continue({ threadId: "t1", message: "again", ...opencode, ...connectors([learn]) });
+  assert.equal(fs.readFileSync(file, "utf8"), ours);
+  const target = path.join(home, "target.json");
+  fs.writeFileSync(target, "{}\n");
+  for (const plant of [() => fs.writeFileSync(file, ours.replace("microsoft-learn", "microsoft-learm")), () => { fs.rmSync(file, { force: true }); fs.symlinkSync(target, file); }]) {
+    plant();
+    const stopped = stops.length;
+    await assert.rejects(adapter.continue({ threadId: "t1", message: "again", ...opencode, ...connectors([learn]) }), text);
+    assert.equal(stops.length, stopped);
+    fs.rmSync(file);
+  }
+  assert.equal(fs.readFileSync(target, "utf8"), "{}\n");
+});
+
 test("delta P2-1 on #110: switched off and with no marker, a Grok turn reads nothing outside the Bot workspace", async (t) => {
   const before = process.env.TENTACLES_JACK_TOOLS_TRY;
   delete process.env.TENTACLES_JACK_TOOLS_TRY;

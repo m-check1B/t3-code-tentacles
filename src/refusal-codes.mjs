@@ -33,6 +33,7 @@ export const BOT_CONNECTOR_CODES = Object.freeze({
   notBotWorkspace: "bot_connectors.new_talk",
   realDirectory: "bot_connectors.bot_folder",
   fileIsDirectory: "bot_connectors.bot_folder",
+  opencodeFileNotOurs: "bot_connectors.bot_folder",
   guardFileIsDirectory: "bot_connectors.bot_folder",
   codexHomeNotDirectory: "bot_connectors.codex_home",
   codexLinkMissing: "bot_connectors.codex_home",
