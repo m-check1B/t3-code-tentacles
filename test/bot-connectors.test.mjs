@@ -361,6 +361,9 @@ test("B3 P3-1 on #101: any projects header but Codex's own exact form refuses, t
     '[[projects]]\npath = "/w"\n',
     '[projects."/w".extra]\nx = 1\n',
     '"projects"."/w".trust_level = "untrusted"\n',
+    // B3 P3-1 on #105: escaped top-level key lines.
+    '"\\u0070rojects"."/w".trust_level = "untrusted"\n',
+    '"\\u0070rojects" = { "/w" = { trust_level = "untrusted" } }\n',
   ];
   for (const text of forms) {
     fs.writeFileSync(file, text);
@@ -384,6 +387,8 @@ test("B3 P3-2 on #101: a planted .codex or .claude link, or a directory file tar
   const plants = [
     [".codex", () => { fs.rmSync(path.join(workspace, ".codex"), { recursive: true }); fs.symlinkSync(elsewhere, path.join(workspace, ".codex")); }, /real directory/],
     [".claude", () => { fs.rmSync(path.join(workspace, ".claude"), { recursive: true }); fs.symlinkSync(elsewhere, path.join(workspace, ".claude")); }, /real directory|director/],
+    // B3 P3-3 on #105: the custody guard refuses with a fixed text and leaves no temp file.
+    [".claude/settings.local.json", () => { fs.mkdirSync(path.join(workspace, ".claude"), { recursive: true, mode: 0o700 }); fs.rmSync(path.join(workspace, ".claude/settings.local.json"), { force: true }); fs.mkdirSync(path.join(workspace, ".claude/settings.local.json")); }, { message: "Talk instruction guard file must not be a directory" }],
     [".mcp.json", () => { fs.rmSync(path.join(workspace, ".mcp.json")); fs.mkdirSync(path.join(workspace, ".mcp.json")); }, /must not be a directory/],
   ];
   for (const [name, plant, message] of plants) {
@@ -400,6 +405,7 @@ test("B3 P3-2 on #101: a planted .codex or .claude link, or a directory file tar
     fs.rmSync(path.join(workspace, name), { recursive: true });
   }
   assert.deepEqual(fs.readdirSync(elsewhere), []);
+  assert.deepEqual(fs.readdirSync(path.join(workspace, ".claude")).filter(name => name.endsWith(".tmp")), []);
   // Without the plants the turn stops once and writes again.
   await adapter.continue({ threadId, message: "again", runtimeMode: "full-access", ...codex, ...connectors([learn]) });
   assert.equal(stops.length, 1);
@@ -434,6 +440,12 @@ test("B3 P2-1 on #102: an older Agent Jack's Bot with no plugins gives T3 the sa
   await adapter.continue({ threadId: "t1", message: "again", runtimeMode: "full-access", ...claude, ...connectors([]) });
   await adapter.continue({ threadId: "t1", message: "again", runtimeMode: "full-access", ...claude });
   assert.deepEqual(sent[2], sent[3]);
+  assert.deepEqual(stops, []);
+  assert.equal(fs.existsSync(path.join(old, ".mcp.json")), false);
+  // B3 P3-3 on #106: a docs-only list there is refused with the fix, before any stop or write.
+  await assert.rejects(adapter.continue({ threadId: "t1", message: "again", runtimeMode: "full-access", ...claude, ...connectors([learn]) }),
+    { message: "This Talk started before plugins worked on Local; start a new Talk to use plugins on Local" });
+  assert.equal(sent.length, 4);
   assert.deepEqual(stops, []);
   assert.equal(fs.existsSync(path.join(old, ".mcp.json")), false);
 });
