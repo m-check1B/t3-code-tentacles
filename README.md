@@ -252,6 +252,12 @@ server, so that Agent Jack keeps refusing connector turns itself, as before. Peo
 in the Talk see the names of the tools the Bot used on the owner's computer, never
 their input or output.
 
+Unproven roads (Local · Grok, Local · OpenCode 2): built, but no real Agent Jack
+Talk has proven them yet, so they are off by default. They are admitted and
+advertised only when the process that runs the pair has
+`TENTACLES_JACK_TOOLS_TRY=grok,opencode` (any subset) in its environment. With it
+unset, those labs behave as before.
+
 Ready means T3 accepts the lab, not that its model answers. To check that, run
 `tentacles doctor --responds all` (or `--responds codex,grok`). This opt-in
 probe costs one model call per lab: it originates one no-tools turn per selected
