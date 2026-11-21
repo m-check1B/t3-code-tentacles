@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- KRA-10870 (part 2): `doctor-status` advertises `refusalCodes: "v1"`. An `originate` or `continue` request that sends `refusalCodes: "v1"` gets the refusal's typed code and fixed words in the error's `data.refusal` (for example `{"code":"t3.unreachable","text":"Start T3 Code (Beta) on this computer, then send again."}`); the error is still `computer.unavailable`. A request without it gets the same frame as before, because Sphere closes the relay on an error frame it does not know. Another value is refused as an unknown parameter. Agent Jack and Sphere must both support it before Agent Jack sends it.
+
 ### Fixed
 
 - KRA-10870 (part 1): when a paired turn is refused on this computer, the pairer logs one `rpc.refused` event with a typed code and its plain fix, for example `bot_connectors.codex_home`: "Trust this Bot's folder in Codex first…". Codes are given only to known fixed refusal texts (every Bot connector set-up text has one, a Talk started before plugins worked gets `bot_connectors.new_talk`) and to T3 Code not running (`t3.unreachable`: "Start T3 Code (Beta) on this computer, then send again."); anything else is `unknown`, and the error's own text, paths and tokens are never logged. The relay reply is unchanged (`computer.unavailable`), because Sphere and today's Agent Jack accept only that. Sending the code to Agent Jack needs Sphere and Agent Jack changes (part 2).
