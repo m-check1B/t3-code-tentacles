@@ -1,11 +1,13 @@
 import fs from "node:fs";
+import path from "node:path";
 import { ensureLocalTalkWorkspace } from "./local-talk-workspace.mjs";
 import { BOT_CONNECTOR_REFUSALS } from "./bot-connector-refusals.mjs";
-import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, botConnectorProviders, checkBotConnectorPaths, codexHomeFor, connectorsNeedRestart, grokHomeFor, planGrokTrust, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors } from "./bot-connectors.mjs";
+import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, botConnectorProviders, checkBotConnectorPaths, codexHomeFor, commitCodexTrust, connectorsNeedRestart, GROK_TRUST_MARKER, grokHomeFor, planGrokTrust, planGrokUntrust, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors, writePrivate } from "./bot-connectors.mjs";
 import { privateModeOk } from "./platform.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
+import { refusalOf } from "./refusal-codes.mjs";
 import { randomUUID } from "node:crypto";
-import { continueThread, doctor, originate, probeTalkCapabilities } from "./bridge.mjs";
+import { continueThread, doctor, labVersion, originate, probeTalkCapabilities } from "./bridge.mjs";
 import { requireFreshFlags, requireFreshProviderContext } from "./fresh-provider-context.mjs";
 import { observe, REPORT_MODEL_LABEL, threadReportFailure, threadReportStatus } from "./orchestrate.mjs";
 import { classifyFailure } from "./failure-codes.mjs";
@@ -323,9 +325,33 @@ export class LoopbackRuntimeAdapter {
     const codexTrust = !servers?.length ? undefined
       : instanceId === "codex" ? planCodexTrust(await codexHomeFor(this.client), workspace)
         : instanceId === "grok" ? planGrokTrust(await grokHomeFor(this.client), workspace) : undefined;
-    if (servers !== undefined && prepared === true) checkBotConnectorPaths(workspace);
+    const opencode = instanceId === "opencode" && botConnectorProviders().includes("opencode");
+    const cursor = instanceId === "cursor" && botConnectorProviders().includes("cursor");
+    const antigravity = instanceId === "antigravity" && botConnectorProviders().includes("antigravity");
+    if (servers !== undefined && prepared === true) checkBotConnectorPaths(workspace, { opencode, cursor, antigravity });
     if (restartIdleSession && connectorsNeedRestart(workspace, servers)) await restartIdleSession();
-    return writeBotConnectors(workspace, prepared, servers, { codexTrust, instanceId });
+    const written = writeBotConnectors(workspace, prepared, servers, { codexTrust, opencode, cursor, antigravity });
+    const marker = path.join(workspace, GROK_TRUST_MARKER);
+    // The marker records the table Tentacles itself added, so only that one is ever removed.
+    // It also names the Grok home written to, so a later GROK_HOME change cannot strand the table.
+    if (instanceId === "grok" && codexTrust && servers?.length) writePrivate(marker, `${codexTrust.decidedAt}\n${path.dirname(codexTrust.file)}\n`);
+    // B3 P3-5 on #110: a Grok Bot turn without tools drops that table again. With no
+    // marker nothing outside the workspace is read. Best effort: never fails the turn.
+    if (instanceId === "grok" && prepared === true && !servers?.length) {
+      let found = null;
+      try { if (fs.lstatSync(marker).isFile()) found = /^(\d{1,15})\n?(?:(\/[^\n]+)\n)?$/.exec(fs.readFileSync(marker, "utf8")); } catch { /* no marker */ }
+      if (found) {
+        const [, decidedAt, recorded] = found;
+        // B3 P3-2 on #110: the marker goes only once the table is gone or no longer
+        // Tentacles' own (plan null); on any throw it stays so the next turn tries again.
+        try {
+          const grokHome = recorded && path.isAbsolute(recorded) ? recorded : await grokHomeFor(this.client);
+          commitCodexTrust(planGrokUntrust(grokHome, workspace, decidedAt));
+          fs.rmSync(marker, { force: true });
+        } catch { /* kept for the next turn */ }
+      }
+    }
+    return written;
   }
 
   continue(params) {
@@ -381,6 +407,12 @@ export class LoopbackRuntimeAdapter {
     // then refuses its own connector turns as it did on jack.19. Learn still rides.
     const { jackMcpProxy, jackMcpSelf, ...unpinned } = BOT_CONNECTOR_CAPABILITIES;
     const advert = { ...(this.jackOrigin ? BOT_CONNECTOR_CAPABILITIES : unpinned), jackMcpProviders: botConnectorProviders() };
+    // Only T3's OpenCode 2 road (one shared server, per-request folder) is built;
+    // T3 runs OpenCode below 2 through another adapter.
+    const opencode = report.labs?.find(lab => lab.instanceId === "opencode");
+    if (!/^v?([2-9]|[1-9][0-9]+)\./.test(labVersion(opencode) ?? "")) {
+      advert.jackMcpProviders = Object.freeze(advert.jackMcpProviders.filter(id => id !== "opencode"));
+    }
     const result = { ...report, capabilities: capabilities?.talkTurnResult === "v1" ? { ...capabilities, ...advert } : capabilities };
     if (this.capabilityCache) {
       // KRA-7369: the connector inventory rides the lab-catalog answer, because
@@ -538,33 +570,57 @@ export function redactFailureLine(value) {
   return line || null;
 }
 
-function unavailable(id) {
+function unavailable(id, refusal = null) {
   return {
     version: PAIR_PROTOCOL_VERSION,
     type: "rpc.error",
     id,
-    error: { code: "computer.unavailable", message: "Computer unavailable", data: null },
+    error: { code: "computer.unavailable", message: "Computer unavailable", data: refusal ? { refusal } : null },
   };
 }
 
+// KRA-10870 part 2: a turn RPC that sends `refusalCodes: "v1"` gets the typed code and
+// its fixed words in `data.refusal`. Only on request: Sphere closes the whole relay on an
+// error frame it does not know, so an advert alone never changes the frame.
+export const REFUSAL_CODES_VERSION = "v1";
+const REFUSAL_CODE_METHODS = new Set(["originate", "continue"]);
+
 export class RemoteRpcShim {
-  constructor(runtime, { enableInterrupt = false } = {}) {
+  constructor(runtime, { enableInterrupt = false, onRefusal = () => {} } = {}) {
     if (!runtime) throw new Error("Remote RPC shim requires a runtime");
     this.runtime = runtime;
+    this.onRefusal = onRefusal;
     this.rpcMethods = Object.freeze([...REMOTE_RPC_METHODS, ...(enableInterrupt === true ? ["interrupt"] : [])]);
   }
 
   async handle(message) {
     let id = null;
+    let wantsCode;
     try {
       requireRecord(message, "RPC request");
       if (message.version !== PAIR_PROTOCOL_VERSION || message.type !== "rpc.request") throw new Error("Invalid RPC envelope");
       id = requireSafeId(message.id, "RPC request id");
       if (!this.rpcMethods.includes(message.method)) throw new Error("Unsupported RPC method");
-      const params = message.params === undefined ? {} : requireRecord(message.params, "RPC params");
+      let params = message.params === undefined ? {} : requireRecord(message.params, "RPC params");
+      // Any other value stays in params, so the runtime refuses it as an unknown parameter.
+      if (REFUSAL_CODE_METHODS.has(message.method) && params.refusalCodes === REFUSAL_CODES_VERSION) {
+        ({ refusalCodes: wantsCode, ...params } = params);
+      }
       const method = ({ "doctor-status": "doctorStatus", "turn-result": "turnResult", "thread-events": "threadEvents", "thread-artifact": "threadArtifact" })[message.method] ?? message.method;
       if (typeof this.runtime[method] !== "function") throw new Error("Runtime method is unavailable");
-      const result = await this.runtime[method](params);
+      let result;
+      try { result = await this.runtime[method](params); } catch (error) {
+        // KRA-10870: the relay still gets only "Computer unavailable"; this computer's
+        // log gets the typed code and its fixed words, never the raw error text.
+        // A rejecting async hook must not become an unhandled rejection that ends the pairer.
+        const refusal = refusalOf(error);
+        try { this.onRefusal({ method: message.method, ...refusal })?.catch?.(() => {}); } catch {}
+        if (wantsCode) return unavailable(id, refusal);
+        throw error;
+      }
+      if (method === "doctorStatus" && isRecord(result?.capabilities)) {
+        result = { ...result, capabilities: { ...result.capabilities, refusalCodes: REFUSAL_CODES_VERSION } };
+      }
       return { version: PAIR_PROTOCOL_VERSION, type: "rpc.result", id, result: result ?? null };
     } catch {
       return unavailable(id);
@@ -667,7 +723,7 @@ export class OutboundPairer {
     }
     reconnectDelayMs(0, { baseMs: reconnectBaseMs, capMs: reconnectCapMs, random: () => 0 });
     if (typeof random !== "function") throw new Error("Reconnect jitter source must be a function");
-    this.shim = new RemoteRpcShim(runtime, { enableInterrupt });
+    this.shim = new RemoteRpcShim(runtime, { enableInterrupt, onRefusal: (refusal) => this.emit({ event: "rpc.refused", ...refusal }) });
     this.runtime = runtime;
     this.WebSocketImpl = WebSocketImpl;
     this.pairStateFile = pairStateFile;

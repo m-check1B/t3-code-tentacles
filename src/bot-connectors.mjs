@@ -28,8 +28,8 @@ export const JACK_SERVER_NAME = "jack";
 export const BOT_CONNECTOR_PROVIDERS = Object.freeze(["claudeAgent", "codex"]);
 // Labs whose road is built but not yet proven by a real turn (KRA-10869). They are
 // admitted and advertised only when the owner names them for a proof run:
-// TENTACLES_JACK_TOOLS_TRY=grok. A proven lab moves into BOT_CONNECTOR_PROVIDERS.
-export const UNPROVEN_BOT_CONNECTOR_PROVIDERS = Object.freeze(["grok", "cursor", "antigravity"]);
+// TENTACLES_JACK_TOOLS_TRY=grok,opencode,cursor,antigravity. A proven lab moves into BOT_CONNECTOR_PROVIDERS.
+export const UNPROVEN_BOT_CONNECTOR_PROVIDERS = Object.freeze(["grok", "opencode", "cursor", "antigravity"]);
 export function botConnectorProviders(env = process.env) {
   const tried = String(env.TENTACLES_JACK_TOOLS_TRY ?? "").split(",").map(value => value.trim());
   return Object.freeze([...BOT_CONNECTOR_PROVIDERS, ...UNPROVEN_BOT_CONNECTOR_PROVIDERS.filter(id => tried.includes(id))]);
@@ -50,18 +50,27 @@ export const CODEX_FILE = path.join(CODEX_DIR, "config.toml");
 // full-access turns; its local loader reads this file with approvals ignored.
 export const CURSOR_DIR = ".cursor";
 export const CURSOR_FILE = path.join(CURSOR_DIR, "mcp.json");
+// sha256 of the .cursor/mcp.json Tentacles last wrote; any other file there refuses.
+export const CURSOR_MARKER = ".jack-cursor-mcp";
+const sha256 = text => createHash("sha256").update(text).digest("hex");
+// OpenCode loads `<directory>/opencode.json` for the folder T3 passes per request,
+// also on the one server T3 shares across threads, and re-reads it on the next turn.
+export const OPENCODE_FILE = "opencode.json";
 // Antigravity discovers plugins under the workspace's `.agents/plugins/` (enabled
 // by default) and launches each plugin's `mcp_config.json` servers. T3 starts it
 // with cwd = the thread folder and hands over only its own `t3-code` server.
 export const ANTIGRAVITY_DIRS = Object.freeze([".agents", path.join(".agents", "plugins"), path.join(".agents", "plugins", "jack-tools")]);
 export const ANTIGRAVITY_PLUGIN = path.join(".agents", "plugins", "jack-tools", "plugin.json");
 export const ANTIGRAVITY_FILE = path.join(".agents", "plugins", "jack-tools", "mcp_config.json");
+// sha256 of the plugin.json and mcp_config.json Tentacles last wrote; any other files there refuse.
+export const ANTIGRAVITY_MARKER = ".jack-antigravity-mcp";
 
 const NAME = /^[A-Za-z0-9_-]{1,100}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const MAX_LIFETIME_MS = 120_000;
 const MAX_SERVERS = 16;
-const BEARER = /^Bearer [\x21-\x7e]{1,16384}$/;
+// token68 only: OpenCode expands {env:...} and {file:...} inside config strings.
+const BEARER = /^Bearer [A-Za-z0-9._~+/-]{1,16384}=*$/;
 
 function exactKeys(value, keys) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -126,7 +135,7 @@ export function admitBotConnectors(params, { now = Date.now, jackOrigin = null, 
     throw new Error("Bot connector admission expired");
   }
   if (mcpServers.length && !botConnectorProviders(env).includes(rest.instanceId)) {
-    throw new Error("Bot connectors are not supported on this lab");
+    throw new Error(R.labWithoutJackTools);
   }
   // B3 P1-1 on #99: a token and a full-access lab go only to the Jack this
   // computer was paired with. The origin comes from the one-shot pair offer the
@@ -165,7 +174,7 @@ function readJson(file) {
   }
 }
 
-function writePrivate(file, text) {
+export function writePrivate(file, text) {
   const temporary = `${file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
   const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW || 0), 0o600);
   try { writeSync(fd, text); } catch (error) { closeSync(fd); unlinkSync(temporary); throw error; }
@@ -185,19 +194,41 @@ function realDirectory(directory) {
  * would refuse later. `.claude` and `.codex` must be real directories (or
  * absent) and the four files must not be directories. The Bot can plant either.
  */
-export function checkBotConnectorPaths(workspace) {
+export function checkBotConnectorPaths(workspace, { opencode = false, cursor = false, antigravity = false } = {}) {
   const kind = file => { try { return lstatSync(file); } catch (error) { if (error.code === "ENOENT") return null; throw error; } };
   // Outer before inner, so no lstat ever runs through a planted link.
-  for (const directory of [path.dirname(GUARD_FILE), CODEX_DIR, CURSOR_DIR, ...ANTIGRAVITY_DIRS]) {
+  for (const directory of [path.dirname(GUARD_FILE), CODEX_DIR, ...(cursor ? [CURSOR_DIR] : []), ...(antigravity ? ANTIGRAVITY_DIRS : [])]) {
     const info = kind(path.join(workspace, directory));
     if (info && (!info.isDirectory() || info.isSymbolicLink())) throw new Error(R.realDirectory);
   }
-  for (const file of [MCP_FILE, CODEX_FILE, CURSOR_FILE, ANTIGRAVITY_PLUGIN, ANTIGRAVITY_FILE, GUARD_FILE]) {
+  for (const file of [MCP_FILE, CODEX_FILE, GUARD_FILE, GROK_TRUST_MARKER, ...(opencode ? [OPENCODE_FILE] : []), ...(cursor ? [CURSOR_FILE, CURSOR_MARKER] : []), ...(antigravity ? [ANTIGRAVITY_PLUGIN, ANTIGRAVITY_FILE, ANTIGRAVITY_MARKER] : [])]) {
     if (kind(path.join(workspace, file))?.isDirectory()) throw new Error(R.fileIsDirectory);
+  }
+  // Unproven Antigravity road: only an admitted Antigravity turn looks at its plugin files.
+  if (antigravity) {
+    const files = [ANTIGRAVITY_PLUGIN, ANTIGRAVITY_FILE].map(file => [file, kind(path.join(workspace, file))]);
+    if (files.some(([, info]) => info)) {
+      let mark = null;
+      try { if (kind(path.join(workspace, ANTIGRAVITY_MARKER))?.isFile()) mark = readFileSync(path.join(workspace, ANTIGRAVITY_MARKER), "utf8").trim(); } catch { /* none */ }
+      if (files.some(([, info]) => !info?.isFile()) || mark !== sha256(files.map(([file]) => readFileSync(path.join(workspace, file), "utf8")).join(""))) throw new Error(R.antigravityFileNotOurs);
+    }
+  }
+  // Unproven Cursor road: only an admitted Cursor turn looks at Cursor's files.
+  if (!cursor) return;
+  // Cursor reads the git top level's .cursor/mcp.json, which may be the owner's.
+  for (let dir = workspace; ; dir = path.dirname(dir)) {
+    if (existsSync(path.join(dir, ".git"))) throw new Error(R.cursorGitRepo);
+    if (path.dirname(dir) === dir) break;
+  }
+  const info = kind(path.join(workspace, CURSOR_FILE));
+  if (info) {
+    let mark = null;
+    try { if (kind(path.join(workspace, CURSOR_MARKER))?.isFile()) mark = readFileSync(path.join(workspace, CURSOR_MARKER), "utf8").trim(); } catch { /* none */ }
+    if (!info.isFile() || mark !== sha256(readFileSync(path.join(workspace, CURSOR_FILE), "utf8"))) throw new Error(R.cursorFileNotOurs);
   }
 }
 
-// Names match NAME and values are printable ASCII (URL.href, BEARER), so a JSON
+// Names match NAME and values are printable ASCII (URL.href, token68 BEARER), so a JSON
 // string is a valid TOML basic string.
 function codexToml(servers) {
   return servers.map(server => [
@@ -272,10 +303,14 @@ export function planCodexTrust(codexHome, workspace) {
   return { file, text, mode, next };
 }
 
-/** Writes a planCodexTrust or planGrokTrust plan; a concurrent change since the plan refuses. */
+/**
+ * Writes a planCodexTrust or planGrokTrust plan; a concurrent change since the plan refuses.
+ * shortcut: Grok's own trusted_folders.toml.lock is not taken, so a Grok rewrite landing
+ * between the compare and the rename (microseconds) is lost; take it if that is ever seen.
+ */
 export function commitCodexTrust(plan) {
   if (!plan) return false;
-  const { file, text, mode, next } = plan;
+  const { file, text, mode, next, changed = R.codexChanged } = plan;
   const temporary = `${file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
   const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW || 0), mode);
   try { fchmodSync(fd, mode); writeSync(fd, next); } catch (error) { closeSync(fd); unlinkSync(temporary); throw error; }
@@ -283,23 +318,30 @@ export function commitCodexTrust(plan) {
   try {
     let now = "";
     try { now = readFileSync(file, "utf8"); } catch (error) { if (error.code !== "ENOENT") throw error; }
-    if (now !== text) throw new Error(R.codexChanged);
+    if (now !== text) throw new Error(changed);
     renameSync(temporary, file);
   } catch (error) { unlinkSync(temporary); throw error; }
   return true;
 }
 
-/** The Grok home T3's `grok` instance uses: GROK_HOME in its environment list, else ~/.grok. */
+/**
+ * The Grok home T3's `grok` instance uses: the last GROK_HOME in its environment list
+ * (T3 merges that list over its own env, last wins), else ~/.grok. A GROK_HOME exported
+ * to T3's own process environment is not seen here.
+ */
 export async function grokHomeFor(client, { home = os.homedir() } = {}) {
-  let configured = "";
+  let entries = [];
   try {
-    const settings = await client.getSettings();
-    const environment = settings?.providerInstances?.grok?.environment;
-    configured = Array.isArray(environment) ? environment.find(entry => entry?.name === "GROK_HOME")?.value ?? "" : "";
+    const environment = (await client.getSettings())?.providerInstances?.grok?.environment;
+    entries = Array.isArray(environment) ? environment.filter(entry => entry?.name === "GROK_HOME") : [];
   } catch { /* unreadable settings: Grok's own default below */ }
-  if (typeof configured !== "string" || !configured.trim()) return path.join(home, ".grok");
-  const value = configured.trim();
-  return path.resolve(value === "~" ? home : value.startsWith("~/") ? path.join(home, value.slice(2)) : value);
+  if (!entries.length) return path.join(home, ".grok");
+  const value = entries.at(-1).value;
+  if (value === "") return path.join(home, ".grok");
+  // T3 passes the value as it is; Grok would resolve a relative one from the thread folder.
+  const expanded = typeof value !== "string" ? null : value === "~" ? home : value.startsWith("~/") ? path.join(home, value.slice(2)) : value;
+  if (!expanded || expanded !== expanded.trim() || !path.isAbsolute(expanded)) throw new Error(R.grokHomeForm);
+  return path.normalize(expanded);
 }
 
 /**
@@ -307,11 +349,58 @@ export async function grokHomeFor(client, { home = os.homedir() } = {}) {
  * only when `<Grok home>/trusted_folders.toml` trusts that folder. Grok writes
  * that file itself as `[folders."<path>"]` tables with `trusted` and
  * `decided_at`; anything else in it refuses, so the owner's file never breaks.
- * An existing table for the folder (trusted or not) is the owner's and stays.
+ * An existing trusted table for the folder stays as it is; an untrusted one refuses,
+ * and so does a folder inside a git repository (Grok decides at the repository root).
  */
 export function planGrokTrust(grokHome, workspace, { now = Date.now } = {}) {
-  mkdirSync(grokHome, { recursive: true, mode: 0o700 });
-  if (!statSync(grokHome).isDirectory()) throw new Error(R.grokHomeNotDirectory);
+  for (let dir = path.dirname(workspace); ; dir = path.dirname(dir)) {
+    if (existsSync(path.join(dir, ".git"))) throw new Error(R.grokGitRepo);
+    if (path.dirname(dir) === dir) break;
+  }
+  const { file, text, mode, tables } = readGrokTrust(grokHome, { create: true });
+  const header = `[folders.${JSON.stringify(workspace)}]`;
+  if (tables.has(header)) {
+    if (tables.get(header).trusted !== "true") throw new Error(R.grokNotTrusted);
+    return null;
+  }
+  const decidedAt = Math.floor(now() / 1000);
+  const next = `${text}${text && !text.endsWith("\n") ? "\n" : ""}${header}\ntrusted = true\ndecided_at = ${decidedAt}\n`;
+  return { file, text, mode, next, changed: R.grokChanged, decidedAt };
+}
+
+/**
+ * B3 P3-5 / delta P2-1 and P2-2 on #110: a Grok turn in a Bot workspace with no list
+ * (or an empty one) drops the trust Tentacles added, so Bot-written Grok config never
+ * runs in a later session without tools. Only Tentacles' own table goes: the marker
+ * Tentacles wrote holds its `decided_at`, and the table must be the header followed
+ * directly by exactly `trusted = true` and that `decided_at`. Null otherwise.
+ */
+export const GROK_TRUST_MARKER = ".jack-grok-trust";
+export function planGrokUntrust(grokHome, workspace, decidedAt) {
+  const { file, text, mode, tables } = readGrokTrust(grokHome, { create: false });
+  if (file === undefined) return null;
+  const lines = text.split("\n");
+  const header = `[folders.${JSON.stringify(workspace)}]`;
+  const at = lines.findIndex(line => line.trim() === header);
+  // Exactly one such table with exactly two keys, or the file stays as it is.
+  if (at < 0 || lines.filter(line => line.trim() === header).length !== 1 || tables.get(header)?.keys !== 2) return null;
+  const pair = lines.slice(at + 1, at + 3).map(line => line.trim()).sort();
+  if (pair[0] !== `decided_at = ${decidedAt}` || pair[1] !== "trusted = true") return null;
+  lines.splice(at, 3);
+  return { file, text, mode, next: lines.join("\n"), changed: R.grokChanged };
+}
+
+// Grok's own form only: blank or comment lines, `[folders."<path>"]` headers, and
+// `trusted` / `decided_at` inside those tables. Anything else refuses.
+function readGrokTrust(grokHome, { create }) {
+  try {
+    if (create) mkdirSync(grokHome, { recursive: true, mode: 0o700 });
+    if (!statSync(grokHome).isDirectory()) throw new Error(R.grokHomeNotDirectory);
+  } catch (error) {
+    if (!create && error.code === "ENOENT") return { text: "", tables: new Map() };
+    if (["EEXIST", "ENOENT", "ENOTDIR", "ELOOP"].includes(error.code)) throw new Error(R.grokHomeNotDirectory);
+    throw error;
+  }
   const file = path.join(grokHome, "trusted_folders.toml");
   if ((() => { try { return lstatSync(file).isSymbolicLink(); } catch (error) { if (error.code === "ENOENT") return false; throw error; } })()) {
     throw new Error(R.grokTrustLink);
@@ -319,17 +408,17 @@ export function planGrokTrust(grokHome, workspace, { now = Date.now } = {}) {
   let text = "";
   let mode = 0o600;
   try { text = readFileSync(file, "utf8"); mode = statSync(file).mode & 0o777; } catch (error) { if (error.code !== "ENOENT") throw error; }
-  const header = `[folders.${JSON.stringify(workspace)}]`;
-  let inTable = false;
+  const tables = new Map();
+  let table = null;
   for (const line of text.split(/\r?\n/).map(value => value.trim())) {
     if (line === "" || line.startsWith("#")) continue;
-    if (line === header) return null;
-    if (/^\[folders\."[^"\\]*"\]$/.test(line)) { inTable = true; continue; }
-    if (inTable && /^(trusted|decided_at) = (true|false|\d{1,15})$/.test(line)) continue;
-    throw new Error(R.grokTrustForm);
+    if (/^\[folders\."[^"\\]*"\]$/.test(line)) { table = { keys: 0 }; tables.set(line, table); continue; }
+    const pair = table && /^(trusted|decided_at) = (true|false|\d{1,15})$/.exec(line);
+    if (!pair) throw new Error(R.grokTrustForm);
+    table[pair[1]] = pair[2];
+    table.keys += 1;
   }
-  const next = `${text}${text && !text.endsWith("\n") ? "\n" : ""}${header}\ntrusted = true\ndecided_at = ${Math.floor(now() / 1000)}\n`;
-  return { file, text, mode, next };
+  return { file, text, mode, tables };
 }
 
 export function trustCodexWorkspace(codexHome, workspace) {
@@ -349,7 +438,7 @@ function listedServers(workspace) {
  * `codexTrust` is a planCodexTrust plan made before the restart; it wins over `codexHome`.
  * The caller restarts a live session first (connectorsNeedRestart), then writes.
  */
-export function writeBotConnectors(workspace, prepared, servers, { codexHome, codexTrust, instanceId } = {}) {
+export function writeBotConnectors(workspace, prepared, servers, { codexHome, codexTrust, opencode = false, cursor = false, antigravity = false } = {}) {
   if (servers === undefined) return false;
   if (prepared !== true) {
     if (servers.length) throw new Error(R.notBotWorkspace);
@@ -362,19 +451,30 @@ export function writeBotConnectors(workspace, prepared, servers, { codexHome, co
     ...(server.headers.length ? { headers: Object.fromEntries(server.headers.map(header => [header.name, header.value])) } : {}),
   }]));
   writePrivate(path.join(workspace, MCP_FILE), `${JSON.stringify({ mcpServers }, null, 2)}\n`);
-  // Only an Antigravity turn creates the plugin (other labs may scan `.agents/`);
-  // once it exists every turn rewrites it, so a changed or empty list applies.
-  if (instanceId === "antigravity" || existsSync(path.join(workspace, ANTIGRAVITY_FILE))) {
-    for (const directory of ANTIGRAVITY_DIRS) realDirectory(path.join(workspace, directory));
-    writePrivate(path.join(workspace, ANTIGRAVITY_PLUGIN), `${JSON.stringify({ name: "jack-tools", description: "Agent Jack tools for this Bot, rewritten by Tentacles before every turn" }, null, 2)}\n`);
-    writePrivate(path.join(workspace, ANTIGRAVITY_FILE), `${JSON.stringify({ mcpServers: Object.fromEntries(servers.map(server => [server.name, {
-      url: server.url, ...(server.headers.length ? { headers: Object.fromEntries(server.headers.map(header => [header.name, header.value])) } : {}),
-    }])) }, null, 2)}\n`);
+  if (cursor) {
+    const text = `${JSON.stringify({ mcpServers }, null, 2)}\n`;
+    realDirectory(path.join(workspace, CURSOR_DIR));
+    writePrivate(path.join(workspace, CURSOR_FILE), text);
+    writePrivate(path.join(workspace, CURSOR_MARKER), `${sha256(text)}\n`);
   }
-  realDirectory(path.join(workspace, CURSOR_DIR));
-  writePrivate(path.join(workspace, CURSOR_FILE), `${JSON.stringify({ mcpServers }, null, 2)}\n`);
+  // Unproven: only an admitted Antigravity turn writes the plugin (other labs may scan `.agents/`).
+  if (antigravity) {
+    const plugin = `${JSON.stringify({ name: "jack-tools", description: "Agent Jack tools for this Bot, rewritten by Tentacles before every turn" }, null, 2)}\n`;
+    const config = `${JSON.stringify({ mcpServers: Object.fromEntries(servers.map(server => [server.name, {
+      url: server.url, ...(server.headers.length ? { headers: Object.fromEntries(server.headers.map(header => [header.name, header.value])) } : {}),
+    }])) }, null, 2)}\n`;
+    for (const directory of ANTIGRAVITY_DIRS) realDirectory(path.join(workspace, directory));
+    writePrivate(path.join(workspace, ANTIGRAVITY_PLUGIN), plugin);
+    writePrivate(path.join(workspace, ANTIGRAVITY_FILE), config);
+    writePrivate(path.join(workspace, ANTIGRAVITY_MARKER), `${sha256(plugin + config)}\n`);
+  }
   realDirectory(path.join(workspace, CODEX_DIR));
   writePrivate(path.join(workspace, CODEX_FILE), `# Written by Tentacles before every Jack Bot turn.\n${codexToml(servers)}`);
+  // Unproven: only an admitted OpenCode turn reads or writes opencode.json.
+  if (opencode) writePrivate(path.join(workspace, OPENCODE_FILE), `${JSON.stringify({ $schema: "https://opencode.ai/config.json", mcp: Object.fromEntries(servers.map(server => [server.name, {
+    type: "remote", url: server.url, oauth: false,
+    ...(server.headers.length ? { headers: Object.fromEntries(server.headers.map(header => [header.name, header.value])) } : {}),
+  }])) }, null, 2)}\n`);
   // Claude Code asks before it loads a project `.mcp.json`; a Bot turn has
   // nobody to ask. Only this file, which is rewritten every turn, is approved.
   const settings = path.join(workspace, GUARD_FILE);

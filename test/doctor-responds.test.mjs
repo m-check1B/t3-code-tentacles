@@ -52,6 +52,16 @@ function fakeT3(t, behaviour, { failProject = false, noTurnResult = false, capab
         // startfail-recover: only the first read after the turn start gets a 503.
         if (mode === "startfail-recover") recoverOnce.add(command.threadId);
         if (mode === "answer") thread.messages.push({ id: "assistant-1", role: "assistant", text: "OK" });
+        // KRA-10869: replies an Antigravity probe may get (synthetic; never echoed).
+        const replies = {
+          quota: "You have exhausted your quota on this model.",
+          "quota-reset": "Individual quota reached SECRET-CANARY. Your quota resets at 14:05 UTC.",
+          timeout: "The request timed out SECRET-CANARY",
+          signin: "Please sign in with Google to continue SECRET-CANARY",
+          chatty: "Sure! SECRET-CANARY OK",
+          dot: "OK.",
+        };
+        if (replies[mode]) thread.messages.push({ id: "assistant-1", role: "assistant", text: replies[mode] });
         thread.session = mode === "error"
           ? { status: "error", activeTurnId: null, lastError: "rate limit exceeded SECRET-CANARY" }
           : { status: "running", activeTurnId: "turn-1" };
@@ -385,4 +395,25 @@ test("a failed reauth inside the probe start is not repeated by the poll and int
   assert.equal(row.status, "error");
   assert.ok(row.threadId);
   assert.equal(reauthCalls, 1, "a failed reauth runs at most once per client");
+});
+
+test("KRA-10869 B3 P3-1/P3-3 on #114: only an Antigravity reply the classifier reads as a usage limit is quota; other labs stay main", async (t) => {
+  const probe = async (instanceId, mode) => {
+    const { client, workspace } = fakeT3(t, { [instanceId]: mode });
+    const result = await probeResponds(client, [{ instanceId, ready: true, defaultModel: "synthetic" }], options(workspace));
+    assert.doesNotMatch(JSON.stringify(result), /SECRET-CANARY|exhausted|Individual quota|sign in/);
+    const { status, code, action } = result.labs[0];
+    return { status, code: code ?? null, action: action ?? null };
+  };
+  const quota = (reset) => ({ status: "no_response", code: "usage_limit", action: `not responding: quota${reset}; pass --model with another Antigravity model, or wait until its quota resets` });
+  assert.deepEqual(await probe("antigravity", "quota"), quota(""));
+  assert.deepEqual(await probe("antigravity", "quota-reset"), quota("; resets 14:05 UTC"));
+  // Another known class gets that class and its own action.
+  assert.deepEqual(await probe("antigravity", "timeout"), { status: "error", code: "timeout", action: "The operation timed out before T3 confirmed an outcome." });
+  // Unrecognised replies are main's outcome: the model answered.
+  for (const mode of ["signin", "chatty", "dot", "answer"]) assert.equal((await probe("antigravity", mode)).status, "responds", mode);
+  // Every other lab is main for every reply.
+  for (const mode of ["quota", "quota-reset", "timeout", "signin", "chatty", "dot", "answer"]) {
+    assert.deepEqual(await probe("codex", mode), { status: "responds", code: null, action: null }, mode);
+  }
 });

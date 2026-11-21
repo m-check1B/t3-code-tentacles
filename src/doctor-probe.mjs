@@ -8,7 +8,9 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { ensureProject, probeTalkCapabilities, startThread } from "./bridge.mjs";
 import { DEFAULT_STATE_DIR, ensurePrivateDirectory } from "./config.mjs";
-import { classifyFailure } from "./failure-codes.mjs";
+import { antigravityReplyOutcome } from "./antigravity.mjs";
+import { classifyFailure, classifyFailureText, FAILURE_MESSAGES } from "./failure-codes.mjs";
+import { baseLabId } from "./model-selection.mjs";
 import { T3HttpError } from "./t3-client.mjs";
 import { createThreadLock, TurnInterrupter } from "./turn-interrupt.mjs";
 
@@ -94,7 +96,12 @@ async function probeLab(client, lab, { workspace, timeoutMs, intervalMs, interru
       const messages = Array.isArray(thread?.messages) ? thread.messages : [];
       const index = messages.findIndex((message) => message?.id === turn.messageId);
       // Only message roles and session status are read; message text never leaves T3.
-      if (index >= 0 && messages.slice(index + 1).some((message) => message?.role === "assistant")) {
+      const reply = index >= 0 ? messages.slice(index + 1).find((message) => message?.role === "assistant") : undefined;
+      if (reply) {
+        // KRA-10869, Antigravity only: a spent quota arrives as a reply, so its text is
+        // classified here (never reported). Anything not classified is main's outcome.
+        const failed = baseLabId(lab.instanceId) === "antigravity" ? antigravityReplyOutcome(reply.text, classifyFailureText) : null;
+        if (failed) return { ...row, threadId: turn.threadId, firstEventMs: null, action: FAILURE_MESSAGES[failed.code], ...failed };
         return { ...row, threadId: turn.threadId, status: "responds", firstEventMs: Date.now() - started };
       }
       if (thread?.session?.status === "error") {
