@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- KRA-10863: `doctor` names the fix when T3's managed Antigravity runtime needs a repair, instead of a bare `provider_error` or a wrong "install". T3 Code (Beta) 0.1.11 reports two repairable states: the installed runtime predates the Antigravity CLI, and the managed runtime changed on disk (which T3 reports as not installed). Each is matched whole and never echoed, like the health-check timeout. They become `runtime_update_required` and `runtime_changed`, with one action that says to update or reinstall in T3's Antigravity setup and gives the existing setup link. Anything else stays `provider_error`. After the repair, a signed-out Antigravity still reads `not_signed_in`. Tentacles does not start T3's installer itself.
+
 ## [0.5.0-jack.19] - 2026-11-20
 
 ### Fixed
