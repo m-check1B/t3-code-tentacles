@@ -47,6 +47,8 @@ export const BOT_CONNECTOR_CODES = Object.freeze({
   grokNotTrusted: "bot_connectors.grok_home",
   grokGitRepo: "bot_connectors.lab_not_covered",
   grokChanged: "try_again",
+  cursorGitRepo: "bot_connectors.lab_not_covered",
+  cursorFileNotOurs: "bot_connectors.bot_folder",
 });
 
 const BY_TEXT = new Map([
