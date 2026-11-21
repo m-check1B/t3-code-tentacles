@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { ensureLocalTalkWorkspace } from "./local-talk-workspace.mjs";
-import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, codexHomeFor, connectorsNeedRestart, pinnedJackOrigin, requireBotWorkspace, writeBotConnectors } from "./bot-connectors.mjs";
+import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, codexHomeFor, connectorsNeedRestart, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors } from "./bot-connectors.mjs";
 import { privateModeOk } from "./platform.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { randomUUID } from "node:crypto";
@@ -300,7 +300,8 @@ export class LoopbackRuntimeAdapter {
       ? requireFreshProviderContext(this.client, admitted).then(dispatch) : dispatch();
   }
 
-  // Order matters (B3 P2-1/P2-2 on #99): check the folder, then stop an idle live
+  // Order matters (B3 P2-1/P2-2 and P3-D on #99): every check that can refuse
+  // (folder scope, workspace custody, the Codex home), then stop an idle live
   // session, then write, then (the caller) start the turn. A refusal or a failed
   // stop leaves the old files, so the next turn still knows to restart.
   async writeConnectors(workspace, { servers, scope, instanceId, restartIdleSession }) {
@@ -308,10 +309,13 @@ export class LoopbackRuntimeAdapter {
       if (servers.length) throw new Error("Bot connectors need this Bot's own workspace");
       servers = undefined; // an empty list for another folder clears nothing there
     }
-    const codexHome = servers?.length && instanceId === "codex" ? await codexHomeFor(this.client) : undefined;
-    if (restartIdleSession && connectorsNeedRestart(workspace, servers)) await restartIdleSession();
+    // Idempotent and leaves .mcp.json alone, so it cannot change the restart decision.
     const prepared = await this.prepareTalkWorkspaceImpl(workspace);
-    return writeBotConnectors(workspace, prepared, servers, { codexHome });
+    if (servers?.length && prepared !== true) throw new Error("Bot connectors need a Bot workspace");
+    const codexTrust = servers?.length && instanceId === "codex"
+      ? planCodexTrust(await codexHomeFor(this.client), workspace) : undefined;
+    if (restartIdleSession && connectorsNeedRestart(workspace, servers)) await restartIdleSession();
+    return writeBotConnectors(workspace, prepared, servers, { codexTrust });
   }
 
   continue(params) {
