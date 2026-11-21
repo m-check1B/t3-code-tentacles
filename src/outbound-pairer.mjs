@@ -3,6 +3,7 @@ import { ensureLocalTalkWorkspace } from "./local-talk-workspace.mjs";
 import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, codexHomeFor, connectorsNeedRestart, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors } from "./bot-connectors.mjs";
 import { privateModeOk } from "./platform.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
+import { refusalOf } from "./refusal-codes.mjs";
 import { randomUUID } from "node:crypto";
 import { continueThread, doctor, originate, probeTalkCapabilities } from "./bridge.mjs";
 import { requireFreshFlags, requireFreshProviderContext } from "./fresh-provider-context.mjs";
@@ -538,9 +539,10 @@ function unavailable(id) {
 }
 
 export class RemoteRpcShim {
-  constructor(runtime, { enableInterrupt = false } = {}) {
+  constructor(runtime, { enableInterrupt = false, onRefusal = () => {} } = {}) {
     if (!runtime) throw new Error("Remote RPC shim requires a runtime");
     this.runtime = runtime;
+    this.onRefusal = onRefusal;
     this.rpcMethods = Object.freeze([...REMOTE_RPC_METHODS, ...(enableInterrupt === true ? ["interrupt"] : [])]);
   }
 
@@ -554,7 +556,13 @@ export class RemoteRpcShim {
       const params = message.params === undefined ? {} : requireRecord(message.params, "RPC params");
       const method = ({ "doctor-status": "doctorStatus", "turn-result": "turnResult", "thread-events": "threadEvents", "thread-artifact": "threadArtifact" })[message.method] ?? message.method;
       if (typeof this.runtime[method] !== "function") throw new Error("Runtime method is unavailable");
-      const result = await this.runtime[method](params);
+      let result;
+      try { result = await this.runtime[method](params); } catch (error) {
+        // KRA-10870: the relay still gets only "Computer unavailable"; this computer's
+        // log gets the typed code and its fixed words, never the raw error text.
+        try { this.onRefusal({ method: message.method, ...refusalOf(error) }); } catch {}
+        throw error;
+      }
       return { version: PAIR_PROTOCOL_VERSION, type: "rpc.result", id, result: result ?? null };
     } catch {
       return unavailable(id);
@@ -657,7 +665,7 @@ export class OutboundPairer {
     }
     reconnectDelayMs(0, { baseMs: reconnectBaseMs, capMs: reconnectCapMs, random: () => 0 });
     if (typeof random !== "function") throw new Error("Reconnect jitter source must be a function");
-    this.shim = new RemoteRpcShim(runtime, { enableInterrupt });
+    this.shim = new RemoteRpcShim(runtime, { enableInterrupt, onRefusal: (refusal) => this.emit({ event: "rpc.refused", ...refusal }) });
     this.runtime = runtime;
     this.WebSocketImpl = WebSocketImpl;
     this.pairStateFile = pairStateFile;
