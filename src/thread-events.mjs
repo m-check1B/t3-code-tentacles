@@ -203,6 +203,9 @@ export function recordThreadEvents(threadId, candidates, { directory = DEFAULT_T
       // A turn ends once. Checked under the lock, so a concurrent poller that
       // saw the same turn differently drops its later observation.
       if (old?.kind === "turn_end" && candidate.kind === "turn_end") continue;
+      // A tool line was delivered once with the words of that release; a later
+      // wording for the same call keeps the stored line instead of stopping the sync.
+      if (old?.kind === "tool_summary" && candidate.kind === "tool_summary") continue;
       if (old) {
         if (old.kind !== candidate.kind || JSON.stringify(old.payload) !== JSON.stringify(candidate.payload)) {
           throw new Error("Source event changed after journaling");
