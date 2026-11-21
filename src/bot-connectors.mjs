@@ -28,8 +28,8 @@ export const JACK_SERVER_NAME = "jack";
 export const BOT_CONNECTOR_PROVIDERS = Object.freeze(["claudeAgent", "codex"]);
 // Labs whose road is built but not yet proven by a real turn (KRA-10869). They are
 // admitted and advertised only when the owner names them for a proof run:
-// TENTACLES_JACK_TOOLS_TRY=grok. A proven lab moves into BOT_CONNECTOR_PROVIDERS.
-export const UNPROVEN_BOT_CONNECTOR_PROVIDERS = Object.freeze(["grok", "cursor"]);
+// TENTACLES_JACK_TOOLS_TRY=grok,opencode,cursor. A proven lab moves into BOT_CONNECTOR_PROVIDERS.
+export const UNPROVEN_BOT_CONNECTOR_PROVIDERS = Object.freeze(["grok", "opencode", "cursor"]);
 export function botConnectorProviders(env = process.env) {
   const tried = String(env.TENTACLES_JACK_TOOLS_TRY ?? "").split(",").map(value => value.trim());
   return Object.freeze([...BOT_CONNECTOR_PROVIDERS, ...UNPROVEN_BOT_CONNECTOR_PROVIDERS.filter(id => tried.includes(id))]);
@@ -53,12 +53,16 @@ export const CURSOR_FILE = path.join(CURSOR_DIR, "mcp.json");
 // sha256 of the .cursor/mcp.json Tentacles last wrote; any other file there refuses.
 export const CURSOR_MARKER = ".jack-cursor-mcp";
 const sha256 = text => createHash("sha256").update(text).digest("hex");
+// OpenCode loads `<directory>/opencode.json` for the folder T3 passes per request,
+// also on the one server T3 shares across threads, and re-reads it on the next turn.
+export const OPENCODE_FILE = "opencode.json";
 
 const NAME = /^[A-Za-z0-9_-]{1,100}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const MAX_LIFETIME_MS = 120_000;
 const MAX_SERVERS = 16;
-const BEARER = /^Bearer [\x21-\x7e]{1,16384}$/;
+// token68 only: OpenCode expands {env:...} and {file:...} inside config strings.
+const BEARER = /^Bearer [A-Za-z0-9._~+/-]{1,16384}=*$/;
 
 function exactKeys(value, keys) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -123,7 +127,7 @@ export function admitBotConnectors(params, { now = Date.now, jackOrigin = null, 
     throw new Error("Bot connector admission expired");
   }
   if (mcpServers.length && !botConnectorProviders(env).includes(rest.instanceId)) {
-    throw new Error("Bot connectors are not supported on this lab");
+    throw new Error(R.labWithoutJackTools);
   }
   // B3 P1-1 on #99: a token and a full-access lab go only to the Jack this
   // computer was paired with. The origin comes from the one-shot pair offer the
@@ -182,19 +186,19 @@ function realDirectory(directory) {
  * would refuse later. `.claude` and `.codex` must be real directories (or
  * absent) and the four files must not be directories. The Bot can plant either.
  */
-export function checkBotConnectorPaths(workspace, { cursor = false } = {}) {
+export function checkBotConnectorPaths(workspace, { opencode = false, cursor = false } = {}) {
   const kind = file => { try { return lstatSync(file); } catch (error) { if (error.code === "ENOENT") return null; throw error; } };
   for (const directory of [path.dirname(GUARD_FILE), CODEX_DIR, ...(cursor ? [CURSOR_DIR] : [])]) {
     const info = kind(path.join(workspace, directory));
     if (info && (!info.isDirectory() || info.isSymbolicLink())) throw new Error(R.realDirectory);
   }
-  for (const file of [MCP_FILE, CODEX_FILE, GUARD_FILE, GROK_TRUST_MARKER, ...(cursor ? [CURSOR_FILE, CURSOR_MARKER] : [])]) {
+  for (const file of [MCP_FILE, CODEX_FILE, GUARD_FILE, GROK_TRUST_MARKER, ...(opencode ? [OPENCODE_FILE] : []), ...(cursor ? [CURSOR_FILE, CURSOR_MARKER] : [])]) {
     if (kind(path.join(workspace, file))?.isDirectory()) throw new Error(R.fileIsDirectory);
   }
   // Unproven Cursor road: only an admitted Cursor turn looks at Cursor's files.
   if (!cursor) return;
   // Cursor reads the git top level's .cursor/mcp.json, which may be the owner's.
-  for (let dir = path.dirname(workspace); ; dir = path.dirname(dir)) {
+  for (let dir = workspace; ; dir = path.dirname(dir)) {
     if (existsSync(path.join(dir, ".git"))) throw new Error(R.cursorGitRepo);
     if (path.dirname(dir) === dir) break;
   }
@@ -206,7 +210,7 @@ export function checkBotConnectorPaths(workspace, { cursor = false } = {}) {
   }
 }
 
-// Names match NAME and values are printable ASCII (URL.href, BEARER), so a JSON
+// Names match NAME and values are printable ASCII (URL.href, token68 BEARER), so a JSON
 // string is a valid TOML basic string.
 function codexToml(servers) {
   return servers.map(server => [
@@ -355,11 +359,13 @@ export function planGrokTrust(grokHome, workspace, { now = Date.now } = {}) {
  */
 export const GROK_TRUST_MARKER = ".jack-grok-trust";
 export function planGrokUntrust(grokHome, workspace, decidedAt) {
-  const { file, text, mode } = readGrokTrust(grokHome, { create: false });
+  const { file, text, mode, tables } = readGrokTrust(grokHome, { create: false });
   if (file === undefined) return null;
   const lines = text.split("\n");
-  const at = lines.findIndex(line => line.trim() === `[folders.${JSON.stringify(workspace)}]`);
-  if (at < 0) return null;
+  const header = `[folders.${JSON.stringify(workspace)}]`;
+  const at = lines.findIndex(line => line.trim() === header);
+  // Exactly one such table with exactly two keys, or the file stays as it is.
+  if (at < 0 || lines.filter(line => line.trim() === header).length !== 1 || tables.get(header)?.keys !== 2) return null;
   const pair = lines.slice(at + 1, at + 3).map(line => line.trim()).sort();
   if (pair[0] !== `decided_at = ${decidedAt}` || pair[1] !== "trusted = true") return null;
   lines.splice(at, 3);
@@ -414,7 +420,7 @@ function listedServers(workspace) {
  * `codexTrust` is a planCodexTrust plan made before the restart; it wins over `codexHome`.
  * The caller restarts a live session first (connectorsNeedRestart), then writes.
  */
-export function writeBotConnectors(workspace, prepared, servers, { codexHome, codexTrust, cursor = false } = {}) {
+export function writeBotConnectors(workspace, prepared, servers, { codexHome, codexTrust, opencode = false, cursor = false } = {}) {
   if (servers === undefined) return false;
   if (prepared !== true) {
     if (servers.length) throw new Error(R.notBotWorkspace);
@@ -435,6 +441,11 @@ export function writeBotConnectors(workspace, prepared, servers, { codexHome, co
   }
   realDirectory(path.join(workspace, CODEX_DIR));
   writePrivate(path.join(workspace, CODEX_FILE), `# Written by Tentacles before every Jack Bot turn.\n${codexToml(servers)}`);
+  // Unproven: only an admitted OpenCode turn reads or writes opencode.json.
+  if (opencode) writePrivate(path.join(workspace, OPENCODE_FILE), `${JSON.stringify({ $schema: "https://opencode.ai/config.json", mcp: Object.fromEntries(servers.map(server => [server.name, {
+    type: "remote", url: server.url, oauth: false,
+    ...(server.headers.length ? { headers: Object.fromEntries(server.headers.map(header => [header.name, header.value])) } : {}),
+  }])) }, null, 2)}\n`);
   // Claude Code asks before it loads a project `.mcp.json`; a Bot turn has
   // nobody to ask. Only this file, which is rewritten every turn, is approved.
   const settings = path.join(workspace, GUARD_FILE);

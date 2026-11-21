@@ -1,6 +1,7 @@
 // Fixed refusal texts for Bot connector set-up, in one place so a later change
 // (KRA-10870) can attach a code to each. Never interpolate paths or values here.
 export const BOT_CONNECTOR_REFUSALS = Object.freeze({
+  labWithoutJackTools: "This lab cannot use Jack tools on Local yet; run this Bot on Server to use them",
   oldTalk: "This Talk started before plugins worked on Local; start a new Talk to use plugins on Local",
   notOwnWorkspace: "Bot connectors need this Bot's own workspace",
   notBotWorkspace: "Bot connectors need a Bot workspace",

@@ -24,6 +24,7 @@ export const REFUSALS = Object.freeze({
 
 // Every BOT_CONNECTOR_REFUSALS key needs a code here; a test fails on a new key without one.
 export const BOT_CONNECTOR_CODES = Object.freeze({
+  labWithoutJackTools: "bot_connectors.lab_not_covered",
   oldTalk: "bot_connectors.new_talk",
   notOwnWorkspace: "bot_connectors.new_talk",
   notBotWorkspace: "bot_connectors.new_talk",
@@ -48,7 +49,6 @@ export const BOT_CONNECTOR_CODES = Object.freeze({
 const BY_TEXT = new Map([
   ...Object.entries(BOT_CONNECTOR_CODES).map(([key, code]) => [BOT_CONNECTOR_REFUSALS[key], code]),
   ["Jack tools need this computer paired again from an updated Agent Jack (Settings > Local labs > pair this computer)", "bot_connectors.pair_again"],
-  ["Bot connectors are not supported on this lab", "bot_connectors.lab_not_covered"],
   ["Bot connector metadata requires mcpServers", "bot_connectors.admission"],
   ["Bot connectors are not an admitted list", "bot_connectors.admission"],
   ["Bot connectors require exact ownership", "bot_connectors.admission"],
