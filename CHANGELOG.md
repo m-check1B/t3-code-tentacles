@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- KRA-10862: a Bot on Local · Claude Code or Local · Codex gets the Jack tool servers Jack sends for that Bot, on the official T3 Code (Beta) with no fork. `originate` and `continue` accept `mcpServers`, `mcpScope` and `mcpExpiresAt`, check them and strip them before T3. Before each turn the list is written into the Bot's own workspace: `.mcp.json` for Claude Code (with `enableAllProjectMcpServers` in the workspace's `.claude/settings.local.json`, since a Bot turn has nobody to approve it) and `.codex/config.toml` for Codex, both mode 0600. Codex reads that file only for a trusted folder, so a Codex turn with tools adds one `[projects."<Bot workspace>"] trust_level = "trusted"` table to the Codex home T3 uses (T3's `homePath`, else `~/.codex`). An existing table for that folder is left alone, and a home that keeps `projects` inline is refused rather than rewritten. Three shapes are admitted: the public Microsoft Learn URL with no headers, Jack's connector proxy `https://<jack>/mcp/connectors/<name>`, and Jack's own tools `https://<jack>/mcp` named `jack`. The last two carry exactly one `Authorization: Bearer` turn token, and all of them come from one Jack origin. Anything else, a lab other than `claudeAgent` or `codex`, or a non-empty list outside a Bot workspace is refused before the workspace or T3 is touched. Turns without the fields behave as before.
+- KRA-10862: T3 keeps a lab process alive across a thread's turns, and that process loaded its tools and turn token once. When a turn carries a list (or clears one), an idle live session is stopped first, so the turn starts a fresh process that resumes the conversation with the current list. A Talk that is still answering is refused at once and is never cut.
+- KRA-10862: `doctor-status` advertises `jackMcpConfig: "v1"`, `jackMcpProviders: ["claudeAgent", "codex"]`, `jackMcpHeaders: false`, `jackMcpPublicUrls: [Microsoft Learn]`, `jackMcpProxy: "v1"` and `jackMcpSelf: "v1"`, only when Local Talk is supported. Antigravity, Cursor, Grok, OpenCode and the ACP labs are not listed: T3 starts them without a per-folder MCP file Tentacles can write. `ensureLocalTalkWorkspace` accepts `seats/<owner digest>/agents/<bot id>`, the path Jack uses for a Bot with tools.
+
 ## [0.5.0-jack.19] - 2026-11-20
 
 ### Fixed

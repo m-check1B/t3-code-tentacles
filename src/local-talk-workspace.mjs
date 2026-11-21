@@ -5,6 +5,8 @@ import { guardTalkWorkspace } from "./talk-instruction-guard.mjs";
 
 const PRIVATE_ROOT = ".jack-local-scratch";
 const HEX_ID = /^[a-f0-9]{32}$/;
+const SEAT_ID = /^[a-f0-9]{64}$/;
+const BOT_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const SOURCE_COMPONENTS = new Set(["github", ".git", "agent-jack-3", "agentjack"]);
 
 function refuse() { throw new Error("Local Talk workspace custody or scope refused"); }
@@ -48,8 +50,11 @@ export function ensureLocalTalkWorkspace(workspace, { home = os.homedir(), platf
       || !workspace.startsWith(`${root}${path.sep}`)
       || root.split(path.sep).some(part => SOURCE_COMPONENTS.has(part.toLowerCase()))) refuse();
   const parts = path.relative(root, workspace).split(path.sep);
-  if (parts.length !== 3 || parts[0] !== "jack-talk"
-      || !HEX_ID.test(parts[1]) || !HEX_ID.test(parts[2])) refuse();
+  // Jack moves a Bot that has connectors to seats/<owner digest>/agents/<bot id>
+  // (paired_mcp_workspace); the start-up sweep already guards that shape.
+  const talk = parts.length === 3 && parts[0] === "jack-talk" && HEX_ID.test(parts[1]) && HEX_ID.test(parts[2]);
+  const seat = parts.length === 4 && parts[0] === "seats" && SEAT_ID.test(parts[1]) && parts[2] === "agents" && BOT_ID.test(parts[3]);
+  if (!talk && !seat) refuse();
   // Build each directory from the machine's own root and validated IDs.
   let directory = root;
   privateDirectory(directory, platform);

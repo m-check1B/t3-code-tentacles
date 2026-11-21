@@ -807,7 +807,7 @@ export async function waitForMessageProjection(client, threadId, messageId, { ti
   throw new Error(`Timed out waiting for message ${messageId} in thread ${threadId}`);
 }
 
-async function waitForRestartableSession(client, threadId, { timeoutMs = 15_000, intervalMs = 100 } = {}) {
+export async function waitForRestartableSession(client, threadId, { timeoutMs = 15_000, intervalMs = 100 } = {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const detail = await getThreadIfProjected(client, threadId);

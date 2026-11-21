@@ -128,7 +128,18 @@
         "ready": true,
         "capabilities": {
           "talkTurnResult": "v1",
-          "turnInterrupt": "turn-interrupt-v1"
+          "turnInterrupt": "turn-interrupt-v1",
+          "jackMcpConfig": "v1",
+          "jackMcpProviders": [
+            "claudeAgent",
+            "codex"
+          ],
+          "jackMcpHeaders": false,
+          "jackMcpPublicUrls": [
+            "https://learn.microsoft.com/api/mcp"
+          ],
+          "jackMcpProxy": "v1",
+          "jackMcpSelf": "v1"
         }
       },
       "receipt": {
@@ -297,7 +308,18 @@
         "ready": true,
         "capabilities": {
           "talkTurnResult": "v1",
-          "turnInterrupt": "turn-interrupt-v1"
+          "turnInterrupt": "turn-interrupt-v1",
+          "jackMcpConfig": "v1",
+          "jackMcpProviders": [
+            "claudeAgent",
+            "codex"
+          ],
+          "jackMcpHeaders": false,
+          "jackMcpPublicUrls": [
+            "https://learn.microsoft.com/api/mcp"
+          ],
+          "jackMcpProxy": "v1",
+          "jackMcpSelf": "v1"
         }
       },
       "receipt": {

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { ensureLocalTalkWorkspace } from "./local-talk-workspace.mjs";
+import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, codexHomeFor, writeBotConnectors } from "./bot-connectors.mjs";
 import { privateModeOk } from "./platform.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { randomUUID } from "node:crypto";
@@ -31,10 +32,10 @@ const offerSecrets = new WeakMap();
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const MAX_TIMER_MS = 2_147_483_647;
 const ORIGINATE_PARAM_KEYS = new Set([
-  "workspace", "title", "message", "instanceId", "model", "options", "budget", "runtimeMode", "idempotencyKey", "freshProviderContext", "fixedTitle",
+  "workspace", "title", "message", "instanceId", "model", "options", "budget", "runtimeMode", "idempotencyKey", "freshProviderContext", "fixedTitle", ...BOT_CONNECTOR_PARAM_KEYS,
 ]);
 const CONTINUE_PARAM_KEYS = new Set([
-  "threadId", "message", "instanceId", "model", "options", "budget", "runtimeMode", "turnCommandId", "messageId", "freshProviderContext",
+  "threadId", "message", "instanceId", "model", "options", "budget", "runtimeMode", "turnCommandId", "messageId", "freshProviderContext", ...BOT_CONNECTOR_PARAM_KEYS,
 ]);
 
 function isRecord(value) {
@@ -280,21 +281,30 @@ export class LoopbackRuntimeAdapter {
   }
 
   originate(params) {
-    const admitted = fullAccessParams(params, "originate", ORIGINATE_PARAM_KEYS);
+    const { params: admitted, servers } = admitBotConnectors(fullAccessParams(params, "originate", ORIGINATE_PARAM_KEYS));
     requireFreshFlags(admitted);
-    const dispatch = () => {
-      this.prepareTalkWorkspaceImpl(admitted.workspace);
+    const dispatch = async () => {
+      // A new thread starts a new lab session, so no restart is needed here.
+      await this.writeConnectors(admitted.workspace, servers, admitted.instanceId);
       return this.originateImpl(this.client, admitted);
     };
     return admitted.freshProviderContext === true || admitted.fixedTitle === true
       ? requireFreshProviderContext(this.client, admitted).then(dispatch) : dispatch();
   }
 
+  async writeConnectors(workspace, servers, instanceId) {
+    const prepared = await this.prepareTalkWorkspaceImpl(workspace);
+    const codexHome = servers?.length && instanceId === "codex" ? await codexHomeFor(this.client) : undefined;
+    return writeBotConnectors(workspace, prepared, servers, { codexHome });
+  }
+
   continue(params) {
-    const input = fullAccessParams(params, "continue", CONTINUE_PARAM_KEYS);
+    const { params: input, servers } = admitBotConnectors(fullAccessParams(params, "continue", CONTINUE_PARAM_KEYS));
     requireContinueSelection({ instanceId: input.instanceId, model: input.model, options: input.options, budget: input.budget });
     requireFreshFlags(input);
-    const guarded = () => this.continueImpl(this.client, input, { prepareTalkWorkspace: this.prepareTalkWorkspaceImpl });
+    const guarded = () => this.continueImpl(this.client, input, {
+      prepareTalkWorkspace: (workspace) => this.writeConnectors(workspace, servers, input.instanceId),
+    });
     const dispatch = () => input.freshProviderContext === true
       ? requireFreshProviderContext(this.client, input).then(guarded)
       : guarded();
@@ -335,7 +345,8 @@ export class LoopbackRuntimeAdapter {
     }
     const report = await this.refreshModels();
     const capabilities = report.capabilities ?? (await probeTalkCapabilities(this.client)).capabilities;
-    const result = { ...report, capabilities };
+    // Connectors need a result to report into, so they ride Local Talk support.
+    const result = { ...report, capabilities: capabilities?.talkTurnResult === "v1" ? { ...capabilities, ...BOT_CONNECTOR_CAPABILITIES } : capabilities };
     if (this.capabilityCache) {
       // KRA-7369: the connector inventory rides the lab-catalog answer, because
       // Sphere admits only the advertised v1 methods. A scan never delays this
