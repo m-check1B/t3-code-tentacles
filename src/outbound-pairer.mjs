@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { ensureLocalTalkWorkspace } from "./local-talk-workspace.mjs";
 import { BOT_CONNECTOR_REFUSALS } from "./bot-connector-refusals.mjs";
-import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, botConnectorProviders, checkBotConnectorPaths, codexHomeFor, connectorsNeedRestart, grokHomeFor, planGrokTrust, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors } from "./bot-connectors.mjs";
+import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, botConnectorProviders, checkBotConnectorPaths, codexHomeFor, commitCodexTrust, connectorsNeedRestart, grokHomeFor, planGrokTrust, planGrokUntrust, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors } from "./bot-connectors.mjs";
 import { privateModeOk } from "./platform.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { refusalOf } from "./refusal-codes.mjs";
@@ -326,7 +326,13 @@ export class LoopbackRuntimeAdapter {
         : instanceId === "grok" ? planGrokTrust(await grokHomeFor(this.client), workspace) : undefined;
     if (servers !== undefined && prepared === true) checkBotConnectorPaths(workspace);
     if (restartIdleSession && connectorsNeedRestart(workspace, servers)) await restartIdleSession();
-    return writeBotConnectors(workspace, prepared, servers, { codexTrust });
+    const written = writeBotConnectors(workspace, prepared, servers, { codexTrust });
+    // B3 P3-5 on #110: a Grok Bot turn without tools drops the trust Tentacles added.
+    // Best effort: a no-tools turn never fails on it, and the tools are gone either way.
+    if (instanceId === "grok" && prepared === true && !servers?.length) {
+      try { commitCodexTrust(planGrokUntrust(await grokHomeFor(this.client), workspace)); } catch { /* left as it is */ }
+    }
+    return written;
   }
 
   continue(params) {

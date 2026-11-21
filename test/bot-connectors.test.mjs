@@ -504,7 +504,62 @@ test("KRA-10869: Jack's tools reach Local Grok through the folder's .mcp.json on
   settings.providerInstances.grok.environment[0].value = grokHome;
   await adapter.continue({ threadId: "t1", message: "again", ...grok, ...connectors([]) });
   assert.deepEqual(read(".mcp.json").mcpServers, {});
+  // B3 P3-5 on #110: the empty list also drops the trust Tentacles added.
+  assert.equal(fs.readFileSync(trustFile, "utf8").includes(JSON.stringify(workspace)), false);
   assert.equal(await grokHomeFor({ getSettings: async () => ({}) }, { home: "/h" }), "/h/.grok");
+});
+
+test("B3 P3-2/P3-5 on #110: an untrusted or git-repo Grok workspace refuses before the stop; a turn without tools drops the trust", async (t) => {
+  tryGrok(t);
+  const { home, workspace, stops, sent, adapter } = setup();
+  const grokHome = path.join(home, "grok-home");
+  const settings = await adapter.client.getSettings();
+  settings.providerInstances.grok = { environment: [{ name: "GROK_HOME", value: grokHome }] };
+  await adapter.originate({ workspace, message: "hi", ...grok, ...connectors([learn]) });
+  const trustFile = path.join(grokHome, "trusted_folders.toml");
+  const ours = fs.readFileSync(trustFile, "utf8");
+  // The owner's own table for another folder, and a turn with no fields at all.
+  const owner = '[folders."/owner"]\ntrusted = true\ndecided_at = 7\n';
+  fs.writeFileSync(trustFile, owner + ours);
+  await adapter.continue({ threadId: "t1", message: "plain", ...grok });
+  assert.equal(fs.readFileSync(trustFile, "utf8"), owner);
+  assert.equal(sent.length, 2);
+  // An owner's explicit "no" for this folder refuses with the fix, before any stop.
+  fs.writeFileSync(trustFile, `${owner}[folders.${JSON.stringify(workspace)}]\ntrusted = false\ndecided_at = 9\n`);
+  const refused = fs.readFileSync(trustFile, "utf8");
+  await assert.rejects(async () => adapter.continue({ threadId: "t1", message: "again", ...grok, ...connectors([learn]) }), /Grok does not trust this Bot workspace/);
+  assert.deepEqual(stops, []);
+  // A turn without tools leaves the owner's "no" as it is.
+  await adapter.continue({ threadId: "t1", message: "plain", ...grok });
+  assert.equal(fs.readFileSync(trustFile, "utf8"), refused);
+  // A Talk root inside a git repository: Grok decides at the repository root, so refuse.
+  fs.writeFileSync(trustFile, owner);
+  fs.mkdirSync(path.join(home, ".git"));
+  await assert.rejects(async () => adapter.continue({ threadId: "t1", message: "again", ...grok, ...connectors([learn]) }), /inside a git repository/);
+  assert.deepEqual(stops, []);
+  assert.equal(fs.readFileSync(trustFile, "utf8"), owner);
+});
+
+test("B3 P3-1/P3-3 on #110: the Grok home is T3's last GROK_HOME, absolute only, and a bad one refuses with a fixed text", async () => {
+  const client = values => ({ getSettings: async () => ({ providerInstances: { grok: { environment: values.map(value => ({ name: "GROK_HOME", value })) } } }) });
+  assert.equal(await grokHomeFor(client(["/first", "/last"]), { home: "/h" }), "/last");
+  assert.equal(await grokHomeFor(client(["~/g"]), { home: "/h" }), "/h/g");
+  assert.equal(await grokHomeFor(client([""]), { home: "/h" }), "/h/.grok");
+  for (const bad of ["relative/g", " /padded", "/padded ", 42, null]) {
+    await assert.rejects(grokHomeFor(client([bad]), { home: "/h" }), /^Error: Grok home in T3's grok settings is not an absolute path/, String(bad));
+  }
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "grok-home-bad-"));
+  fs.writeFileSync(path.join(home, "file"), "");
+  fs.symlinkSync(path.join(home, "missing"), path.join(home, "dangling"));
+  for (const name of ["file", "dangling"]) {
+    assert.throws(() => planGrokTrust(path.join(home, name), "/w"), /^Error: Grok home is not a directory$/, name);
+  }
+  // A concurrent change names Grok, not Codex.
+  const grokHome = path.join(home, "g");
+  const plan = planGrokTrust(grokHome, "/w");
+  fs.writeFileSync(path.join(grokHome, "trusted_folders.toml"), "# changed\n");
+  assert.throws(() => commitCodexTrust(plan), /^Error: Grok trusted_folders\.toml changed while trusting this Bot workspace; try again$/);
+  fs.rmSync(home, { recursive: true, force: true });
 });
 
 test("KRA-10869: the Grok trust entry respects the owner's file and refuses forms Grok does not write", () => {
@@ -512,7 +567,9 @@ test("KRA-10869: the Grok trust entry respects the owner's file and refuses form
   const file = path.join(home, "trusted_folders.toml");
   const own = '[folders."/a"]\ntrusted = true\ndecided_at = 1795247300\n\n[folders."/w"]\ntrusted = false\ndecided_at = 1\n';
   fs.writeFileSync(file, own, { mode: 0o640 });
-  assert.equal(planGrokTrust(home, "/w"), null); // the owner's decision for this folder stays
+  // B3 P3-2 on #110: the owner's "no" for this folder refuses rather than running without tools.
+  assert.throws(() => planGrokTrust(home, "/w"), /^Error: Grok does not trust this Bot workspace; trust it in Grok first, or run this Bot on Server$/);
+  assert.equal(planGrokTrust(home, "/a"), null); // the owner's trust for this folder stays as it is
   assert.equal(commitCodexTrust(planGrokTrust(home, "/v", { now: () => 5000 })), true);
   assert.equal(fs.readFileSync(file, "utf8"), `${own}[folders."/v"]\ntrusted = true\ndecided_at = 5\n`);
   assert.equal(fs.statSync(file).mode & 0o777, 0o640);
