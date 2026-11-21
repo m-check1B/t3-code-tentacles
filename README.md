@@ -258,7 +258,8 @@ off by default. Each is admitted and advertised only when the process that runs
 the pair names its switch word in `TENTACLES_JACK_TOOLS_TRY`: `grok`, `opencode`,
 `cursor`, `antigravity` (comma-separated, any subset, for example
 `TENTACLES_JACK_TOOLS_TRY=grok,cursor`). With it unset, those labs behave as
-before, and their files in the Bot workspace are neither read nor written.
+before, and their files in the Bot workspace are neither read nor written, except
+that a Grok turn still removes a trust table an opt-in run left (see CHANGELOG).
 
 Ready means T3 accepts the lab, not that its model answers. To check that, run
 `tentacles doctor --responds all` (or `--responds codex,grok`). This opt-in

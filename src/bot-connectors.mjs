@@ -280,7 +280,7 @@ export function codexHomeFromSettings(settings, { home = os.homedir(), instanceI
 // owner's keys (`command`, `bearer_token_env_var`, headers, `enabled`) would join a
 // Bot's entry. `inline` is a top-level `mcp_servers = {…}` (names not parsed); `form`
 // is a quoted `mcp_servers` root, an escaped first key or an escaped name, which Codex
-// reads but this does not. Lines inside a multi-line string are skipped (B3 P3-1 on #116).
+// reads but this does not, or a file that is not TOML.
 export function codexServerNames(text) {
   const names = new Set();
   let inline = false, form = false, table = false, headerSeen = false;
@@ -296,46 +296,71 @@ export function codexServerNames(text) {
     if (name !== "mcp_servers") form = true; // a quoted root key
     return true;
   };
-  let multi = null;
-  for (const raw of String(text).split(/\r?\n/)) {
-    const inside = multi;
-    multi = openMultiline(raw, multi);
-    if (inside) continue;
+  // B3 P2-1/P2-2/P3-1 on #117: a line counts only if it starts outside every string,
+  // comment and open value; a file that is not TOML (an open string or value) is `form`.
+  const starts = codexLineStarts(String(text));
+  if (!starts) return { names, inline, form: true };
+  String(text).split(/\r?\n/).forEach((raw, n) => {
+    if (!starts[n]) return;
     const line = raw.trim();
     if (line.startsWith("[")) {
       headerSeen = true;
       table = false;
-      if (line.startsWith("[[")) continue; // an array of tables is not a server
+      if (line.startsWith("[[")) return; // an array of tables is not a server
       const match = header.exec(line);
       if (match && isRoot(match[1])) { if (match[2]) add(match[2]); else table = true; }
-      continue;
+      return;
     }
     const match = keyLine.exec(line);
-    if (!match) continue;
+    if (!match) return;
     if (table) add(match[1]);
     // Dotted and inline keys name a server only at the top level, before any header.
     else if (!headerSeen && isRoot(match[1])) { if (match[2]) add(match[2]); else inline = true; }
-  }
+  });
   return { names, inline, form };
 }
 
-// The multi-line string ("""…""" or '''…''') still open at the end of `line`, given the
-// one open at its start; single-line strings and comments are skipped over.
-function openMultiline(line, open) {
-  let state = open;
-  for (let i = 0; i < line.length;) {
-    if (state === '"""' || state === "'''") {
-      if (state === '"""' && line[i] === "\\") i += 2;
-      else if (line.startsWith(state, i)) { i += 3; state = null; }
-      else i += 1;
-    } else if (state) {
-      if (state === '"' && line[i] === "\\") i += 2;
-      else { if (line[i] === state) state = null; i += 1; }
-    } else if (line[i] === "#") break;
-    else if (line.startsWith('"""', i) || line.startsWith("'''", i)) { state = line.slice(i, i + 3); i += 3; }
-    else { if (line[i] === '"' || line[i] === "'") state = line[i]; i += 1; }
+// One character pass over a TOML file. For each line: does it start in the plain state
+// (no open string, comment, array or inline table)? null when the file is not TOML:
+// it ends inside a string or value, a one-line string runs past its line, or a bracket
+// closes nothing. A header's own brackets and a value's nesting are told apart by place:
+// a `[` that opens a line at depth 0 starts a header.
+function codexLineStarts(text) {
+  const starts = [true];
+  let state = null, depth = 0, header = false, lineStart = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (c === "\n") {
+      if (state === '"' || state === "'") return null;
+      if (state === "#") state = null;
+      header = false;
+      lineStart = i + 1;
+      starts.push(state === null && depth === 0);
+    } else if (state === "#") {
+      // a comment runs to the end of its line
+    } else if (state === '"""' || state === "'''") {
+      if (c === "\\" && state === '"""') { if (text[i + 1] !== "\n") i += 1; } else if (text.startsWith(state, i)) {
+        // Up to two more of the same quote belong to the content.
+        let run = 3;
+        while (text[i + run] === c) run += 1;
+        if (run > 5) return null;
+        i += run - 1;
+        state = null;
+      }
+    } else if (state === '"') {
+      if (c === "\\") { if (text[i + 1] !== "\n") i += 1; } else if (c === '"') state = null;
+    } else if (state === "'") {
+      if (c === "'") state = null;
+    } else if (c === "#") state = "#";
+    else if (text.startsWith('"""', i) || text.startsWith("'''", i)) { state = text.slice(i, i + 3); i += 2; }
+    else if (c === '"' || c === "'") state = c;
+    else if (header) {
+      // a header's brackets are not a value's
+    } else if (c === "[" && depth === 0 && starts.at(-1) && !text.slice(lineStart, i).trim()) header = true;
+    else if (c === "[" || c === "{") depth += 1;
+    else if (c === "]" || c === "}") { if (depth === 0) return null; depth -= 1; }
   }
-  return state === '"""' || state === "'''" ? state : null;
+  return state === null || state === "#" ? (depth === 0 ? starts : null) : null;
 }
 
 export function checkCodexServerNames(codexHome, names) {

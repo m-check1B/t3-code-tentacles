@@ -996,6 +996,77 @@ test("KRA-10891: codexServerNames reads every form Codex accepts for a server na
   }
 });
 
+// Every row a B3 ran against codex-cli 0.169.0 (`codex mcp get jack`, throwaway homes, fake values, no turn),
+// with what Codex itself said: "jack" = it loads server jack (the reader must refuse), "none" = it does not,
+// "broken" = Codex refuses to load the whole file (refusing it too is right).
+const CODEX_ROWS = [
+  // B3 P2-1 on #117 (a closing quote run, then more on the line)
+  ['a = ["""q"""", """\n[x]\n"""]\nmcp_servers.jack.command = "x"\n', "jack"],
+  ["a = ['''q'''', '''\n[x]\n''']\nmcp_servers.jack.command = \"x\"\n", "jack"],
+  ['[mcp_servers]\nother = { command = "x", args = ["""say "hi"""", """\n[y]\n"""] }\njack = { command = "x" }\n', "jack"],
+  ['x = { a = """q"""", b = """\n[x]\n""" }\nmcp_servers.jack.command = "x"\n', "jack"],
+  ["x = { a = '''q'''', b = '''\n[x]\n''' }\nmcp_servers.jack.command = \"x\"\n", "jack"],
+  ['x = { a = """q"""", b = """\nnone\n""" }\nmcp_servers.jack.command = "x"\n', "jack"],
+  // B3 P2-2 on #117 (a `[` line inside a multi-line array)
+  ['arr = [\n  [1, 2],\n]\nmcp_servers.jack.command = "x"\n', "jack"],
+  ['arr = [\n[1],\n]\nmcp_servers.jack.command = "x"\n', "jack"],
+  // B3 delta on #116 (multi-line strings)
+  ['developer_instructions = """\n[x]\n"""\nmcp_servers.jack.command = "x"\n', "jack"],
+  ['developer_instructions = """\n[x]\n"""\nmcp_servers.jack.url = "u"\nmcp_servers.jack.bearer_token_env_var = "OWNER_TOKEN_NAME"\n', "jack"],
+  ['[mcp_servers]\nother = { command = "x", args = ["""\n[y]\n"""] }\njack = { command = "x" }\n', "jack"],
+  // B3 on #116 (forms)
+  ['["mcp_servers".jack]\ncommand = "x"\n', "jack"],
+  ["['mcp_servers'.jack]\ncommand = \"x\"\n", "jack"],
+  ['["mcp_servers"]\njack = { command = "x" }\n', "jack"],
+  ['"mcp_servers".jack.command = "x"\n', "jack"],
+  ['[mcp_servers."\\u006aack"]\ncommand = "x"\n', "jack"],
+  ['["\\u006dcp_servers".jack]\ncommand = "x"\n', "jack"],
+  ['"\\u006dcp_servers".jack.command = "x"\n', "jack"],
+  ['[ mcp_servers . jack ]\ncommand = "x"\n', "jack"],
+  ['[\tmcp_servers.jack\t]\ncommand = "x"\n', "jack"],
+  ['[mcp_servers.jack] # mine\ncommand = "x"\n', "jack"],
+  ['\uFEFF[mcp_servers.jack]\r\ncommand = "x"\r\n', "jack"],
+  ["[mcp_servers.'jack']\ncommand = \"x\"\n", "jack"],
+  ['[mcp_servers]\n"jack" = { command = "x" }\n', "jack"],
+  ['[mcp_servers]\njack.command = "x"\n', "jack"],
+  ['mcp_servers.jack = { command = "x" }\n', "jack"],
+  ['[mcp_servers.jack.env]\nX = "1"\n', "broken"],
+  [`# ${"c".repeat(2 * 1024 * 1024)}\n[mcp_servers.jack]\ncommand = "x"\n`, "jack"],
+  ['[projects."/w"]\nmcp_servers.jack.command = "x"\n', "none"],
+  ['[profiles.p]\nmcp_servers = { jack = {} }\n', "none"],
+  ['[profiles.p.mcp_servers.jack]\ncommand = "x"\n', "none"],
+  ['[mcp_servers.JACK]\ncommand = "x"\n', "none"],
+  ["", "none"],
+  ['[other]\nx = 1\n', "none"],
+  ['[mcp_servers]\n[other]\njack = 1\n', "none"],
+  ['notes = """\n[mcp_servers.jack]\n"""\n', "none"],
+  ["notes = '''\n[mcp_servers.jack]\n'''\n", "none"],
+  ['a = "x\\"\\"\\"" # """\n[mcp_servers.other]\ncommand = "x"\n', "none"],
+];
+
+test("B3 P2-1/P2-2 on #117: the reader agrees with Codex on every row a review ran", () => {
+  for (const [text, codexSays] of CODEX_ROWS) {
+    const { names, inline, form } = codexServerNames(text);
+    assert.equal(names.has("jack") || inline || form, codexSays !== "none", JSON.stringify(text.slice(0, 120)));
+  }
+  // B3 P3-1 on #117: a file that ends inside a string or an open value is not TOML: `form`, nothing parsed.
+  for (const text of ['x = """\n[mcp_servers.other]\n', "x = '''\n", "x = [\n1,\n", "x = { a = [1\n", 'x = "open\n[mcp_servers.jack]\n', "x = ]\n", 'x = """q""""""\n']) {
+    assert.equal(codexServerNames(text).form, true, JSON.stringify(text));
+  }
+});
+
+test("B3 P2-1/P2-2 on #117: on 200 seeded files of strings, quote runs, comments, nested values and CRLF, a clash after them is always found and never invented", async () => {
+  const { codexTomlFiles } = await import("./fixtures/codex-toml-gen.mjs");
+  const files = codexTomlFiles(200, 10891);
+  assert.equal(files.filter(file => file.clash).length, 100);
+  for (const [n, { text, clash }] of files.entries()) {
+    const { names, inline, form } = codexServerNames(text);
+    assert.equal(form, false, `file ${n} is valid TOML`);
+    assert.equal(inline, false, `file ${n}`);
+    assert.equal(names.has("jack"), clash, `file ${n}: ${JSON.stringify(text.slice(0, 200))}`);
+  }
+});
+
 test("KRA-10891: doctor names a stale agent-jack server in the Codex home T3 uses, with one fix", async (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "codex-stale-"));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
