@@ -161,6 +161,22 @@ function realDirectory(directory) {
   if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("Bot connector directory must be a real directory");
 }
 
+/**
+ * Read-only: refuses, before any session stop, every workspace shape the writer
+ * would refuse later. `.claude` and `.codex` must be real directories (or
+ * absent) and the three files must not be directories. The Bot can plant either.
+ */
+export function checkBotConnectorPaths(workspace) {
+  const kind = file => { try { return lstatSync(file); } catch (error) { if (error.code === "ENOENT") return null; throw error; } };
+  for (const directory of [path.dirname(GUARD_FILE), CODEX_DIR]) {
+    const info = kind(path.join(workspace, directory));
+    if (info && (!info.isDirectory() || info.isSymbolicLink())) throw new Error("Bot connector directory must be a real directory");
+  }
+  for (const file of [MCP_FILE, CODEX_FILE, GUARD_FILE]) {
+    if (kind(path.join(workspace, file))?.isDirectory()) throw new Error("Bot connector file must not be a directory");
+  }
+}
+
 // Names match NAME and values are printable ASCII (URL.href, BEARER), so a JSON
 // string is a valid TOML basic string.
 function codexToml(servers) {
@@ -219,8 +235,15 @@ export function planCodexTrust(codexHome, workspace) {
       || line.startsWith(`projects.${key}`) || line.startsWith(`projects.'${workspace}'`))) return null;
   // A bare [projects] table, inline projects or dotted projects keys cannot take
   // a second definition of this folder without breaking the owner's file.
-  if (/^\s*projects\s*[=.]/m.test(text) || /^\s*\[\s*projects\s*\]\s*(#.*)?$/m.test(text)) {
-    throw new Error("Codex home config keeps projects in a form Tentacles does not edit; trust this Bot workspace in Codex first");
+  // Any other header whose first key may be `projects` ([ projects."…" ],
+  // [projects . "…"], ["projects"…], an escaped key, [[projects]]) may name this
+  // same folder, so only the exact form Codex itself writes is passed (B3 P3-1 on #101).
+  const refuse = () => { throw new Error("Codex home config keeps projects in a form Tentacles does not edit; trust this Bot workspace in Codex first"); };
+  if (/^\s*["']?projects["']?\s*[=.]/m.test(text) || /^\s*\[\s*projects\s*\]\s*(#.*)?$/m.test(text)) refuse();
+  for (const line of lines) {
+    const first = /^\[\[?\s*("(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+)/.exec(line)?.[1];
+    if (!first || !(first.includes("\\") || first.replace(/^["']|["']$/g, "") === "projects")) continue;
+    if (!/^\[projects\.("[^"\\]*"|'[^']*')\](\s*#.*)?$/.test(line)) refuse();
   }
   const next = `${text}${text && !text.endsWith("\n") ? "\n" : ""}\n# Agent Jack Bot workspace (Tentacles, KRA-10862)\n[projects.${key}]\ntrust_level = "trusted"\n`;
   return { file, text, mode, next };

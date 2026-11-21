@@ -344,3 +344,59 @@ test("B3 P3-D on #99: a custody or Codex-home refusal comes before the stop", as
   } finally { fs.chmodSync(home, 0o700); }
   assert.deepEqual(stops, []);
 });
+
+test("B3 P3-1 on #101: any projects header but Codex's own exact form refuses, the owner's file stays", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "codex-home-"));
+  const file = path.join(home, "config.toml");
+  const forms = [
+    '[ projects."/w" ]\ntrust_level = "untrusted"\n',
+    '[projects . "/w"]\ntrust_level = "untrusted"\n',
+    '[projects."\\u002fw"]\ntrust_level = "untrusted"\n', // the same key, escaped
+    '["projects"."/w"]\ntrust_level = "untrusted"\n',
+    '["\\u0070rojects"."/w"]\ntrust_level = "untrusted"\n',
+    '[[projects]]\npath = "/w"\n',
+    '[projects."/w".extra]\nx = 1\n',
+    '"projects"."/w".trust_level = "untrusted"\n',
+  ];
+  for (const text of forms) {
+    fs.writeFileSync(file, text);
+    assert.throws(() => trustCodexWorkspace(home, "/w"), /projects in a form/, text);
+    assert.equal(fs.readFileSync(file, "utf8"), text);
+  }
+  // Codex's own forms for other folders, with a comment, still take the new table.
+  fs.writeFileSync(file, '[projects."/a"]  # mine\ntrust_level = "trusted"\n[projects.\'/b\']\ntrust_level = "trusted"\n[other]\nx = 1\n');
+  assert.equal(trustCodexWorkspace(home, "/w"), true);
+  assert.match(fs.readFileSync(file, "utf8"), /\n\[projects\."\/w"\]\ntrust_level = "trusted"\n$/);
+});
+
+test("B3 P3-2 on #101: a planted .codex or .claude link, or a directory file target, refuses before the stop", async () => {
+  const { home, workspace, stops, adapter } = setup();
+  await adapter.originate({ workspace, message: "hi", ...codex, ...connectors([learn]) });
+  const threadId = "11111111-2222-4333-8444-555555555555";
+  const snapshot = () => ["", ".codex/config.toml", ".mcp.json", ".claude/settings.local.json"].map(name => {
+    try { return fs.readFileSync(path.join(workspace, name), "utf8"); } catch (error) { return error.code; }
+  });
+  const elsewhere = fs.mkdtempSync(path.join(home, "elsewhere-"));
+  const plants = [
+    [".codex", () => { fs.rmSync(path.join(workspace, ".codex"), { recursive: true }); fs.symlinkSync(elsewhere, path.join(workspace, ".codex")); }, /real directory/],
+    [".claude", () => { fs.rmSync(path.join(workspace, ".claude"), { recursive: true }); fs.symlinkSync(elsewhere, path.join(workspace, ".claude")); }, /real directory|director/],
+    [".mcp.json", () => { fs.rmSync(path.join(workspace, ".mcp.json")); fs.mkdirSync(path.join(workspace, ".mcp.json")); }, /must not be a directory/],
+  ];
+  for (const [name, plant, message] of plants) {
+    plant();
+    // The first refusal lets the existing custody guard settle .claude (idempotent, B3 on #101).
+    await assert.rejects(adapter.continue({ threadId, message: "again", runtimeMode: "full-access", ...codex, ...connectors([learn]) }), message, name);
+    const before = snapshot();
+    for (const lab of [codex, claude]) {
+      await assert.rejects(adapter.continue({ threadId, message: "again", runtimeMode: "full-access", ...lab, ...connectors([learn]) }), message, name);
+      await assert.rejects(adapter.continue({ threadId, message: "clear", runtimeMode: "full-access", ...lab, ...connectors([]) }), message, name);
+    }
+    assert.deepEqual(stops, [], name);
+    assert.deepEqual(snapshot(), before, name);
+    fs.rmSync(path.join(workspace, name), { recursive: true });
+  }
+  assert.deepEqual(fs.readdirSync(elsewhere), []);
+  // Without the plants the turn stops once and writes again.
+  await adapter.continue({ threadId, message: "again", runtimeMode: "full-access", ...codex, ...connectors([learn]) });
+  assert.equal(stops.length, 1);
+});
