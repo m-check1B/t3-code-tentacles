@@ -244,6 +244,14 @@ compatibility; its action names the supported stock range and the official downl
 and authentication failures remain unavailable. Local doctor and the paired
 `doctor-status` report use the same outcome. No response bodies are published.
 
+Jack tools on a Local Bot (Local · Claude Code, Local · Codex). A paired Agent Jack
+that pinned its origin in the pair offer gets `jackMcpProxy` and `jackMcpSelf` in
+`doctor-status`, and its Bots then get Jack's own tools and their connectors. A
+pairing without a pinned origin (an older Agent Jack) gets only the public docs
+server, so that Agent Jack keeps refusing connector turns itself, as before. People
+in the Talk see the names of the tools the Bot used on the owner's computer, never
+their input or output.
+
 Ready means T3 accepts the lab, not that its model answers. To check that, run
 `tentacles doctor --responds all` (or `--responds codex,grok`). This opt-in
 probe costs one model call per lab: it originates one no-tools turn per selected

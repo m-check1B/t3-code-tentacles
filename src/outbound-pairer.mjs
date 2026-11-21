@@ -366,7 +366,12 @@ export class LoopbackRuntimeAdapter {
     const report = await this.refreshModels();
     const capabilities = report.capabilities ?? (await probeTalkCapabilities(this.client)).capabilities;
     // Connectors need a result to report into, so they ride Local Talk support.
-    const result = { ...report, capabilities: capabilities?.talkTurnResult === "v1" ? { ...capabilities, ...BOT_CONNECTOR_CAPABILITIES } : capabilities };
+    // Jack-hosted entries are admitted only from the origin pinned at pairing, so a
+    // pairing without one (an older Agent Jack) does not invite them: that Agent Jack
+    // then refuses its own connector turns as it did on jack.19. Learn still rides.
+    const { jackMcpProxy, jackMcpSelf, ...unpinned } = BOT_CONNECTOR_CAPABILITIES;
+    const advert = this.jackOrigin ? BOT_CONNECTOR_CAPABILITIES : unpinned;
+    const result = { ...report, capabilities: capabilities?.talkTurnResult === "v1" ? { ...capabilities, ...advert } : capabilities };
     if (this.capabilityCache) {
       // KRA-7369: the connector inventory rides the lab-catalog answer, because
       // Sphere admits only the advertised v1 methods. A scan never delays this
