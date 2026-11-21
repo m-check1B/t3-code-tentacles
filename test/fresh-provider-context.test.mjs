@@ -72,12 +72,14 @@ test("idempotent fresh originate replays the same identifiers but refuses semant
     await assert.rejects(originate(client, { ...input, fixedTitle: false }), /different input/);
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
+// No pair offer pinned a Jack origin here, so Jack-hosted entries are not invited.
+const { jackMcpProxy: _proxy, jackMcpSelf: _self, ...UNPINNED_CAPABILITIES } = BOT_CONNECTOR_CAPABILITIES;
 test("doctor advertises only the exact agreed capability envelope", async () => {
   const exact = { talkTurnResult: "v1" };
   for (const caps of [{}, capability, exact]) {
     const runtime = new LoopbackRuntimeAdapter({ client: fake(caps), doctorImpl: async () => ({ ready: true }) });
     const result = await runtime.doctorStatus();
-    assert.deepEqual(result.capabilities, caps === exact ? { ...exact, turnInterrupt: "turn-interrupt-v1", ...BOT_CONNECTOR_CAPABILITIES } : { talkTurnResult: null, turnInterrupt: null });
+    assert.deepEqual(result.capabilities, caps === exact ? { ...exact, turnInterrupt: "turn-interrupt-v1", ...UNPINNED_CAPABILITIES } : { talkTurnResult: null, turnInterrupt: null });
   }
 });
 test("exact result forwards only actual applied context receipt and rejects the wrong generation", async () => {
