@@ -11,7 +11,7 @@
  * workspace is trusted there once. T3 keeps a lab process alive across turns,
  * so the caller stops an idle live session before the files change.
  */
-import { closeSync, constants, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, constants, existsSync, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash, randomBytes } from "node:crypto";
@@ -29,7 +29,7 @@ export const BOT_CONNECTOR_PROVIDERS = Object.freeze(["claudeAgent", "codex"]);
 // Labs whose road is built but not yet proven by a real turn (KRA-10869). They are
 // admitted and advertised only when the owner names them for a proof run:
 // TENTACLES_JACK_TOOLS_TRY=grok. A proven lab moves into BOT_CONNECTOR_PROVIDERS.
-export const UNPROVEN_BOT_CONNECTOR_PROVIDERS = Object.freeze(["grok", "cursor"]);
+export const UNPROVEN_BOT_CONNECTOR_PROVIDERS = Object.freeze(["grok", "cursor", "antigravity"]);
 export function botConnectorProviders(env = process.env) {
   const tried = String(env.TENTACLES_JACK_TOOLS_TRY ?? "").split(",").map(value => value.trim());
   return Object.freeze([...BOT_CONNECTOR_PROVIDERS, ...UNPROVEN_BOT_CONNECTOR_PROVIDERS.filter(id => tried.includes(id))]);
@@ -50,6 +50,12 @@ export const CODEX_FILE = path.join(CODEX_DIR, "config.toml");
 // full-access turns; its local loader reads this file with approvals ignored.
 export const CURSOR_DIR = ".cursor";
 export const CURSOR_FILE = path.join(CURSOR_DIR, "mcp.json");
+// Antigravity discovers plugins under the workspace's `.agents/plugins/` (enabled
+// by default) and launches each plugin's `mcp_config.json` servers. T3 starts it
+// with cwd = the thread folder and hands over only its own `t3-code` server.
+export const ANTIGRAVITY_DIRS = Object.freeze([".agents", path.join(".agents", "plugins"), path.join(".agents", "plugins", "jack-tools")]);
+export const ANTIGRAVITY_PLUGIN = path.join(".agents", "plugins", "jack-tools", "plugin.json");
+export const ANTIGRAVITY_FILE = path.join(".agents", "plugins", "jack-tools", "mcp_config.json");
 
 const NAME = /^[A-Za-z0-9_-]{1,100}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -181,11 +187,12 @@ function realDirectory(directory) {
  */
 export function checkBotConnectorPaths(workspace) {
   const kind = file => { try { return lstatSync(file); } catch (error) { if (error.code === "ENOENT") return null; throw error; } };
-  for (const directory of [path.dirname(GUARD_FILE), CODEX_DIR, CURSOR_DIR]) {
+  // Outer before inner, so no lstat ever runs through a planted link.
+  for (const directory of [path.dirname(GUARD_FILE), CODEX_DIR, CURSOR_DIR, ...ANTIGRAVITY_DIRS]) {
     const info = kind(path.join(workspace, directory));
     if (info && (!info.isDirectory() || info.isSymbolicLink())) throw new Error(R.realDirectory);
   }
-  for (const file of [MCP_FILE, CODEX_FILE, CURSOR_FILE, GUARD_FILE]) {
+  for (const file of [MCP_FILE, CODEX_FILE, CURSOR_FILE, ANTIGRAVITY_PLUGIN, ANTIGRAVITY_FILE, GUARD_FILE]) {
     if (kind(path.join(workspace, file))?.isDirectory()) throw new Error(R.fileIsDirectory);
   }
 }
@@ -342,7 +349,7 @@ function listedServers(workspace) {
  * `codexTrust` is a planCodexTrust plan made before the restart; it wins over `codexHome`.
  * The caller restarts a live session first (connectorsNeedRestart), then writes.
  */
-export function writeBotConnectors(workspace, prepared, servers, { codexHome, codexTrust } = {}) {
+export function writeBotConnectors(workspace, prepared, servers, { codexHome, codexTrust, instanceId } = {}) {
   if (servers === undefined) return false;
   if (prepared !== true) {
     if (servers.length) throw new Error(R.notBotWorkspace);
@@ -355,6 +362,15 @@ export function writeBotConnectors(workspace, prepared, servers, { codexHome, co
     ...(server.headers.length ? { headers: Object.fromEntries(server.headers.map(header => [header.name, header.value])) } : {}),
   }]));
   writePrivate(path.join(workspace, MCP_FILE), `${JSON.stringify({ mcpServers }, null, 2)}\n`);
+  // Only an Antigravity turn creates the plugin (other labs may scan `.agents/`);
+  // once it exists every turn rewrites it, so a changed or empty list applies.
+  if (instanceId === "antigravity" || existsSync(path.join(workspace, ANTIGRAVITY_FILE))) {
+    for (const directory of ANTIGRAVITY_DIRS) realDirectory(path.join(workspace, directory));
+    writePrivate(path.join(workspace, ANTIGRAVITY_PLUGIN), `${JSON.stringify({ name: "jack-tools", description: "Agent Jack tools for this Bot, rewritten by Tentacles before every turn" }, null, 2)}\n`);
+    writePrivate(path.join(workspace, ANTIGRAVITY_FILE), `${JSON.stringify({ mcpServers: Object.fromEntries(servers.map(server => [server.name, {
+      url: server.url, ...(server.headers.length ? { headers: Object.fromEntries(server.headers.map(header => [header.name, header.value])) } : {}),
+    }])) }, null, 2)}\n`);
+  }
   realDirectory(path.join(workspace, CURSOR_DIR));
   writePrivate(path.join(workspace, CURSOR_FILE), `${JSON.stringify({ mcpServers }, null, 2)}\n`);
   realDirectory(path.join(workspace, CODEX_DIR));

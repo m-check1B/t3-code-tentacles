@@ -325,7 +325,7 @@ export class LoopbackRuntimeAdapter {
         : instanceId === "grok" ? planGrokTrust(await grokHomeFor(this.client), workspace) : undefined;
     if (servers !== undefined && prepared === true) checkBotConnectorPaths(workspace);
     if (restartIdleSession && connectorsNeedRestart(workspace, servers)) await restartIdleSession();
-    return writeBotConnectors(workspace, prepared, servers, { codexTrust });
+    return writeBotConnectors(workspace, prepared, servers, { codexTrust, instanceId });
   }
 
   continue(params) {

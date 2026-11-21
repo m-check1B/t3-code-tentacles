@@ -21,6 +21,7 @@ const claude = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
 const codex = { instanceId: "codex", model: "gpt-6-astra" };
 const grok = { instanceId: "grok", model: "grok-4.7" };
 const cursor = { instanceId: "cursor", model: "composer-2.5" };
+const antigravity = { instanceId: "antigravity", model: "gemini-4-argon" };
 // Jack's paired_mcp_workspace for this scope.
 const seatDigest = (value = scope) => createHash("sha256").update(`${value.businessId}:${value.seatId}`).digest("hex");
 
@@ -392,6 +393,7 @@ test("B3 P3-2 on #101: a planted .codex or .claude link, or a directory file tar
     // B3 P3-3 on #105: the custody guard refuses with a fixed text and leaves no temp file.
     [".claude/settings.local.json", () => { fs.mkdirSync(path.join(workspace, ".claude"), { recursive: true, mode: 0o700 }); fs.rmSync(path.join(workspace, ".claude/settings.local.json"), { force: true }); fs.mkdirSync(path.join(workspace, ".claude/settings.local.json")); }, { message: "Talk instruction guard file must not be a directory" }],
     [".cursor", () => { fs.rmSync(path.join(workspace, ".cursor"), { recursive: true, force: true }); fs.symlinkSync(elsewhere, path.join(workspace, ".cursor")); }, /real directory/],
+    [".agents/plugins", () => { fs.mkdirSync(path.join(workspace, ".agents"), { recursive: true, mode: 0o700 }); fs.rmSync(path.join(workspace, ".agents/plugins"), { recursive: true, force: true }); fs.symlinkSync(elsewhere, path.join(workspace, ".agents/plugins")); }, /real directory/],
     [".mcp.json", () => { fs.rmSync(path.join(workspace, ".mcp.json")); fs.mkdirSync(path.join(workspace, ".mcp.json")); }, /must not be a directory/],
   ];
   for (const [name, plant, message] of plants) {
@@ -470,7 +472,7 @@ test("KRA-10869: Grok is unproven, so it is refused and not advertised unless th
   assert.equal(fs.existsSync(path.join(workspace, ".mcp.json")), false);
   const doctor = new LoopbackRuntimeAdapter({ client: {}, doctorImpl: async () => ({ capabilities: { talkTurnResult: "v1" } }) });
   assert.deepEqual([...(await doctor.doctorStatus()).capabilities.jackMcpProviders], ["claudeAgent", "codex"]);
-  process.env.TENTACLES_JACK_TOOLS_TRY = "grok, cursor, antigravity";
+  process.env.TENTACLES_JACK_TOOLS_TRY = "grok, cursor, kiro";
   assert.deepEqual([...(await doctor.doctorStatus()).capabilities.jackMcpProviders], ["claudeAgent", "codex", "grok", "cursor"]);
 });
 
@@ -548,4 +550,30 @@ test("KRA-10869: Jack's tools reach Local Cursor through the folder's .cursor/mc
   assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(file, "utf8")).mcpServers), ["jack"]);
   await adapter.continue({ threadId: "t1", message: "again", ...cursor, ...connectors([]) });
   assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")).mcpServers, {});
+});
+
+test("KRA-10869: Jack's tools reach Local Antigravity as a workspace plugin, opt-in until a signed-in turn proves it", async (t) => {
+  const { home, workspace, sent, stops, adapter } = setup();
+  const plugin = path.join(workspace, ".agents", "plugins", "jack-tools");
+  // Another lab's turn never creates the plugin.
+  await adapter.originate({ workspace, message: "hi", ...claude, ...connectors([learn]) });
+  assert.equal(fs.existsSync(path.join(workspace, ".agents")), false);
+  await assert.rejects(async () => adapter.continue({ threadId: "t1", message: "hi", ...antigravity, ...connectors([learn]) }), /not supported on this lab/);
+  tryGrok(t, "antigravity");
+  await adapter.continue({ threadId: "t1", message: "weather?", ...antigravity, ...connectors([jack, linear, learn]) });
+  for (const directory of [".agents", ".agents/plugins", ".agents/plugins/jack-tools"]) assert.equal(fs.lstatSync(path.join(workspace, directory)).isDirectory(), true);
+  assert.equal(fs.statSync(path.join(plugin, "mcp_config.json")).mode & 0o777, 0o600);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(plugin, "plugin.json"), "utf8")).name, "jack-tools");
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(plugin, "mcp_config.json"), "utf8")).mcpServers, {
+    jack: { url: `${ORIGIN}/mcp`, headers: { Authorization: "Bearer synthetic-turn-token" } },
+    linear: { url: `${ORIGIN}/mcp/connectors/linear`, headers: { Authorization: "Bearer synthetic-turn-token" } },
+    "microsoft-learn": { url: PUBLIC_MCP_URL },
+  });
+  assert.deepEqual(stops, ["t1"]);
+  // T3's shared Antigravity profile is never touched.
+  assert.equal(fs.existsSync(path.join(home, ".gemini")), false);
+  // Once it exists, any lab's turn keeps it current: a clear empties it.
+  await adapter.continue({ threadId: "t1", message: "again", ...claude, ...connectors([]) });
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(plugin, "mcp_config.json"), "utf8")).mcpServers, {});
+  assert.equal(JSON.stringify(sent).includes("synthetic-turn-token"), false);
 });
