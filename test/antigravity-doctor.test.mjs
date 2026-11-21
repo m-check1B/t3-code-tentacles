@@ -136,3 +136,41 @@ test("Antigravity never invents a default model from a fixed fallback", async ()
   assert.equal(row.ready, false);
   assert.equal(row.code, "default_model_unavailable");
 });
+
+// KRA-10863: T3 0.1.11's two repairable managed-runtime messages get their own code and fix.
+const PREDATES = "Antigravity 1.20.3 predates the Antigravity CLI and no longer works with this T3 Code release. Update it in Antigravity setup.";
+const CHANGED = "The managed Antigravity runtime changed on disk. Reinstall it in Antigravity setup.";
+for (const [message, installed, code, fix] of [
+  [PREDATES, true, "runtime_update_required", /update it in T3 Code's Antigravity setup/],
+  // T3 reports this one as a missing installation; it is still a repair, not an install.
+  [CHANGED, false, "runtime_changed", /reinstall it in T3 Code's Antigravity setup/],
+]) {
+  test(`T3's repairable runtime message becomes ${code} with T3's setup link, never echoed`, async () => {
+    for (const auth of ["authenticated", "unauthenticated", "unknown"]) {
+      const row = await antigravityRow({ provider: { status: "error", installed, auth: { status: auth }, message: ` ${message} ` } });
+      assert.equal(row.ready, false);
+      assert.equal(row.code, code);
+      assert.match(row.action, fix);
+      assert.equal(row.action.endsWith(ANTIGRAVITY_SETUP_URL), true);
+      assert.equal(JSON.stringify(row).includes(message), false);
+    }
+  });
+}
+
+test("a near miss of a repairable message stays a plain provider error", async () => {
+  for (const message of [`${CHANGED} SECRET-CANARY`, PREDATES.replace("1.20.3", "1.20.3 /tmp/x"), CHANGED.toLowerCase()]) {
+    const row = await antigravityRow({ provider: { status: "error", installed: true, auth: { status: "authenticated" }, message } });
+    assert.equal(row.code, "provider_error");
+    assert.equal(JSON.stringify(row).includes("SECRET-CANARY"), false);
+  }
+  const missing = await antigravityRow({ provider: { status: "error", installed: false, auth: { status: "unknown" }, message: `${CHANGED}x` } });
+  assert.equal(missing.code, "not_installed");
+});
+
+test("after the runtime update, a signed-out Antigravity reaches not_signed_in", async () => {
+  // T3 0.1.11 after a repair: installed, the Google session gone.
+  const row = await antigravityRow({ provider: { status: "warning", installed: true, auth: { status: "unauthenticated" }, message: "Sign in with Google to use Antigravity." } });
+  assert.equal(row.code, "not_signed_in");
+  assert.equal(row.signedIn, false);
+  assert.match(row.action, /^Sign in with Google in T3 Code: /);
+});

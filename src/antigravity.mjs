@@ -30,6 +30,19 @@ export function t3SupportsAntigravity(serverVersion) {
 // whole and never echoed.
 const T3_HEALTH_CHECK_TIMEOUT = /^Antigravity did not respond to its local health check within [0-9]{1,6} [a-z]{1,12}\.$/;
 
+// KRA-10863: T3's two managed-runtime messages that its own Antigravity setup
+// repairs (AntigravityInstallation, T3 0.1.11), matched whole and never echoed.
+// "changed on disk" arrives with installed=false, so it is read before that.
+const T3_RUNTIME_PREDATES_CLI = /^Antigravity [0-9A-Za-z.+-]{1,64} predates the Antigravity CLI and no longer works with this T3 Code release\. Update it in Antigravity setup\.$/;
+const T3_RUNTIME_CHANGED = /^The managed Antigravity runtime changed on disk\. Reinstall it in Antigravity setup\.$/;
+
+function repairCode(configProvider) {
+  if (configProvider.status !== "error" || typeof configProvider.message !== "string") return null;
+  const message = configProvider.message.trim();
+  return T3_RUNTIME_PREDATES_CLI.test(message) ? "runtime_update_required"
+    : T3_RUNTIME_CHANGED.test(message) ? "runtime_changed" : null;
+}
+
 // Only T3's observed provider and authentication states establish readiness.
 // An initialized agent or a cached model list does not prove Google sign-in.
 export function applyAntigravityState(row, configProvider, serverVersion) {
@@ -47,6 +60,13 @@ export function applyAntigravityState(row, configProvider, serverVersion) {
   if (!row.enabled) {
     row.ready = false;
     row.code = "disabled";
+    return row;
+  }
+  const repair = repairCode(configProvider);
+  if (repair) {
+    row.ready = false;
+    row.code = repair;
+    row.status = "installed";
     return row;
   }
   if (!installed) {
@@ -93,6 +113,10 @@ export function antigravityAction(code) {
       return `Sign in with Google in T3 Code: ${ANTIGRAVITY_SETUP_URL}`;
     case "sign_in_unchecked":
       return `Sign in with Google in T3 Code, or refresh Antigravity there if you already did: ${ANTIGRAVITY_SETUP_URL}`;
+    case "runtime_update_required":
+      return `T3's Antigravity runtime is older than the Antigravity CLI; update it in T3 Code's Antigravity setup, then rerun doctor: ${ANTIGRAVITY_SETUP_URL}`;
+    case "runtime_changed":
+      return `T3's managed Antigravity runtime changed on disk; reinstall it in T3 Code's Antigravity setup, then rerun doctor: ${ANTIGRAVITY_SETUP_URL}`;
     case "provider_probe_timeout":
       return `T3's Antigravity health check timed out; refresh Antigravity in T3 Code, or reinstall it there if it stays stuck, then rerun doctor: ${ANTIGRAVITY_SETUP_URL}`;
     default:
