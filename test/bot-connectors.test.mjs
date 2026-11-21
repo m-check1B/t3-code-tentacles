@@ -24,6 +24,7 @@ const codex = { instanceId: "codex", model: "gpt-6-astra" };
 const opencode = { instanceId: "opencode", model: "opencode-go/glm-5.3-flash" };
 const grok = { instanceId: "grok", model: "grok-4.7" };
 const cursor = { instanceId: "cursor", model: "composer-2.5" };
+const antigravity = { instanceId: "antigravity", model: "gemini-4-argon" };
 // Jack's paired_mcp_workspace for this scope.
 const seatDigest = (value = scope) => createHash("sha256").update(`${value.businessId}:${value.seatId}`).digest("hex");
 
@@ -587,7 +588,7 @@ test("KRA-10869: Grok is unproven, so it is refused and not advertised unless th
   assert.equal(fs.existsSync(path.join(workspace, ".mcp.json")), false);
   const doctor = new LoopbackRuntimeAdapter({ client: {}, doctorImpl: async () => ({ capabilities: { talkTurnResult: "v1" } }) });
   assert.deepEqual([...(await doctor.doctorStatus()).capabilities.jackMcpProviders], ["claudeAgent", "codex"]);
-  process.env.TENTACLES_JACK_TOOLS_TRY = "grok, cursor, antigravity";
+  process.env.TENTACLES_JACK_TOOLS_TRY = "grok, cursor, kiro";
   assert.deepEqual([...(await doctor.doctorStatus()).capabilities.jackMcpProviders], ["claudeAgent", "codex", "grok", "cursor"]);
 });
 
@@ -959,4 +960,74 @@ test("KRA-10869: Jack's tools reach Local Cursor through the folder's .cursor/mc
   assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(file, "utf8")).mcpServers), ["jack"]);
   await adapter.continue({ threadId: "t1", message: "again", ...cursor, ...connectors([]) });
   assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")).mcpServers, {});
+});
+
+test("KRA-10869: Jack's tools reach Local Antigravity as a workspace plugin, opt-in until a signed-in turn proves it", async (t) => {
+  const { home, workspace, sent, stops, adapter } = setup();
+  const plugin = path.join(workspace, ".agents", "plugins", "jack-tools");
+  // Another lab's turn never creates the plugin.
+  await adapter.originate({ workspace, message: "hi", ...claude, ...connectors([learn]) });
+  assert.equal(fs.existsSync(path.join(workspace, ".agents")), false);
+  await assert.rejects(async () => adapter.continue({ threadId: "t1", message: "hi", ...antigravity, ...connectors([learn]) }), /cannot use Jack tools on Local yet/);
+  tryGrok(t, "antigravity");
+  await adapter.continue({ threadId: "t1", message: "weather?", ...antigravity, ...connectors([jack, linear, learn]) });
+  for (const directory of [".agents", ".agents/plugins", ".agents/plugins/jack-tools"]) assert.equal(fs.lstatSync(path.join(workspace, directory)).isDirectory(), true);
+  assert.equal(fs.statSync(path.join(plugin, "mcp_config.json")).mode & 0o777, 0o600);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(plugin, "plugin.json"), "utf8")).name, "jack-tools");
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(plugin, "mcp_config.json"), "utf8")).mcpServers, {
+    jack: { url: `${ORIGIN}/mcp`, headers: { Authorization: "Bearer synthetic-turn-token" } },
+    linear: { url: `${ORIGIN}/mcp/connectors/linear`, headers: { Authorization: "Bearer synthetic-turn-token" } },
+    "microsoft-learn": { url: PUBLIC_MCP_URL },
+  });
+  assert.deepEqual(stops, ["t1"]);
+  // T3's shared Antigravity profile is never touched.
+  assert.equal(fs.existsSync(path.join(home, ".gemini")), false);
+  // Another lab's turn leaves it as it is; an Antigravity clear empties it.
+  const written = fs.readFileSync(path.join(plugin, "mcp_config.json"), "utf8");
+  await adapter.continue({ threadId: "t1", message: "again", ...claude, ...connectors([]) });
+  assert.equal(fs.readFileSync(path.join(plugin, "mcp_config.json"), "utf8"), written);
+  await adapter.continue({ threadId: "t1", message: "again", ...antigravity, ...connectors([]) });
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(plugin, "mcp_config.json"), "utf8")).mcpServers, {});
+  assert.equal(JSON.stringify(sent).includes("synthetic-turn-token"), false);
+});
+
+test("KRA-10869: an Antigravity plugin Tentacles did not write refuses before the stop; switched off, nothing is read or written", async (t) => {
+  const before = process.env.TENTACLES_JACK_TOOLS_TRY;
+  t.after(() => { if (before === undefined) delete process.env.TENTACLES_JACK_TOOLS_TRY; else process.env.TENTACLES_JACK_TOOLS_TRY = before; });
+  const { home, workspace, stops, adapter } = setup();
+  const dir = path.join(workspace, ".agents", "plugins", "jack-tools");
+  const config = path.join(dir, "mcp_config.json");
+  await adapter.originate({ workspace, message: "plain", ...antigravity });
+  // Switched off: an Antigravity clear and other labs' lists never create, read or refuse the plugin, even through a link.
+  delete process.env.TENTACLES_JACK_TOOLS_TRY;
+  const elsewhere = fs.mkdtempSync(path.join(home, "elsewhere-"));
+  fs.symlinkSync(elsewhere, path.join(workspace, ".agents"));
+  await adapter.continue({ threadId: "t1", message: "clear", ...antigravity, ...connectors([]) });
+  for (const lab of [claude, codex]) await adapter.continue({ threadId: "t1", message: "docs", ...lab, ...connectors([learn]) });
+  assert.deepEqual(fs.readdirSync(elsewhere), []);
+  assert.equal(fs.existsSync(path.join(workspace, ".jack-antigravity-mcp")), false);
+  fs.rmSync(path.join(workspace, ".agents"));
+  // Switched on: a plugin of the owner's refuses and keeps its bytes; once removed, ours is written and rewritten.
+  process.env.TENTACLES_JACK_TOOLS_TRY = "antigravity";
+  fs.mkdirSync(dir, { recursive: true });
+  const owner = '{"mcpServers":{"mine":{"url":"https://mine.example/mcp"}}}\n';
+  fs.writeFileSync(config, owner);
+  const stopped = stops.length;
+  const text = /^Error: This Bot workspace has a \.agents\/plugins\/jack-tools plugin that Tentacles did not write; remove that folder, then send again$/;
+  await assert.rejects(adapter.continue({ threadId: "t1", message: "again", ...antigravity, ...connectors([learn]) }), text);
+  await assert.rejects(adapter.continue({ threadId: "t1", message: "clear", ...antigravity, ...connectors([]) }), text);
+  assert.equal(fs.readFileSync(config, "utf8"), owner);
+  assert.equal(stops.length, stopped);
+  fs.rmSync(path.join(workspace, ".agents"), { recursive: true });
+  await adapter.continue({ threadId: "t1", message: "again", ...antigravity, ...connectors([learn]) });
+  const ours = fs.readFileSync(config, "utf8");
+  await adapter.continue({ threadId: "t1", message: "again", ...antigravity, ...connectors([learn]) });
+  assert.equal(fs.readFileSync(config, "utf8"), ours);
+  // Our file edited since, or plugin.json replaced, refuses too.
+  for (const plant of [() => fs.writeFileSync(config, ours.replace("microsoft-learn", "microsoft-learm")), () => fs.writeFileSync(path.join(dir, "plugin.json"), "{}\n")]) {
+    plant();
+    await assert.rejects(adapter.continue({ threadId: "t1", message: "again", ...antigravity, ...connectors([learn]) }), text);
+    fs.rmSync(path.join(workspace, ".agents"), { recursive: true });
+    await adapter.continue({ threadId: "t1", message: "again", ...antigravity, ...connectors([learn]) });
+  }
 });

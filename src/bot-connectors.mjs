@@ -28,8 +28,8 @@ export const JACK_SERVER_NAME = "jack";
 export const BOT_CONNECTOR_PROVIDERS = Object.freeze(["claudeAgent", "codex"]);
 // Labs whose road is built but not yet proven by a real turn (KRA-10869). They are
 // admitted and advertised only when the owner names them for a proof run:
-// TENTACLES_JACK_TOOLS_TRY=grok,opencode,cursor. A proven lab moves into BOT_CONNECTOR_PROVIDERS.
-export const UNPROVEN_BOT_CONNECTOR_PROVIDERS = Object.freeze(["grok", "opencode", "cursor"]);
+// TENTACLES_JACK_TOOLS_TRY=grok,opencode,cursor,antigravity. A proven lab moves into BOT_CONNECTOR_PROVIDERS.
+export const UNPROVEN_BOT_CONNECTOR_PROVIDERS = Object.freeze(["grok", "opencode", "cursor", "antigravity"]);
 export function botConnectorProviders(env = process.env) {
   const tried = String(env.TENTACLES_JACK_TOOLS_TRY ?? "").split(",").map(value => value.trim());
   return Object.freeze([...BOT_CONNECTOR_PROVIDERS, ...UNPROVEN_BOT_CONNECTOR_PROVIDERS.filter(id => tried.includes(id))]);
@@ -56,6 +56,14 @@ const sha256 = text => createHash("sha256").update(text).digest("hex");
 // OpenCode loads `<directory>/opencode.json` for the folder T3 passes per request,
 // also on the one server T3 shares across threads, and re-reads it on the next turn.
 export const OPENCODE_FILE = "opencode.json";
+// Antigravity discovers plugins under the workspace's `.agents/plugins/` (enabled
+// by default) and launches each plugin's `mcp_config.json` servers. T3 starts it
+// with cwd = the thread folder and hands over only its own `t3-code` server.
+export const ANTIGRAVITY_DIRS = Object.freeze([".agents", path.join(".agents", "plugins"), path.join(".agents", "plugins", "jack-tools")]);
+export const ANTIGRAVITY_PLUGIN = path.join(".agents", "plugins", "jack-tools", "plugin.json");
+export const ANTIGRAVITY_FILE = path.join(".agents", "plugins", "jack-tools", "mcp_config.json");
+// sha256 of the plugin.json and mcp_config.json Tentacles last wrote; any other files there refuse.
+export const ANTIGRAVITY_MARKER = ".jack-antigravity-mcp";
 
 const NAME = /^[A-Za-z0-9_-]{1,100}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -186,14 +194,24 @@ function realDirectory(directory) {
  * would refuse later. `.claude` and `.codex` must be real directories (or
  * absent) and the four files must not be directories. The Bot can plant either.
  */
-export function checkBotConnectorPaths(workspace, { opencode = false, cursor = false } = {}) {
+export function checkBotConnectorPaths(workspace, { opencode = false, cursor = false, antigravity = false } = {}) {
   const kind = file => { try { return lstatSync(file); } catch (error) { if (error.code === "ENOENT") return null; throw error; } };
-  for (const directory of [path.dirname(GUARD_FILE), CODEX_DIR, ...(cursor ? [CURSOR_DIR] : [])]) {
+  // Outer before inner, so no lstat ever runs through a planted link.
+  for (const directory of [path.dirname(GUARD_FILE), CODEX_DIR, ...(cursor ? [CURSOR_DIR] : []), ...(antigravity ? ANTIGRAVITY_DIRS : [])]) {
     const info = kind(path.join(workspace, directory));
     if (info && (!info.isDirectory() || info.isSymbolicLink())) throw new Error(R.realDirectory);
   }
-  for (const file of [MCP_FILE, CODEX_FILE, GUARD_FILE, GROK_TRUST_MARKER, ...(opencode ? [OPENCODE_FILE] : []), ...(cursor ? [CURSOR_FILE, CURSOR_MARKER] : [])]) {
+  for (const file of [MCP_FILE, CODEX_FILE, GUARD_FILE, GROK_TRUST_MARKER, ...(opencode ? [OPENCODE_FILE] : []), ...(cursor ? [CURSOR_FILE, CURSOR_MARKER] : []), ...(antigravity ? [ANTIGRAVITY_PLUGIN, ANTIGRAVITY_FILE, ANTIGRAVITY_MARKER] : [])]) {
     if (kind(path.join(workspace, file))?.isDirectory()) throw new Error(R.fileIsDirectory);
+  }
+  // Unproven Antigravity road: only an admitted Antigravity turn looks at its plugin files.
+  if (antigravity) {
+    const files = [ANTIGRAVITY_PLUGIN, ANTIGRAVITY_FILE].map(file => [file, kind(path.join(workspace, file))]);
+    if (files.some(([, info]) => info)) {
+      let mark = null;
+      try { if (kind(path.join(workspace, ANTIGRAVITY_MARKER))?.isFile()) mark = readFileSync(path.join(workspace, ANTIGRAVITY_MARKER), "utf8").trim(); } catch { /* none */ }
+      if (files.some(([, info]) => !info?.isFile()) || mark !== sha256(files.map(([file]) => readFileSync(path.join(workspace, file), "utf8")).join(""))) throw new Error(R.antigravityFileNotOurs);
+    }
   }
   // Unproven Cursor road: only an admitted Cursor turn looks at Cursor's files.
   if (!cursor) return;
@@ -420,7 +438,7 @@ function listedServers(workspace) {
  * `codexTrust` is a planCodexTrust plan made before the restart; it wins over `codexHome`.
  * The caller restarts a live session first (connectorsNeedRestart), then writes.
  */
-export function writeBotConnectors(workspace, prepared, servers, { codexHome, codexTrust, opencode = false, cursor = false } = {}) {
+export function writeBotConnectors(workspace, prepared, servers, { codexHome, codexTrust, opencode = false, cursor = false, antigravity = false } = {}) {
   if (servers === undefined) return false;
   if (prepared !== true) {
     if (servers.length) throw new Error(R.notBotWorkspace);
@@ -438,6 +456,17 @@ export function writeBotConnectors(workspace, prepared, servers, { codexHome, co
     realDirectory(path.join(workspace, CURSOR_DIR));
     writePrivate(path.join(workspace, CURSOR_FILE), text);
     writePrivate(path.join(workspace, CURSOR_MARKER), `${sha256(text)}\n`);
+  }
+  // Unproven: only an admitted Antigravity turn writes the plugin (other labs may scan `.agents/`).
+  if (antigravity) {
+    const plugin = `${JSON.stringify({ name: "jack-tools", description: "Agent Jack tools for this Bot, rewritten by Tentacles before every turn" }, null, 2)}\n`;
+    const config = `${JSON.stringify({ mcpServers: Object.fromEntries(servers.map(server => [server.name, {
+      url: server.url, ...(server.headers.length ? { headers: Object.fromEntries(server.headers.map(header => [header.name, header.value])) } : {}),
+    }])) }, null, 2)}\n`;
+    for (const directory of ANTIGRAVITY_DIRS) realDirectory(path.join(workspace, directory));
+    writePrivate(path.join(workspace, ANTIGRAVITY_PLUGIN), plugin);
+    writePrivate(path.join(workspace, ANTIGRAVITY_FILE), config);
+    writePrivate(path.join(workspace, ANTIGRAVITY_MARKER), `${sha256(plugin + config)}\n`);
   }
   realDirectory(path.join(workspace, CODEX_DIR));
   writePrivate(path.join(workspace, CODEX_FILE), `# Written by Tentacles before every Jack Bot turn.\n${codexToml(servers)}`);
