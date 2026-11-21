@@ -330,15 +330,22 @@ export class LoopbackRuntimeAdapter {
     const written = writeBotConnectors(workspace, prepared, servers, { codexTrust });
     const marker = path.join(workspace, GROK_TRUST_MARKER);
     // The marker records the table Tentacles itself added, so only that one is ever removed.
-    if (instanceId === "grok" && codexTrust && servers?.length) writePrivate(marker, `${codexTrust.decidedAt}\n`);
+    // It also names the Grok home written to, so a later GROK_HOME change cannot strand the table.
+    if (instanceId === "grok" && codexTrust && servers?.length) writePrivate(marker, `${codexTrust.decidedAt}\n${path.dirname(codexTrust.file)}\n`);
     // B3 P3-5 on #110: a Grok Bot turn without tools drops that table again. With no
     // marker nothing outside the workspace is read. Best effort: never fails the turn.
     if (instanceId === "grok" && prepared === true && !servers?.length) {
-      let decidedAt = null;
-      try { if (fs.lstatSync(marker).isFile()) decidedAt = /^(\d{1,15})\n?$/.exec(fs.readFileSync(marker, "utf8"))?.[1] ?? null; } catch { /* no marker */ }
-      if (decidedAt) {
-        try { commitCodexTrust(planGrokUntrust(await grokHomeFor(this.client), workspace, decidedAt)); } catch { /* left as it is */ }
-        fs.rmSync(marker, { force: true });
+      let found = null;
+      try { if (fs.lstatSync(marker).isFile()) found = /^(\d{1,15})\n?(?:(\/[^\n]+)\n)?$/.exec(fs.readFileSync(marker, "utf8")); } catch { /* no marker */ }
+      if (found) {
+        const [, decidedAt, recorded] = found;
+        // B3 P3-2 on #110: the marker goes only once the table is gone or no longer
+        // Tentacles' own (plan null); on any throw it stays so the next turn tries again.
+        try {
+          const grokHome = recorded && path.isAbsolute(recorded) ? recorded : await grokHomeFor(this.client);
+          commitCodexTrust(planGrokUntrust(grokHome, workspace, decidedAt));
+          fs.rmSync(marker, { force: true });
+        } catch { /* kept for the next turn */ }
       }
     }
     return written;

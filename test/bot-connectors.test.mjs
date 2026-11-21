@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -541,6 +542,58 @@ test("B3 P3-2/P3-5 on #110: an untrusted or git-repo Grok workspace refuses befo
   assert.equal(fs.readFileSync(trustFile, "utf8"), owner);
 });
 
+test("B3 P3-2 on #110: the marker outlives a failed removal, and the removal uses the Grok home it recorded", async (t) => {
+  tryGrok(t);
+  const run = async (breakIt, restore) => {
+    const { home, workspace, adapter } = setup();
+    const grokHome = path.join(home, "grok-home");
+    const settings = await adapter.client.getSettings();
+    settings.providerInstances.grok = { environment: [{ name: "GROK_HOME", value: grokHome }] };
+    await adapter.originate({ workspace, message: "hi", ...grok, ...connectors([learn]) });
+    const trustFile = path.join(grokHome, "trusted_folders.toml");
+    const marker = path.join(workspace, GROK_TRUST_MARKER);
+    assert.match(fs.readFileSync(marker, "utf8"), new RegExp(`^\\d+\\n${grokHome}\\n$`));
+    const ctx = { settings, grokHome, trustFile, home };
+    await breakIt(ctx);
+    await adapter.continue({ threadId: "t1", message: "plain", ...grok });
+    return { ...ctx, marker, workspace, adapter };
+  };
+  const header = workspace => `[folders.${JSON.stringify(workspace)}]`;
+  // The two settings cases the reviewer ran: the recorded home is used, so the removal commits.
+  for (const value of ["relative/g", "/elsewhere/grok"]) {
+    const r = await run(({ settings }) => { settings.providerInstances.grok.environment[0].value = value; });
+    assert.doesNotMatch(fs.readFileSync(r.trustFile, "utf8"), /folders/, value);
+    assert.equal(fs.existsSync(r.marker), false, value);
+  }
+  // A file form Tentacles does not edit: nothing changes, the marker stays, and the next turn succeeds.
+  const form = await run(({ trustFile }) => { fs.appendFileSync(trustFile, "version = 2\n"); });
+  assert.match(fs.readFileSync(form.trustFile, "utf8"), /version = 2/);
+  assert.ok(fs.readFileSync(form.trustFile, "utf8").includes(header(form.workspace)));
+  assert.equal(fs.existsSync(form.marker), true);
+  fs.writeFileSync(form.trustFile, fs.readFileSync(form.trustFile, "utf8").replace("version = 2\n", ""));
+  await form.adapter.continue({ threadId: "t1", message: "plain", ...grok });
+  assert.equal(fs.readFileSync(form.trustFile, "utf8").includes(header(form.workspace)), false);
+  assert.equal(fs.existsSync(form.marker), false);
+  // A concurrent Grok edit between the read and the compare: refused, the marker stays.
+  const openSync = fs.openSync;
+  let grokEdit = true;
+  const race = await run(({ trustFile }) => {
+    fs.openSync = (file, ...rest) => {
+      if (grokEdit && String(file).startsWith(`${trustFile}.`)) { grokEdit = false; fs.appendFileSync(trustFile, '[folders."/grok-just-now"]\ntrusted = true\ndecided_at = 3\n'); }
+      return openSync(file, ...rest);
+    };
+    syncBuiltinESMExports();
+  });
+  fs.openSync = openSync;
+  syncBuiltinESMExports();
+  assert.equal(grokEdit, false, "the edit ran inside the commit");
+  assert.ok(fs.readFileSync(race.trustFile, "utf8").includes(header(race.workspace)));
+  assert.equal(fs.existsSync(race.marker), true);
+  await race.adapter.continue({ threadId: "t1", message: "plain", ...grok });
+  assert.equal(fs.readFileSync(race.trustFile, "utf8"), '[folders."/grok-just-now"]\ntrusted = true\ndecided_at = 3\n');
+  assert.equal(fs.existsSync(race.marker), false);
+});
+
 test("delta P2-1 on #110: switched off and with no marker, a Grok turn reads nothing outside the Bot workspace", async (t) => {
   const before = process.env.TENTACLES_JACK_TOOLS_TRY;
   delete process.env.TENTACLES_JACK_TOOLS_TRY;
@@ -590,6 +643,11 @@ test("delta P2-2 on #110: the untrust removes only the header plus exactly its t
   fs.writeFileSync(file, `${above}[folders."/w"]\ntrusted = true\ndecided_at = 6\n`);
   assert.equal(planGrokUntrust(home, "/w", "5"), null); // not the decided_at Tentacles wrote
   assert.equal(planGrokUntrust(path.join(home, "missing"), "/w", "5"), null);
+  // B3 P3-1 on #110: a duplicate key after the pair, or a second header, leaves the file untouched.
+  for (const extra of ["trusted = true\n", "decided_at = 5\n", '[folders."/w"]\ntrusted = true\ndecided_at = 5\n']) {
+    fs.writeFileSync(file, `${above}[folders."/w"]\ntrusted = true\ndecided_at = 5\n${extra}`);
+    assert.equal(planGrokUntrust(home, "/w", "5"), null, extra);
+  }
 });
 
 test("B3 P3-1/P3-3 on #110: the Grok home is T3's last GROK_HOME, absolute only, and a bad one refuses with a fixed text", async () => {
