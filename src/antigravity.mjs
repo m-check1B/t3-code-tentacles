@@ -131,21 +131,15 @@ export function antigravityAction(code) {
 // parsed parts; nothing else from the reply reaches the doctor output.
 const RESET_PREFIX = String.raw`\bresets? (at|in|on|after) `;
 const END = String.raw`(?=$|[\s.,;!)])`;
-const RESET_ISO = new RegExp(`${RESET_PREFIX}(\\d{4})-(\\d{2})-(\\d{2})[T ](\\d{2}):(\\d{2})(?::(\\d{2}))?(?: ?(Z|UTC|GMT|[+-]\\d{2}:?\\d{2}))?${END}`, "i");
+const RESET_ISO = new RegExp(`${RESET_PREFIX}(\\d{4})-(\\d{2})-(\\d{2})[T ](\\d{2}):(\\d{2})(?::(\\d{2}))?(?:(?: (?!Z))?(Z|UTC|GMT|[+-]\\d{2}:?\\d{2}))?${END}`, "i");
 const RESET_CLOCK = new RegExp(`${RESET_PREFIX}(\\d{1,2}):(\\d{2})(?::(\\d{2}))?(?: ?(AM|PM))?(?: (UTC|GMT|[+-]\\d{2}:?\\d{2}))?${END}`, "i");
 const RESET_IN = new RegExp(`${RESET_PREFIX}(\\d{1,4}) (second|minute|hour|day)(s?)${END}`, "i");
 const two = value => String(Number(value)).padStart(2, "0");
 // B3 P3-4 on #114: an offset is at most ±14:59. After the time and its recognised zone,
-// only the end, sentence punctuation then a space or the end, or one of five plain words
-// may follow; anything else (an unknown or second zone, in any spelling) gives no reset
-// time (B3 P3-1/P3-2 on #117).
+// only the end, sentence punctuation then a space or the end, or "today"/"tomorrow" then
+// the end or that punctuation may follow; anything else gives no reset time (B3 P3-2 on #117).
 const zoneOk = zone => !zone || !/^[+-]/.test(zone) || (+zone.slice(1, 3) <= 14 && +zone.slice(-2) <= 59);
-const AFTER_TIME = new Set(["today", "tomorrow", "and", "on", "in"]);
-const followOk = (text, match) => {
-  const rest = text.slice(match.index + match[0].length);
-  const word = /^\s+(\p{L}+)(?![\p{L}\p{M}\p{N}])/u.exec(rest);
-  return !rest || /^[.,;:!?)](?:\s|$)/u.test(rest) || (word !== null && AFTER_TIME.has(word[1].toLowerCase()));
-};
+const followOk = (text, match) => /^(?:\s+(?:today|tomorrow))?(?:[.,;:!?)](?:\s|$)|$)/iu.test(text.slice(match.index + match[0].length));
 export function antigravityResetTime(reply) {
   if (typeof reply !== "string") return null;
   const text = reply.slice(0, 4096);

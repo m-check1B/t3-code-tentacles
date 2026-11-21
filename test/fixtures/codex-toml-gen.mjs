@@ -14,6 +14,7 @@ const PIECES = [
   '""',
   "''",
   '"""\\\n  [x]"""',
+  "'''a # b\n[x] # c\n'''",
 ];
 const CLASHES = [
   { text: '[mcp_servers.jack]\ncommand = "x"\n', topLevel: false },

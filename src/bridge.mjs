@@ -53,7 +53,7 @@ import { boundDoctorInventories } from "./inventory-budget.mjs";
 import { pluginInventoryBlock } from "./plugin-inventory.mjs";
 import { LAB_NAMES, labName } from "./lab-names.mjs";
 import { inspectInstanceWebTools } from "./web-tools.mjs";
-import { codexHomeFromSettings, codexServerNames } from "./bot-connectors.mjs";
+import { codexHomeFromSettings, codexServerNames, readSmallRegularFile } from "./bot-connectors.mjs";
 import { ANTIGRAVITY_INSTANCE_ID, antigravityAction, antigravityModelAlias, applyAntigravityState } from "./antigravity.mjs";
 import { enforceManagedPolicy, isDriverAllowed, managedPolicyReport, policySummary } from "./managed-policy.mjs";
 
@@ -1369,18 +1369,8 @@ function providerSignedIn(configProvider) {
 // homes; Jack's tools now come per Bot, so it duplicates them, and it fails when its
 // variable is unset. Names only are read, from a regular file of at most 1 MiB.
 export const STALE_JACK_SERVER = "agent-jack";
-// B3 P3-6/P3-3 on #116: the text of a regular file (or a link to one) of at most `cap`
-// bytes, else null. A FIFO does not block, and only the fstat size is ever read, so a
-// device such as /dev/zero (size 0) cannot be read without end.
-export function readSmallRegularFile(file, cap) {
-  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
-  try {
-    const info = fs.fstatSync(fd);
-    if (!info.isFile() || info.size > cap) return null;
-    const buffer = Buffer.alloc(info.size);
-    return buffer.toString("utf8", 0, fs.readSync(fd, buffer, 0, info.size, 0));
-  } finally { fs.closeSync(fd); }
-}
+// B3 P3-6/P3-3 on #116: the bounded read lives with the turn path's (B3 on #117).
+export { readSmallRegularFile };
 
 function staleCodexJackServer(settings, instanceId, instance) {
   if (instanceId !== "codex" && instance?.driver !== "codex") return false;

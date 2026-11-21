@@ -20,6 +20,7 @@ export const BOT_CONNECTOR_REFUSALS = Object.freeze({
   grokChanged: "Grok trusted_folders.toml changed while trusting this Bot workspace; try again",
   grokTrustForm: "Grok trusted_folders.toml holds a form Tentacles does not edit; trust this Bot workspace in Grok first",
   codexServerClash: "The Codex config in the Codex home T3 uses already has a server named like one of this Bot's Jack tools (for example jack), and Codex would merge the two; rename or remove that server there, then send again",
+  codexLaunchArgs: "T3's Codex launch arguments carry a config override that may add or change a server named like one of this Bot's Jack tools; take the server override out of T3's Codex launch arguments, or define that server under another name, then send again",
   codexServersForm: "The Codex config in the Codex home T3 uses keeps servers in a form Tentacles does not read; write each server as its own [mcp_servers.<name>] table, then send again",
   cursorGitRepo: "This Bot workspace is inside a git repository, where Cursor reads the repository's own .cursor/mcp.json; run this Bot on Server to use Jack tools",
   antigravityGitRepo: "This Bot workspace is inside a git repository, where Antigravity reads the repository's own .agents plugins; run this Bot on Server to use Jack tools",

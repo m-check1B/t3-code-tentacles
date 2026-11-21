@@ -11,7 +11,7 @@
  * workspace is trusted there once. T3 keeps a lab process alive across turns,
  * so the caller stops an idle live session before the files change.
  */
-import { closeSync, constants, existsSync, fchmodSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, constants, existsSync, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash, randomBytes } from "node:crypto";
@@ -363,9 +363,68 @@ function codexLineStarts(text) {
   return state === null || state === "#" ? (depth === 0 ? starts : null) : null;
 }
 
+// B3 P2-1 on #117: T3 starts Codex as `codex app-server -c … <launch arguments>`, and a
+// `-c` there is a config layer above the Bot's project file. Split as T3's own
+// tokenizeCliArgs does; null when a quote is left open (cannot be split safely).
+function codexLaunchTokens(text) {
+  const tokens = [];
+  let current = "", quote = null, quoted = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (quote) {
+      if (c === quote) quote = null;
+      else if (c === "\\" && quote === '"' && ['"', "\\", "$", "`"].includes(text[i + 1])) current += text[++i];
+      else current += c;
+    } else if (c === "'" || c === '"') { quote = c; quoted = true; }
+    else if (/[ \t\n\r\f\v]/.test(c)) { if (current || quoted) tokens.push(current); current = ""; quoted = false; }
+    else if (c === "\\" && /[\s'"]/.test(text[i + 1] ?? "")) current += text[++i];
+    else current += c;
+  }
+  if (quote) return null;
+  if (current || quoted) tokens.push(current);
+  return tokens;
+}
+
+/**
+ * Refuses a Codex Bot turn whose T3 Codex launch arguments (the setting, or a
+ * T3CODE_CODEX_LAUNCH_ARGS entry in the instance environment) carry a config override
+ * that is not a plain bare dotted key outside `mcp_servers`. Names no value.
+ */
+export function checkCodexLaunchArgs(settings) {
+  const instance = settings?.providerInstances?.codex;
+  const entries = (Array.isArray(instance?.environment) ? instance.environment : []).filter(entry => entry?.name === "T3CODE_CODEX_LAUNCH_ARGS");
+  for (const text of [instance?.config?.launchArgs ?? settings?.providers?.codex?.launchArgs, ...entries.map(entry => entry.valueRedacted === true || entry.sensitive === true ? null : entry.value)]) {
+    if (text === undefined || text === "") continue;
+    const tokens = typeof text === "string" ? codexLaunchTokens(text) : null;
+    if (!tokens) throw new Error(R.codexLaunchArgs);
+    tokens.forEach((token, i) => {
+      const value = token === "-c" || token === "--config" ? tokens[i + 1] ?? ""
+        : token.startsWith("--config=") ? token.slice("--config=".length)
+          : /^-c./.test(token) ? token.slice(2).replace(/^=/, "") : null;
+      if (value === null) return;
+      const key = value.split("=")[0];
+      if (!/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(key) || key.split(".")[0] === "mcp_servers") throw new Error(R.codexLaunchArgs);
+    });
+  }
+}
+
+// The text of a regular file (or a link to one) of at most `cap` bytes, else null. A FIFO
+// does not block, and only the fstat size is read, so /dev/zero cannot be read without end.
+export function readSmallRegularFile(file, cap) {
+  const fd = openSync(file, constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    const info = fstatSync(fd);
+    if (!info.isFile() || info.size > cap) return null;
+    const buffer = Buffer.alloc(info.size);
+    return buffer.toString("utf8", 0, readSync(fd, buffer, 0, info.size, 0));
+  } finally { closeSync(fd); }
+}
+
 export function checkCodexServerNames(codexHome, names) {
   let text = "";
-  try { text = readFileSync(path.join(codexHome, "config.toml"), "utf8"); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  // The same bounded, regular-file-only read the doctor uses; anything else cannot be checked.
+  try { text = readSmallRegularFile(path.join(codexHome, "config.toml"), 1024 * 1024); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  if (text === null) throw new Error(R.codexServersForm);
   const owner = codexServerNames(text);
   if (names.some(name => owner.names.has(name))) throw new Error(R.codexServerClash);
   if (owner.inline || owner.form) throw new Error(R.codexServersForm);

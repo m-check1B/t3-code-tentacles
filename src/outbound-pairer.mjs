@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { ensureLocalTalkWorkspace } from "./local-talk-workspace.mjs";
 import { BOT_CONNECTOR_REFUSALS } from "./bot-connector-refusals.mjs";
-import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, botConnectorProviders, checkBotConnectorPaths, checkCodexServerNames, codexHomeFor, commitCodexTrust, connectorsNeedRestart, GROK_TRUST_MARKER, grokHomeFor, planGrokTrust, planGrokUntrust, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors, writePrivate } from "./bot-connectors.mjs";
+import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, botConnectorProviders, checkBotConnectorPaths, checkCodexLaunchArgs, checkCodexServerNames, codexHomeFromSettings, commitCodexTrust, connectorsNeedRestart, GROK_TRUST_MARKER, grokHomeFor, planGrokTrust, planGrokUntrust, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors, writePrivate } from "./bot-connectors.mjs";
 import { privateModeOk } from "./platform.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { refusalOf } from "./refusal-codes.mjs";
@@ -341,7 +341,10 @@ export class LoopbackRuntimeAdapter {
     // The lab's own folder-trust table (Codex or Grok), planned before the stop.
     const codexTrust = !servers?.length ? undefined
       : instanceId === "codex" ? await (async () => {
-        const codexHome = await codexHomeFor(this.client);
+        let settings;
+        try { settings = await this.client.getSettings(); } catch { /* unreadable: T3's default home, no launch arguments seen */ }
+        checkCodexLaunchArgs(settings);
+        const codexHome = codexHomeFromSettings(settings);
         checkCodexServerNames(codexHome, servers.map(server => server.name));
         return planCodexTrust(codexHome, workspace);
       })()

@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
-import { BOT_CONNECTOR_CAPABILITIES, GROK_TRUST_MARKER, PUBLIC_MCP_URL, codexHomeFor, codexServerNames, commitCodexTrust, grokHomeFor, planGrokTrust, planGrokUntrust, trustCodexWorkspace } from "../src/bot-connectors.mjs";
+import { BOT_CONNECTOR_CAPABILITIES, GROK_TRUST_MARKER, PUBLIC_MCP_URL, checkCodexLaunchArgs, codexHomeFor, codexServerNames, commitCodexTrust, grokHomeFor, planGrokTrust, planGrokUntrust, trustCodexWorkspace } from "../src/bot-connectors.mjs";
 import { continueThread, doctor, formatDoctor, readSmallRegularFile } from "../src/bridge.mjs";
 import { freshCapability } from "./helpers/fresh-context-wire.mjs";
 import { ensureLocalTalkWorkspace } from "../src/local-talk-workspace.mjs";
@@ -55,7 +55,7 @@ function setup({ jackOrigin = ORIGIN, running = () => false } = {}) {
   const read = file => JSON.parse(fs.readFileSync(path.join(workspace, file), "utf8"));
   // T3's Codex homePath, as the owner's Settings would hold it.
   settings.providerInstances = { codex: { config: { homePath: path.join(home, ".codex") } } };
-  return { home, workspace, sent, stops, adapter, read, at };
+  return { home, workspace, sent, stops, adapter, read, at, settings };
 }
 
 test("a Bot's connectors are written into its own workspace and never reach T3", async () => {
@@ -1041,6 +1041,9 @@ const CODEX_ROWS = [
   ['[mcp_servers]\n[other]\njack = 1\n', "none"],
   ['notes = """\n[mcp_servers.jack]\n"""\n', "none"],
   ["notes = '''\n[mcp_servers.jack]\n'''\n", "none"],
+  // B3 P3-1 on #117 (2nd review): a # inside a ''' string is text, not a comment
+  ["notes = '''#\n'''\n[mcp_servers.other]\ncommand = \"x\"\n", "none"],
+  ["notes = '''#\n'''\nmcp_servers.jack.command = \"x\"\n", "jack"],
   ['a = "x\\"\\"\\"" # """\n[mcp_servers.other]\ncommand = "x"\n', "none"],
 ];
 
@@ -1065,6 +1068,90 @@ test("B3 P2-1/P2-2 on #117: on 200 seeded files of strings, quote runs, comments
     assert.equal(inline, false, `file ${n}`);
     assert.equal(names.has("jack"), clash, `file ${n}: ${JSON.stringify(text.slice(0, 200))}`);
   }
+});
+
+// B3 P2-1 on #117 (2nd review): how codex-cli 0.169.0 reads a -c override, each checked with a
+// throwaway HOME, CODEX_HOME and XDG_CONFIG_HOME and `codex <args> mcp get jack --json` (no turn):
+// "jack" = Codex loaded a server jack, "none" = it did not, "error" = Codex refused to start.
+const LAUNCH_ARG_ROWS = [
+  ['-c mcp_servers.jack.command="x"', "jack"],
+  ["-c 'mcp_servers={jack={command=\"x\"}}'", "jack"],
+  ["-c 'mcp_servers.jack={command=\"x\"}'", "jack"],
+  ["-c ' mcp_servers.jack.command=\"x\"'", "jack"],
+  ["-c 'mcp_servers.jack.command =\"x\"'", "jack"],
+  ["-c 'mcp_servers.jack.command= \"x\"'", "jack"],
+  ["-c mcp_servers.jack.command=x", "jack"],
+  ["--config mcp_servers.jack.command=x", "jack"],
+  ["--config=mcp_servers.jack.command=x", "jack"],
+  ["-cmcp_servers.jack.command=x", "jack"],
+  ["-c=mcp_servers.jack.command=x", "jack"],
+  ["-c 'mcp_servers.jack.command=\"x\" '", "jack"],
+  ['-c mcp_servers.jack.command="x"=y', "jack"],
+  ["-c mcp_servers.jack.command=x -c mcp_servers.jack.enabled=false", "jack"],
+  ["-c '\"mcp_servers\".jack.command=\"x\"'", "none"],
+  ["-c \"'mcp_servers'.jack.command=x\"", "none"],
+  ["-c 'mcp_servers.\"jack\".command=\"x\"'", "none"],
+  ["-c \"mcp_servers.'jack'.command=x\"", "none"],
+  ["-c 'mcp_servers .jack.command=x'", "none"],
+  ["-c 'mcp_servers. jack.command=x'", "none"],
+  ["-c '\"mcp\\u005fservers\".jack.command=x'", "none"],
+  ["-c 'mcp_servers.\"ja\\u0063k\".command=x'", "none"],
+  ["-c .mcp_servers.jack.command=x", "none"],
+  ["-c mcp_servers.jack", "error"],
+  ["-c mcp_servers..jack.command=x", "error"],
+  // Harmless: a plain bare dotted key outside mcp_servers.
+  ['-c model="o3"', "none", false],
+  ["-c thread_unload_delay_secs=0", "none", false], // T3 passes this one itself
+  ["-c profiles.p.mcp_servers.jack.command=x", "none", false],
+  ["-c MCP_SERVERS.jack.command=x", "none", false],
+  ["-c mcp-servers.jack.command=x", "none", false],
+];
+
+test("B3 P2-1 on #117: a Codex launch argument override that is not a plain key outside mcp_servers refuses; every row Codex loads jack from refuses", () => {
+  const refusal = "T3's Codex launch arguments carry a config override that may add or change a server named like one of this Bot's Jack tools; take the server override out of T3's Codex launch arguments, or define that server under another name, then send again";
+  const at = launchArgs => ({ providerInstances: { codex: { config: { launchArgs } } } });
+  for (const [args, codexSaw, refuses = true] of LAUNCH_ARG_ROWS) {
+    assert.ok(refuses || codexSaw !== "jack", args);
+    if (refuses) assert.throws(() => checkCodexLaunchArgs(at(args)), { message: refusal }, args);
+    else assert.doesNotThrow(() => checkCodexLaunchArgs(at(args)), args);
+  }
+  // A quote left open cannot be split safely; a value that is not text cannot be read.
+  for (const args of ["-c 'model=o3", '-c "model=o3', "-c model=o3 '", 42]) assert.throws(() => checkCodexLaunchArgs(at(args)), { message: refusal }, String(args));
+  // The legacy setting, and the instance environment entry T3 lets win; a hidden value refuses.
+  assert.throws(() => checkCodexLaunchArgs({ providers: { codex: { launchArgs: "-c mcp_servers.jack.url=x" } } }), { message: refusal });
+  const env = entry => ({ providerInstances: { codex: { config: { launchArgs: '-c model="o3"' }, environment: [{ name: "OTHER", value: "-c mcp_servers.x=1" }, entry] } } });
+  assert.throws(() => checkCodexLaunchArgs(env({ name: "T3CODE_CODEX_LAUNCH_ARGS", value: "-c mcp_servers.jack.url=x" })), { message: refusal });
+  for (const hidden of [{ valueRedacted: true }, { sensitive: true, value: "x" }]) assert.throws(() => checkCodexLaunchArgs(env({ name: "T3CODE_CODEX_LAUNCH_ARGS", ...hidden })), { message: refusal });
+  assert.doesNotThrow(() => checkCodexLaunchArgs(env({ name: "T3CODE_CODEX_LAUNCH_ARGS", value: "-c model=o3" })));
+  for (const nothing of [undefined, {}, at(""), at(undefined)]) assert.doesNotThrow(() => checkCodexLaunchArgs(nothing));
+});
+
+test("B3 P2-1 on #117: a launch argument server override refuses before the stop and any write; with no list or on another lab it is never read", async () => {
+  const { home, workspace, sent, stops, adapter, settings } = setup();
+  const codexHome = path.join(home, ".codex");
+  fs.mkdirSync(codexHome, { mode: 0o700 });
+  const file = path.join(codexHome, "config.toml");
+  const owner = '[mcp_servers.mine]\ncommand = "x"\n';
+  fs.writeFileSync(file, owner, { mode: 0o640 });
+  const config = settings.providerInstances.codex.config;
+  for (const [args, environment] of [['-c mcp_servers.jack.command="x"', undefined], ["", [{ name: "T3CODE_CODEX_LAUNCH_ARGS", value: "--config=mcp_servers.linear.url=x" }]], ["", [{ name: "T3CODE_CODEX_LAUNCH_ARGS", valueRedacted: true }]]]) {
+    config.launchArgs = args;
+    settings.providerInstances.codex.environment = environment;
+    await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack, linear]) }), /launch arguments/, args);
+    await assert.rejects(async () => adapter.continue({ threadId: "t1", message: "hi", ...codex, ...connectors([jack]) }), /launch arguments/, args);
+    assert.deepEqual([sent, stops], [[], []]);
+    assert.equal(fs.readFileSync(file, "utf8"), owner);
+    assert.equal(fs.existsSync(path.join(workspace, ".codex", "config.toml")), false);
+  }
+  delete settings.providerInstances.codex.environment;
+  let reads = 0;
+  Object.defineProperty(config, "launchArgs", { configurable: true, get() { reads += 1; return '-c mcp_servers.jack.command="x"'; } });
+  await adapter.originate({ workspace, message: "hi", ...codex, ...connectors([]) });
+  await adapter.continue({ threadId: "t1", message: "hi", ...claude, ...connectors([jack]) });
+  assert.equal(reads, 0);
+  Object.defineProperty(config, "launchArgs", { configurable: true, writable: true, value: "-c model=o3 --enable x" });
+  await adapter.continue({ threadId: "t1", message: "hi", ...codex, ...connectors([jack]) });
+  assert.match(fs.readFileSync(path.join(workspace, ".codex", "config.toml"), "utf8"), /^\[mcp_servers\.jack\]$/m);
 });
 
 test("KRA-10891: doctor names a stale agent-jack server in the Codex home T3 uses, with one fix", async (t) => {
