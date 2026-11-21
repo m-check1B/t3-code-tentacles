@@ -12,6 +12,7 @@
 import { closeSync, constants, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, unlinkSync, writeSync } from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { BOT_CONNECTOR_REFUSALS } from './bot-connector-refusals.mjs';
 
 export const GUARD_FILE = path.join('.claude', 'settings.local.json');
 const HEX32 = /^[a-f0-9]{32}$/;
@@ -63,6 +64,8 @@ export function guardTalkWorkspace(workspace, platform = process.platform) {
   const file = path.join(workspace, GUARD_FILE);
   const existing = readExisting(file);
   const text = `${JSON.stringify({ ...existing, claudeMdExcludes: instructionExcludes(workspace, platform), autoMemoryEnabled: false }, null, 2)}\n`;
+  // A planted directory would make the rename fail with a raw error naming the path (B3 P3-3 on #105).
+  try { if (lstatSync(file).isDirectory()) throw new Error(BOT_CONNECTOR_REFUSALS.guardFileIsDirectory); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   try {
     if (!lstatSync(file).isSymbolicLink() && readFileSync(file, 'utf8') === text) return file;
   } catch { /* missing: write below */ }
@@ -79,7 +82,7 @@ export function guardTalkWorkspace(workspace, platform = process.platform) {
   }
   closeSync(fd);
   // rename replaces a planted symlink itself, never its target.
-  renameSync(temporary, file);
+  try { renameSync(temporary, file); } catch (error) { unlinkSync(temporary); throw error; }
   return file;
 }
 
