@@ -10,6 +10,10 @@ All notable changes to this project are documented here.
 - KRA-10862: T3 keeps a lab process alive across a thread's turns, and that process loaded its tools and turn token once. When a turn carries a list (or clears one), an idle live session is stopped before any file is rewritten, so the turn starts a fresh process that resumes the conversation with the current list. A Talk that is still answering is refused at once, is never cut, and keeps its files, so the retry still restarts it. The files keep the last list (with its dead token) until the next turn rewrites them. The Codex trust table replaces the owner's config.toml atomically (through a dotfiles symlink to its target, keeping the owner's mode); an existing entry for the folder, as a table or dotted keys, is left alone, and other inline or dotted `projects` refuse.
 - KRA-10862: `doctor-status` advertises `jackMcpConfig: "v1"`, `jackMcpProviders: ["claudeAgent", "codex"]`, `jackMcpHeaders: false`, `jackMcpPublicUrls: [Microsoft Learn]`, `jackMcpProxy: "v1"` and `jackMcpSelf: "v1"`, only when Local Talk is supported. Antigravity, Cursor, Grok, OpenCode and the ACP labs are not listed: T3 starts them without a per-folder MCP file Tentacles can write. `ensureLocalTalkWorkspace` accepts `seats/<owner digest>/agents/<bot id>`, the path Jack uses for a Bot with tools.
 
+### Fixed
+
+- KRA-10863: `doctor` names the fix when T3's managed Antigravity runtime needs a repair, instead of a bare `provider_error` or a wrong "install". T3 Code (Beta) 0.1.11 reports two repairable states: the installed runtime predates the Antigravity CLI, and the managed runtime changed on disk (which T3 reports as not installed). Each is matched whole and never echoed, like the health-check timeout. They become `runtime_update_required` and `runtime_changed`, with one action that says to update or reinstall in T3's Antigravity setup and gives the existing setup link. Anything else stays `provider_error`. After the repair, a signed-out Antigravity still reads `not_signed_in`. Tentacles does not start T3's installer itself.
+
 ## [0.5.0-jack.19] - 2026-11-20
 
 ### Fixed
