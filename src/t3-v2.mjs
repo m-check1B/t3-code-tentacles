@@ -381,6 +381,37 @@ export function archivedShellToV1(shell) {
   return { ...shell, threads };
 }
 
+// KRA-10862 (C4): official T3 v2 keeps tool calls as turn items, not v1 activities,
+// so a Bot's Jack tool call never reached Talk. A finished MCP tool or web search
+// becomes one `tool.completed` activity whose summary names the tool only;
+// the tool's input and output never leave this machine.
+const TOOL_LABEL = /^[\p{L}\p{N} ._:/@()-]{1,80}$/u;
+const toolLabel = (value) => typeof value === "string" && TOOL_LABEL.test(value.trim()) ? value.trim() : null;
+
+export function toolActivities(projection) {
+  const activities = [];
+  for (const item of projection.turnItems ?? []) {
+    if (!isRecord(item) || !["completed", "failed"].includes(item.status) || typeof item.id !== "string" || item.id.length > 150) continue;
+    const at = [item.completedAt, item.updatedAt].find((value) => typeof value === "string" && Number.isFinite(Date.parse(value)));
+    if (!at) continue;
+    let summary = null;
+    if (item.type === "dynamic_tool") {
+      const qualified = typeof item.toolName === "string" ? /^mcp__(.+?)__(.+)$/i.exec(item.toolName) : null;
+      const sourceKey = isRecord(item.toolSource) && typeof item.toolSource.key === "string" ? item.toolSource.key : "";
+      if (!qualified && !sourceKey.startsWith("mcp:")) continue; // built-in lab tools stay out of Talk
+      const server = toolLabel(isRecord(item.toolSource) ? item.toolSource.name : null) ?? toolLabel(qualified?.[1]) ?? toolLabel(sourceKey.slice(4));
+      const tool = toolLabel(qualified?.[2]) ?? toolLabel(item.toolName) ?? toolLabel(item.title);
+      if (!tool) continue;
+      summary = `${item.status === "failed" ? "Tool failed" : "Used tool"}: ${tool}${server ? ` (${server})` : ""}`;
+    } else if (item.type === "web_search") {
+      summary = item.status === "failed" ? "Web search failed" : "Searched the web";
+    } else continue;
+    activities.push({ id: `item:${item.id}`, kind: "tool.completed", summary,
+      createdAt: at, turnId: item.runId ?? null });
+  }
+  return activities;
+}
+
 /** V2 thread detail ({ snapshotSequence, projection }) -> V1 detail ({ thread }). */
 export function threadDetailToV1(detail, threadId) {
   const projection = detail?.projection;
@@ -420,7 +451,7 @@ export function threadDetailToV1(detail, threadId) {
       orchestrationProtocol: V2_PROTOCOL,
       lifecycleWorkPending: hasPendingWork(projection, runs),
       messages,
-      activities: [],
+      activities: toolActivities(projection),
       latestTurn: latest ? { turnId: latest.id, state: latest.status, requestedAt: latest.requestedAt, completedAt: latest.completedAt ?? null } : null,
     },
   };
