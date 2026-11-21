@@ -199,14 +199,44 @@ function codexToml(servers) {
 
 /** The Codex home T3's `codex` instance shares: its homePath setting, else ~/.codex. */
 export async function codexHomeFor(client, { home = os.homedir() } = {}) {
-  let configured = "";
-  try {
-    const settings = await client.getSettings();
-    configured = settings?.providerInstances?.codex?.config?.homePath ?? settings?.providers?.codex?.homePath ?? "";
-  } catch { /* unreadable settings: T3's own default below */ }
+  let settings;
+  try { settings = await client.getSettings(); } catch { /* unreadable settings: T3's own default below */ }
+  return codexHomeFromSettings(settings, { home });
+}
+
+export function codexHomeFromSettings(settings, { home = os.homedir(), instanceId = "codex" } = {}) {
+  const configured = settings?.providerInstances?.[instanceId]?.config?.homePath ?? settings?.providers?.codex?.homePath ?? "";
   if (typeof configured !== "string" || !configured.trim()) return path.join(home, ".codex");
   const value = configured.trim();
   return path.resolve(value === "~" ? home : value.startsWith("~/") ? path.join(home, value.slice(2)) : value);
+}
+
+// KRA-10891: the server names the Codex home config defines. Codex deep-merges a
+// project `[mcp_servers.<name>]` into the home's table of the same name, so an
+// owner's keys (`command`, `bearer_token_env_var`, headers, `enabled`) would join a
+// Bot's entry. `inline` is set for `mcp_servers = {…}`, whose names are not parsed.
+export function codexServerNames(text) {
+  const names = new Set();
+  let inline = false;
+  const key = String.raw`\s*("(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+)\s*`;
+  const header = new RegExp(`^\\[\\[?\\s*mcp_servers\\s*\\.${key}[\\].]`);
+  const dotted = new RegExp(`^mcp_servers\\s*\\.${key}[.=]`);
+  let table = null;
+  for (const line of String(text).split(/\r?\n/).map(value => value.trim())) {
+    if (/^\[\s*mcp_servers\s*\]/.test(line)) { table = "mcp_servers"; continue; }
+    if (line.startsWith("[")) table = null;
+    if (/^mcp_servers\s*=/.test(line)) inline = true;
+    const match = header.exec(line) ?? dotted.exec(line) ?? (table === "mcp_servers" ? new RegExp(`^${key}[.=]`).exec(line) : null);
+    if (match) names.add(match[1].replace(/^"(.*)"$|^'(.*)'$/, "$1$2"));
+  }
+  return { names, inline };
+}
+
+export function checkCodexServerNames(codexHome, names) {
+  let text = "";
+  try { text = readFileSync(path.join(codexHome, "config.toml"), "utf8"); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  const owner = codexServerNames(text);
+  if (owner.inline || names.some(name => owner.names.has(name))) throw new Error(R.codexServerClash);
 }
 
 /**

@@ -5,8 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
-import { BOT_CONNECTOR_CAPABILITIES, GROK_TRUST_MARKER, PUBLIC_MCP_URL, codexHomeFor, commitCodexTrust, grokHomeFor, planGrokTrust, planGrokUntrust, trustCodexWorkspace } from "../src/bot-connectors.mjs";
-import { continueThread } from "../src/bridge.mjs";
+import { BOT_CONNECTOR_CAPABILITIES, GROK_TRUST_MARKER, PUBLIC_MCP_URL, codexHomeFor, codexServerNames, commitCodexTrust, grokHomeFor, planGrokTrust, planGrokUntrust, trustCodexWorkspace } from "../src/bot-connectors.mjs";
+import { continueThread, doctor, formatDoctor } from "../src/bridge.mjs";
 import { freshCapability } from "./helpers/fresh-context-wire.mjs";
 import { ensureLocalTalkWorkspace } from "../src/local-talk-workspace.mjs";
 import { LoopbackRuntimeAdapter, OutboundPairer, readPairOffer } from "../src/outbound-pairer.mjs";
@@ -633,4 +633,61 @@ test("KRA-10869: the Grok trust entry respects the owner's file and refuses form
   fs.rmSync(file);
   fs.symlinkSync(path.join(home, "elsewhere.toml"), file);
   assert.throws(() => planGrokTrust(home, "/w"), /is a link/);
+});
+
+test("KRA-10891: an owner's Codex server named like a Bot's refuses before the stop; the owner's stale agent-jack does not shadow ours", async () => {
+  const { home, workspace, sent, stops, adapter } = setup();
+  const codexHome = path.join(home, ".codex");
+  fs.mkdirSync(codexHome, { mode: 0o700 });
+  const file = path.join(codexHome, "config.toml");
+  // Codex deep-merges same-named tables: an owner's stdio `jack` plus Bot `url` breaks every Codex config load
+  // (codex-cli 0.169.0: "url is not supported for stdio"), and an owner's http `jack` adds its own keys to ours.
+  for (const owner of ['[mcp_servers.jack]\ncommand = "owner-jack"\n', '[mcp_servers."jack"]\nurl = "https://owner.example/mcp"\nbearer_token_env_var = "OWNER_TOKEN"\n', 'mcp_servers.jack.enabled = false\n', '[mcp_servers.linear.env]\nX = "1"\n', 'mcp_servers = { other = { command = "x" } }\n']) {
+    fs.writeFileSync(file, owner, { mode: 0o640 });
+    await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack, linear, learn]) }),
+      { message: "The Codex config in the Codex home T3 uses already defines a server with a name this Bot uses, and Codex would merge the two; rename or remove that server there, then send again" }, owner);
+    assert.equal(fs.readFileSync(file, "utf8"), owner);
+    assert.equal(fs.statSync(file).mode & 0o777, 0o640);
+    assert.deepEqual([sent, stops], [[], []]);
+    assert.equal(fs.existsSync(path.join(workspace, ".codex", "config.toml")), false);
+  }
+  // The Founder's shape: the old static `agent-jack` road plus servers of his own. No name clash, so the
+  // Bot's `jack` is the Bot's alone; the owner's tables stay byte for byte (only the folder trust is appended).
+  const owner = '[mcp_servers.agent-jack]\ncommand = "agent-jack-mcp"\nenv_vars = ["AGENT_JACK_TOKEN"]\n\n[mcp_servers.mine]\ncommand = "fails-to-start"\n';
+  fs.writeFileSync(file, owner, { mode: 0o640 });
+  await adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack, learn]) });
+  assert.ok(fs.readFileSync(file, "utf8").startsWith(owner));
+  assert.deepEqual([...codexServerNames(fs.readFileSync(file, "utf8")).names], ["agent-jack", "mine"]);
+  assert.match(fs.readFileSync(path.join(workspace, ".codex", "config.toml"), "utf8"), /^\[mcp_servers\.jack\]$/m);
+  // A turn without tools for another lab never reads the Codex home.
+  fs.writeFileSync(file, '[mcp_servers.jack]\ncommand = "owner-jack"\n');
+  await adapter.continue({ threadId: "t1", message: "docs", ...claude, ...connectors([jack]) });
+});
+
+test("KRA-10891: codexServerNames reads every form Codex accepts for a server name", () => {
+  const names = text => [...codexServerNames(text).names];
+  assert.deepEqual(names('[mcp_servers.a]\n[mcp_servers."b"]\n[mcp_servers.\'c\'.env]\nmcp_servers.d.url = "u"\n[mcp_servers]\ne = { url = "u" }\n[other]\nf = 1\n'), ["a", "b", "c", "d", "e"]);
+  assert.equal(codexServerNames('mcp_servers = { a = {} }\n').inline, true);
+  assert.deepEqual(names('[projects."/w"]\ntrust_level = "trusted"\n# [mcp_servers.x]\n'), []);
+});
+
+test("KRA-10891: doctor names a stale agent-jack server in the Codex home T3 uses, with one fix", async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "codex-stale-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const client = {
+    snapshot: async () => ({ projects: [], threads: [] }),
+    getSettings: async () => ({ providerInstances: { codex: { driver: "codex", enabled: true, config: { homePath: home } } } }),
+    rpc: async () => ({ environment: { serverVersion: "0.1.11" }, providers: [{ instanceId: "codex", driver: "codex", installed: true, status: "ready", models: [{ slug: "gpt-6-astra", isDefault: true }] }] }),
+  };
+  const fetchImpl = async () => { throw new Error("no Hermes"); };
+  const fix = "Stale Codex server (codex): the Codex config has an old `agent-jack` server from the static Agent Jack road; it fails every turn, and Jack's tools now come per Bot. Fix: remove the [mcp_servers.agent-jack] table from config.toml in the Codex home T3 uses.";
+  fs.writeFileSync(path.join(home, "config.toml"), '[mcp_servers.agent-jack]\ncommand = "agent-jack-mcp"\nenv_vars = ["SECRET_NAME_ONLY"]\n');
+  const stale = await doctor(client, { fetchImpl });
+  assert.equal(stale.labs.find(lab => lab.instanceId === "codex").staleJackServer, "agent-jack");
+  assert.ok(formatDoctor(stale).split("\n").includes(fix));
+  assert.doesNotMatch(JSON.stringify(stale) + formatDoctor(stale), /SECRET_NAME_ONLY|agent-jack-mcp/);
+  fs.writeFileSync(path.join(home, "config.toml"), '[mcp_servers.jack-other]\ncommand = "x"\n');
+  const clean = await doctor(client, { fetchImpl });
+  assert.equal(clean.labs.find(lab => lab.instanceId === "codex").staleJackServer, undefined);
+  assert.doesNotMatch(formatDoctor(clean), /Stale Codex server/);
 });

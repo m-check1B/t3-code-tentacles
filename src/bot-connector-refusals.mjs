@@ -17,5 +17,6 @@ export const BOT_CONNECTOR_REFUSALS = Object.freeze({
   grokGitRepo: "This Bot workspace is inside a git repository, where Grok decides trust for the whole repository; run this Bot on Server to use Jack tools",
   grokChanged: "Grok trusted_folders.toml changed while trusting this Bot workspace; try again",
   grokTrustForm: "Grok trusted_folders.toml holds a form Tentacles does not edit; trust this Bot workspace in Grok first",
+  codexServerClash: "The Codex config in the Codex home T3 uses already defines a server with a name this Bot uses, and Codex would merge the two; rename or remove that server there, then send again",
   codexChanged: "Codex home config changed while trusting this Bot workspace; try again",
 });

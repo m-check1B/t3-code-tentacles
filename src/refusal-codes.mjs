@@ -33,6 +33,7 @@ export const BOT_CONNECTOR_CODES = Object.freeze({
   codexHomeNotDirectory: "bot_connectors.codex_home",
   codexLinkMissing: "bot_connectors.codex_home",
   codexProjectsForm: "bot_connectors.codex_home",
+  codexServerClash: "bot_connectors.codex_home",
   codexChanged: "try_again",
   grokHomeNotDirectory: "bot_connectors.grok_home",
   grokHomeForm: "bot_connectors.grok_home",

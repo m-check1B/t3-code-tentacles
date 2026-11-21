@@ -53,6 +53,7 @@ import { boundDoctorInventories } from "./inventory-budget.mjs";
 import { pluginInventoryBlock } from "./plugin-inventory.mjs";
 import { LAB_NAMES, labName } from "./lab-names.mjs";
 import { inspectInstanceWebTools } from "./web-tools.mjs";
+import { codexHomeFromSettings, codexServerNames } from "./bot-connectors.mjs";
 import { ANTIGRAVITY_INSTANCE_ID, antigravityAction, applyAntigravityState } from "./antigravity.mjs";
 import { enforceManagedPolicy, isDriverAllowed, managedPolicyReport, policySummary } from "./managed-policy.mjs";
 
@@ -1331,6 +1332,17 @@ function providerSignedIn(configProvider) {
   return status === "authenticated" ? true : status === "unauthenticated" ? false : null;
 }
 
+// KRA-10891: the old static Agent Jack road left an `agent-jack` server in some Codex
+// homes; it fails every turn, and Jack's tools now come per Bot. Names only are read.
+export const STALE_JACK_SERVER = "agent-jack";
+function staleCodexJackServer(settings, instanceId, instance) {
+  if (instanceId !== "codex" && instance?.driver !== "codex") return false;
+  try {
+    const home = codexHomeFromSettings(settings, { instanceId });
+    return codexServerNames(fs.readFileSync(path.join(home, "config.toml"), "utf8")).names.has(STALE_JACK_SERVER);
+  } catch { return false; }
+}
+
 function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
   const configProvider = configById.get(instanceId);
   const instance = settings?.providerInstances?.[instanceId];
@@ -1377,6 +1389,7 @@ function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
     defaultAvailable,
     webTools: inspectInstanceWebTools(settings, instanceId),
   };
+  if (installed && staleCodexJackServer(settings, instanceId, instance)) row.staleJackServer = STALE_JACK_SERVER;
   if (code === "provider_probe_timeout") probeCommands.set(row, providerProbeTimeout(configProvider.message));
   if (defaultSource?.startsWith("t3-") && kind !== "external") {
     const pick = labDefaultModel(instanceId, instance);
@@ -1970,6 +1983,9 @@ export function formatDoctor(result = {}) {
       if (action) parts.push(`action: ${action}`);
       lines.push(`  - ${parts.join("  ")}`);
     }
+  }
+  for (const lab of labs.filter((entry) => entry.staleJackServer === STALE_JACK_SERVER)) {
+    lines.push(`Stale Codex server (${lab.instanceId}): the Codex config has an old \`agent-jack\` server from the static Agent Jack road; it fails every turn, and Jack's tools now come per Bot. Fix: remove the [mcp_servers.agent-jack] table from config.toml in the Codex home T3 uses.`);
   }
   const blockedByPolicy = Array.isArray(result.blockedByPolicy) ? result.blockedByPolicy : [];
   if (blockedByPolicy.length) {
