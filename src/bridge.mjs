@@ -53,7 +53,7 @@ import { boundDoctorInventories } from "./inventory-budget.mjs";
 import { pluginInventoryBlock } from "./plugin-inventory.mjs";
 import { LAB_NAMES, labName } from "./lab-names.mjs";
 import { inspectInstanceWebTools } from "./web-tools.mjs";
-import { codexHomeFromSettings, codexServerNames } from "./bot-connectors.mjs";
+import { codexHomeFromSettings, codexServerNames, readSmallRegularFile } from "./bot-connectors.mjs";
 import { ANTIGRAVITY_INSTANCE_ID, antigravityAction, antigravityModelAlias, applyAntigravityState } from "./antigravity.mjs";
 import { enforceManagedPolicy, isDriverAllowed, managedPolicyReport, policySummary } from "./managed-policy.mjs";
 
@@ -1125,6 +1125,10 @@ const DOCTOR_STATUS_VALUES = new Set(["absent", "configured", "disabled", "error
 export async function liveModelSelection(client, selection) {
   const alias = baseLabId(selection.instanceId) === "antigravity" ? antigravityModelAlias(selection.model) : null;
   if (!alias) return selection;
+  // B3 P3-2 on #117: a level that disagrees with the old id refuses, mapped or not.
+  for (const required of alias.options) {
+    if ((selection.options ?? []).some((entry) => entry.id === required.id && entry.value !== required.value)) throw new Error(`Antigravity model alias ${selection.model} conflicts with option ${required.id}`);
+  }
   let providers = [];
   try { providers = (await client.rpc("server.getConfig", {}))?.providers ?? []; } catch { return selection; }
   const provider = Array.isArray(providers) ? providers.find((entry) => entry?.instanceId === selection.instanceId) : undefined;
@@ -1137,9 +1141,7 @@ export async function liveModelSelection(client, selection) {
   if (!level || !Array.isArray(level.options) || !alias.options.every((wanted) => level.options.some((choice) => choice?.id === wanted.value))) return selection;
   const options = [...(selection.options ?? [])];
   for (const required of alias.options) {
-    const configured = options.find((entry) => entry.id === required.id);
-    if (configured && configured.value !== required.value) throw new Error(`Antigravity model alias ${selection.model} conflicts with option ${required.id}`);
-    if (!configured) options.push({ ...required });
+    if (!options.some((entry) => entry.id === required.id)) options.push({ ...required });
   }
   return { ...selection, model: alias.model, options };
 }
@@ -1367,17 +1369,14 @@ function providerSignedIn(configProvider) {
 // homes; Jack's tools now come per Bot, so it duplicates them, and it fails when its
 // variable is unset. Names only are read, from a regular file of at most 1 MiB.
 export const STALE_JACK_SERVER = "agent-jack";
+// B3 P3-6/P3-3 on #116: the bounded read lives with the turn path's (B3 on #117).
+export { readSmallRegularFile };
+
 function staleCodexJackServer(settings, instanceId, instance) {
   if (instanceId !== "codex" && instance?.driver !== "codex") return false;
   try {
-    const home = codexHomeFromSettings(settings, { instanceId });
-    // B3 P3-6 on #116: a FIFO or a huge file must not block or slow doctor; skip it.
-    const fd = fs.openSync(path.join(home, "config.toml"), fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
-    try {
-      const info = fs.fstatSync(fd);
-      if (!info.isFile() || info.size > 1024 * 1024) return false;
-      return codexServerNames(fs.readFileSync(fd, "utf8")).names.has(STALE_JACK_SERVER);
-    } finally { fs.closeSync(fd); }
+    const text = readSmallRegularFile(path.join(codexHomeFromSettings(settings, { instanceId }), "config.toml"), 1024 * 1024);
+    return text !== null && codexServerNames(text).names.has(STALE_JACK_SERVER);
   } catch { return false; }
 }
 

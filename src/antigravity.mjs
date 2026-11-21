@@ -131,30 +131,32 @@ export function antigravityAction(code) {
 // parsed parts; nothing else from the reply reaches the doctor output.
 const RESET_PREFIX = String.raw`\bresets? (at|in|on|after) `;
 const END = String.raw`(?=$|[\s.,;!)])`;
-const RESET_ISO = new RegExp(`${RESET_PREFIX}(\\d{4})-(\\d{2})-(\\d{2})[T ](\\d{2}):(\\d{2})(?::(\\d{2}))?(?: ?(Z|UTC|GMT|[+-]\\d{2}:?\\d{2}))?${END}`, "i");
+const RESET_ISO = new RegExp(`${RESET_PREFIX}(\\d{4})-(\\d{2})-(\\d{2})[T ](\\d{2}):(\\d{2})(?::(\\d{2}))?(?:(?: (?!Z))?(Z|UTC|GMT|[+-]\\d{2}:?\\d{2}))?${END}`, "i");
 const RESET_CLOCK = new RegExp(`${RESET_PREFIX}(\\d{1,2}):(\\d{2})(?::(\\d{2}))?(?: ?(AM|PM))?(?: (UTC|GMT|[+-]\\d{2}:?\\d{2}))?${END}`, "i");
 const RESET_IN = new RegExp(`${RESET_PREFIX}(\\d{1,4}) (second|minute|hour|day)(s?)${END}`, "i");
 const two = value => String(Number(value)).padStart(2, "0");
-// B3 P3-4 on #114: an offset is at most ±14:59; a capital-letter zone the reader does not know refuses the time.
+// B3 P3-4 on #114: an offset is at most ±14:59. After the time and its recognised zone,
+// only the end, sentence punctuation then a space or the end, or "today"/"tomorrow" then
+// the end or that punctuation may follow; anything else gives no reset time (B3 P3-2 on #117).
 const zoneOk = zone => !zone || !/^[+-]/.test(zone) || (+zone.slice(1, 3) <= 14 && +zone.slice(-2) <= 59);
-const unknownZone = (text, match) => /^ ?[A-Z]{2,5}(?![A-Za-z])/.test(text.slice(match.index + match[0].length));
+const followOk = (text, match) => /^(?:\s+(?:today|tomorrow))?(?:[.,;:!?)](?:\s|$)|$)/iu.test(text.slice(match.index + match[0].length));
 export function antigravityResetTime(reply) {
   if (typeof reply !== "string") return null;
   const text = reply.slice(0, 4096);
   let m = RESET_ISO.exec(text);
   if (m) {
     const [, , y, mo, d, h, mi, sec, zone] = m;
-    if (+mo < 1 || +mo > 12 || +d < 1 || new Date(Date.UTC(+y, +mo - 1, +d)).getUTCDate() !== +d || +h > 23 || +mi > 59 || (sec && +sec > 59) || !zoneOk(zone) || (!zone && unknownZone(text, m))) return null;
+    if (+mo < 1 || +mo > 12 || +d < 1 || new Date(Date.UTC(+y, +mo - 1, +d)).getUTCDate() !== +d || +h > 23 || +mi > 59 || (sec && +sec > 59) || !zoneOk(zone) || !followOk(text, m)) return null;
     return `${y}-${mo}-${d} ${h}:${mi}${sec ? `:${sec}` : ""}${zone ? ` ${zone.toUpperCase()}` : ""}`;
   }
   m = RESET_CLOCK.exec(text);
   if (m) {
     const [, , h, mi, sec, half, zone] = m;
-    if (+mi > 59 || (sec && +sec > 59) || (half ? +h < 1 || +h > 12 : +h > 23) || !zoneOk(zone) || (!zone && unknownZone(text, m))) return null;
+    if (+mi > 59 || (sec && +sec > 59) || (half ? +h < 1 || +h > 12 : +h > 23) || !zoneOk(zone) || !followOk(text, m)) return null;
     return `${half ? Number(h) : two(h)}:${mi}${sec ? `:${sec}` : ""}${half ? ` ${half.toUpperCase()}` : ""}${zone ? ` ${zone.toUpperCase()}` : ""}`;
   }
   m = RESET_IN.exec(text);
-  if (m && /^(in|after)$/i.test(m[1]) && Number(m[2]) >= 1) return `${m[1].toLowerCase()} ${Number(m[2])} ${m[3].toLowerCase()}${Number(m[2]) === 1 ? "" : "s"}`;
+  if (m && /^(in|after)$/i.test(m[1]) && Number(m[2]) >= 1 && followOk(text, m)) return `${m[1].toLowerCase()} ${Number(m[2])} ${m[3].toLowerCase()}${Number(m[2]) === 1 ? "" : "s"}`;
   return null;
 }
 export function antigravityQuotaAction(reply) {

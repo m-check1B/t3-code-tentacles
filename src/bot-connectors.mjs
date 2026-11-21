@@ -11,10 +11,11 @@
  * workspace is trusted there once. T3 keeps a lab process alive across turns,
  * so the caller stops an idle live session before the files change.
  */
-import { closeSync, constants, existsSync, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, constants, existsSync, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash, randomBytes } from "node:crypto";
+import { parseEnv } from "node:util";
 import { BOT_CONNECTOR_REFUSALS as R } from "./bot-connector-refusals.mjs";
 import { GUARD_FILE } from "./talk-instruction-guard.mjs";
 
@@ -62,7 +63,8 @@ export const OPENCODE_FILE = "opencode.json";
 export const ANTIGRAVITY_DIRS = Object.freeze([".agents", path.join(".agents", "plugins"), path.join(".agents", "plugins", "jack-tools")]);
 export const ANTIGRAVITY_PLUGIN = path.join(".agents", "plugins", "jack-tools", "plugin.json");
 export const ANTIGRAVITY_FILE = path.join(".agents", "plugins", "jack-tools", "mcp_config.json");
-// sha256 of the plugin.json and mcp_config.json Tentacles last wrote; any other files there refuse.
+// sha256 of the plugin.json and mcp_config.json Tentacles last wrote. Those two files
+// without a matching marker refuse, and so does any other entry in jack-tools.
 export const ANTIGRAVITY_MARKER = ".jack-antigravity-mcp";
 // sha256 of the opencode.json Tentacles last wrote; any other file there refuses (B3 P3-1 on #109).
 export const OPENCODE_MARKER = ".jack-opencode-mcp";
@@ -191,6 +193,16 @@ function realDirectory(directory) {
   if (!info.isDirectory() || info.isSymbolicLink()) throw new Error(R.realDirectory);
 }
 
+// A lab that finds project config by walking up to the git top level (Cursor, Grok,
+// Antigravity) would read the owner's repository: refuse when `start` or any parent
+// has a `.git` entry. Git variables in T3's own environment are not seen.
+function refuseGitAncestor(start, text) {
+  for (let dir = start; ; dir = path.dirname(dir)) {
+    if (existsSync(path.join(dir, ".git"))) throw new Error(text);
+    if (path.dirname(dir) === dir) return;
+  }
+}
+
 /**
  * Read-only: refuses, before any session stop, every workspace shape the writer
  * would refuse later. `.claude` and `.codex` must be real directories (or
@@ -215,6 +227,11 @@ export function checkBotConnectorPaths(workspace, { opencode = false, cursor = f
   }
   // Unproven Antigravity road: only an admitted Antigravity turn looks at its plugin files.
   if (antigravity) {
+    // Antigravity walks up from its cwd to the repository root for customizations (B3 P3-1 on #113).
+    refuseGitAncestor(workspace, R.antigravityGitRepo);
+    // An owner's folder with anything else (hooks.json, rules/) is never adopted (B3 P3-2 on #113).
+    const plugin = path.join(workspace, path.dirname(ANTIGRAVITY_PLUGIN));
+    if (kind(plugin) && readdirSync(plugin).some(name => name !== "plugin.json" && name !== "mcp_config.json")) throw new Error(R.antigravityFileNotOurs);
     const files = [ANTIGRAVITY_PLUGIN, ANTIGRAVITY_FILE].map(file => [file, kind(path.join(workspace, file))]);
     if (files.some(([, info]) => info)) {
       let mark = null;
@@ -225,10 +242,7 @@ export function checkBotConnectorPaths(workspace, { opencode = false, cursor = f
   // Unproven Cursor road: only an admitted Cursor turn looks at Cursor's files.
   if (!cursor) return;
   // Cursor reads the git top level's .cursor/mcp.json, which may be the owner's.
-  for (let dir = workspace; ; dir = path.dirname(dir)) {
-    if (existsSync(path.join(dir, ".git"))) throw new Error(R.cursorGitRepo);
-    if (path.dirname(dir) === dir) break;
-  }
+  refuseGitAncestor(workspace, R.cursorGitRepo);
   const info = kind(path.join(workspace, CURSOR_FILE));
   if (info) {
     let mark = null;
@@ -255,8 +269,16 @@ export async function codexHomeFor(client, { home = os.homedir() } = {}) {
   return codexHomeFromSettings(settings, { home });
 }
 
+// The instance environment entries named `name`; a hidden entry's value cannot be read.
+const envEntries = (instance, name) => (Array.isArray(instance?.environment) ? instance.environment : []).filter(entry => entry?.name === name);
+const hiddenEntry = entry => entry.valueRedacted === true || entry.sensitive === true || typeof entry.value !== "string";
+
+// B3 P2-1 on #117 (3rd review): with the field blank, T3 0.1.11 in direct mode uses the
+// last string CODEX_HOME entry of the instance environment; managed mode ignores it.
 export function codexHomeFromSettings(settings, { home = os.homedir(), instanceId = "codex" } = {}) {
-  const configured = settings?.providerInstances?.[instanceId]?.config?.homePath ?? settings?.providers?.codex?.homePath ?? "";
+  const instance = settings?.providerInstances?.[instanceId];
+  let configured = instance?.config?.homePath ?? settings?.providers?.codex?.homePath ?? "";
+  if ((typeof configured !== "string" || !configured.trim()) && instance?.config?.setupMode !== "managed") configured = envEntries(instance, "CODEX_HOME").filter(entry => !hiddenEntry(entry)).at(-1)?.value;
   if (typeof configured !== "string" || !configured.trim()) return path.join(home, ".codex");
   const value = configured.trim();
   return path.resolve(value === "~" ? home : value.startsWith("~/") ? path.join(home, value.slice(2)) : value);
@@ -266,8 +288,8 @@ export function codexHomeFromSettings(settings, { home = os.homedir(), instanceI
 // project `[mcp_servers.<name>]` into the home's table of the same name, so an
 // owner's keys (`command`, `bearer_token_env_var`, headers, `enabled`) would join a
 // Bot's entry. `inline` is a top-level `mcp_servers = {…}` (names not parsed); `form`
-// is a quoted `mcp_servers` root or an escaped name, which Codex reads but this does not.
-// shortcut: a header inside a multi-line string still counts; Codex's own writer never emits one.
+// is a quoted `mcp_servers` root, an escaped first key or an escaped name, which Codex
+// reads but this does not, or a file that is not TOML.
 export function codexServerNames(text) {
   const names = new Set();
   let inline = false, form = false, table = false, headerSeen = false;
@@ -277,35 +299,228 @@ export function codexServerNames(text) {
   const bare = value => value.replace(/^"(.*)"$|^'(.*)'$/s, "$1$2");
   const add = name => { if (name.startsWith('"') && name.includes("\\")) form = true; else names.add(bare(name)); };
   const isRoot = name => {
+    // An escaped quoted first key may spell mcp_servers (B3 P3-2 on #116).
+    if (name.startsWith('"') && name.includes("\\")) { form = true; return false; }
     if (bare(name) !== "mcp_servers") return false;
     if (name !== "mcp_servers") form = true; // a quoted root key
     return true;
   };
-  for (const raw of String(text).split(/\r?\n/)) {
+  // B3 P2-1/P2-2/P3-1 on #117: a line counts only if it starts outside every string,
+  // comment and open value; a file that is not TOML (an open string or value) is `form`.
+  const starts = codexLineStarts(String(text));
+  if (!starts) return { names, inline, form: true };
+  String(text).split(/\r?\n/).forEach((raw, n) => {
+    if (!starts[n]) return;
     const line = raw.trim();
     if (line.startsWith("[")) {
       headerSeen = true;
       table = false;
-      if (line.startsWith("[[")) continue; // an array of tables is not a server
+      if (line.startsWith("[[")) return; // an array of tables is not a server
       const match = header.exec(line);
       if (match && isRoot(match[1])) { if (match[2]) add(match[2]); else table = true; }
-      continue;
+      return;
     }
     const match = keyLine.exec(line);
-    if (!match) continue;
+    if (!match) return;
     if (table) add(match[1]);
     // Dotted and inline keys name a server only at the top level, before any header.
     else if (!headerSeen && isRoot(match[1])) { if (match[2]) add(match[2]); else inline = true; }
-  }
+  });
   return { names, inline, form };
 }
 
-export function checkCodexServerNames(codexHome, names) {
-  let text = "";
-  try { text = readFileSync(path.join(codexHome, "config.toml"), "utf8"); } catch (error) { if (error.code !== "ENOENT") throw error; }
-  const owner = codexServerNames(text);
-  if (names.some(name => owner.names.has(name))) throw new Error(R.codexServerClash);
-  if (owner.inline || owner.form) throw new Error(R.codexServersForm);
+// One character pass over a TOML file. For each line: does it start in the plain state
+// (no open string, comment, array or inline table)? null when the file is not TOML:
+// it ends inside a string or value, a one-line string runs past its line, or a bracket
+// closes nothing. A header's own brackets and a value's nesting are told apart by place:
+// a `[` that opens a line at depth 0 starts a header.
+function codexLineStarts(text) {
+  const starts = [true];
+  let state = null, depth = 0, header = false, lineStart = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (c === "\n") {
+      if (state === '"' || state === "'") return null;
+      if (state === "#") state = null;
+      header = false;
+      lineStart = i + 1;
+      starts.push(state === null && depth === 0);
+    } else if (state === "#") {
+      // a comment runs to the end of its line
+    } else if (state === '"""' || state === "'''") {
+      if (c === "\\" && state === '"""') { if (text[i + 1] !== "\n") i += 1; } else if (text.startsWith(state, i)) {
+        // Up to two more of the same quote belong to the content.
+        let run = 3;
+        while (text[i + run] === c) run += 1;
+        if (run > 5) return null;
+        i += run - 1;
+        state = null;
+      }
+    } else if (state === '"') {
+      if (c === "\\") { if (text[i + 1] !== "\n") i += 1; } else if (c === '"') state = null;
+    } else if (state === "'") {
+      if (c === "'") state = null;
+    } else if (c === "#") state = "#";
+    else if (text.startsWith('"""', i) || text.startsWith("'''", i)) { state = text.slice(i, i + 3); i += 2; }
+    else if (c === '"' || c === "'") state = c;
+    else if (header) {
+      // a header's brackets are not a value's
+    } else if (c === "[" && depth === 0 && starts.at(-1) && !text.slice(lineStart, i).trim()) header = true;
+    else if (c === "[" || c === "{") depth += 1;
+    else if (c === "]" || c === "}") { if (depth === 0) return null; depth -= 1; }
+  }
+  return state === null || state === "#" ? (depth === 0 ? starts : null) : null;
+}
+
+// B3 P2-1 on #117: T3 starts Codex as `codex app-server -c … <launch arguments>`, and a
+// `-c` there is a config layer above the Bot's project file. Split as T3's own
+// tokenizeCliArgs does; null when a quote is left open (cannot be split safely).
+function codexLaunchTokens(text) {
+  const tokens = [];
+  let current = "", quote = null, quoted = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (quote) {
+      if (c === quote) quote = null;
+      else if (c === "\\" && quote === '"' && ['"', "\\", "$", "`"].includes(text[i + 1])) current += text[++i];
+      else current += c;
+    } else if (c === "'" || c === '"') { quote = c; quoted = true; }
+    else if (/[ \t\n\r\f\v]/.test(c)) { if (current || quoted) tokens.push(current); current = ""; quoted = false; }
+    else if (c === "\\" && /[\s'"]/.test(text[i + 1] ?? "")) current += text[++i];
+    else current += c;
+  }
+  if (quote) return null;
+  if (current || quoted) tokens.push(current);
+  return tokens;
+}
+
+/**
+ * Refuses a Codex Bot turn whose T3 Codex launch arguments (the setting, a
+ * T3CODE_CODEX_LAUNCH_ARGS entry in the instance environment, or one in T3's
+ * service.env) carry a config override
+ * that is not a plain bare dotted key outside `mcp_servers`. Names no value.
+ */
+export function checkCodexLaunchArgs(settings, serviceValue) {
+  const instance = settings?.providerInstances?.codex;
+  const entries = envEntries(instance, "T3CODE_CODEX_LAUNCH_ARGS");
+  for (const text of [instance?.config?.launchArgs ?? settings?.providers?.codex?.launchArgs, ...entries.map(entry => hiddenEntry(entry) ? null : entry.value), serviceValue]) {
+    if (text === undefined || text === "") continue;
+    const tokens = typeof text === "string" ? codexLaunchTokens(text) : null;
+    if (!tokens) throw new Error(R.codexLaunchArgs);
+    tokens.forEach((token, i) => {
+      const value = token === "-c" || token === "--config" ? tokens[i + 1] ?? ""
+        : token.startsWith("--config=") ? token.slice("--config=".length)
+          : /^-c./.test(token) ? token.slice(2).replace(/^=/, "") : null;
+      if (value === null) return;
+      const key = value.split("=")[0];
+      if (!/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(key) || key.split(".")[0] === "mcp_servers") throw new Error(R.codexLaunchArgs);
+    });
+  }
+}
+
+// The text of a regular file (or a link to one) of at most `cap` bytes, else null. A FIFO
+// does not block, and only the fstat size is read, so /dev/zero cannot be read without end.
+export function readSmallRegularFile(file, cap) {
+  const fd = openSync(file, constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    const info = fstatSync(fd);
+    if (!info.isFile() || info.size > cap) return null;
+    const buffer = Buffer.alloc(info.size);
+    return buffer.toString("utf8", 0, readSync(fd, buffer, 0, info.size, 0));
+  } finally { closeSync(fd); }
+}
+
+// The same bounded, regular-file-only read the doctor uses; absent is "", anything else
+// (not a regular file, too large, EACCES, ENOTDIR, …) null, so each caller refuses with its
+// own fixed text (B3 P3-1 on #117, fifth review).
+function readCodexLayer(file, cap) {
+  try { return readSmallRegularFile(file, cap); } catch (error) { return error.code === "ENOENT" ? "" : null; }
+}
+
+/**
+ * Refuses when the Codex home's config.toml, or a system layer Codex 0.169.0 also loads
+ * (/etc/codex/config.toml, /etc/codex/managed_config.toml), names one of `names`.
+ */
+export function checkCodexServerNames(codexHome, names, systemFiles = []) {
+  for (const [file, clash, form] of [[path.join(codexHome, "config.toml"), R.codexServerClash, R.codexServersForm], ...systemFiles.map(file => [file, R.codexSystemServers, R.codexSystemServers])]) {
+    const text = readCodexLayer(file, 1024 * 1024);
+    if (text === null) throw new Error(form);
+    const owner = codexServerNames(text);
+    if (names.some(name => owner.names.has(name))) throw new Error(clash);
+    if (owner.inline || owner.form) throw new Error(form);
+  }
+}
+
+// B3 3rd review, table row "working folder": in a trusted project (a git root, or Codex's
+// project_root_markers), Codex 0.169.0 merges every .codex/config.toml from the project root
+// down to the folder into the Bot's file. Every folder above the Bot workspace is checked.
+export function checkCodexAncestorLayers(workspace, names) {
+  for (let dir = path.dirname(workspace); ; dir = path.dirname(dir)) {
+    const text = readCodexLayer(path.join(dir, ".codex", "config.toml"), 1024 * 1024);
+    const owner = text === null ? null : codexServerNames(text);
+    if (!owner || owner.inline || owner.form || names.some(name => owner.names.has(name))) throw new Error(R.codexProjectServers);
+    if (path.dirname(dir) === dir) return;
+  }
+}
+
+/** Where T3 keeps its service.env, and the Codex system layers; tests pass their own. */
+// T3's base dir as src/cli and src/t3-auth find it: TENTACLES_T3_HOME, else T3CODE_HOME, else ~/.t3.
+export function codexOuterFiles({ home = os.homedir(), env = process.env } = {}) {
+  return { serviceEnv: path.join(env.TENTACLES_T3_HOME?.trim() || env.T3CODE_HOME?.trim() || path.join(home, ".t3"), "service.env"), system: ["/etc/codex/config.toml", "/etc/codex/managed_config.toml"] };
+}
+
+// T3's service launcher adds service.env to the server's environment (serviceLauncher.ts).
+export function readT3ServiceEnv(file) {
+  const text = readCodexLayer(file, 64 * 1024);
+  if (text === null) throw new Error(R.codexHomeField);
+  return parseEnv(text);
+}
+
+const ENV_HOME_NAMES = ["CODEX_HOME", "HOME"];
+const plainObject = value => value !== null && typeof value === "object" && !Array.isArray(value);
+const tildeHome = value => value === "~" || value.startsWith("~/");
+
+/**
+ * KRA-10891: the one Codex home a Codex Bot turn with a server list uses, as an
+ * allow-list. Only the "pass" rows of the closed table (README, Local · Codex) return
+ * a home; each is proven equal to the home T3 0.1.11 gives Codex. Every other input
+ * refuses with codex_home_field. `serviceEnv` is T3's parsed service.env (an unreadable
+ * one already refused in readT3ServiceEnv, row 16). Order: 17, 19, 20, 1, 15, then the rest.
+ */
+export function codexHomeAllowed(settings, serviceEnv, { home = os.homedir() } = {}) {
+  const refuse = () => { throw new Error(R.codexHomeField); };
+  const instance = settings?.providerInstances?.codex;
+  // Row 17: the settings call failed, or the instance is not in T3 0.1.11's shape.
+  if (!plainObject(instance) || (instance.config !== undefined && !plainObject(instance.config)) || (instance.environment !== undefined && !Array.isArray(instance.environment))) refuse();
+  const config = instance.config ?? {};
+  if (config.homePath !== undefined && typeof config.homePath !== "string") refuse();
+  // Row 19: no instance field, but a legacy providers.codex.homePath T3 might still read.
+  const legacy = settings.providers?.codex?.homePath;
+  if (config.homePath === undefined && legacy !== undefined && (typeof legacy !== "string" || legacy.trim())) refuse();
+  // Row 20: a shadow home (T3's auth overlay) becomes the child's CODEX_HOME in both modes.
+  if (config.shadowHomePath !== undefined && (typeof config.shadowHomePath !== "string" || config.shadowHomePath.trim())) refuse();
+  const field = (config.homePath ?? "").trim(); // T3's schema trims the field
+  if (path.isAbsolute(field)) return path.resolve(field); // row 1
+  const environment = instance.environment ?? [];
+  // Row 15: a name equal to CODEX_HOME or HOME only when case is ignored (Windows uses it).
+  const names = [...environment.map(entry => entry?.name), ...Object.keys(serviceEnv)];
+  if (names.some(name => typeof name === "string" && ENV_HOME_NAMES.includes(name.toUpperCase()) && !ENV_HOME_NAMES.includes(name))) refuse();
+  // A HOME in service.env becomes T3's own $HOME, which every `~` home follows (rows 3, 5, 8).
+  const serviceHome = Object.hasOwn(serviceEnv, "HOME");
+  const expand = value => value === "~" ? home : path.join(home, value.slice(2));
+  if (field) return tildeHome(field) && !serviceHome ? expand(field) : refuse(); // rows 2, 3, 18
+  if (config.setupMode === "managed") return serviceHome ? refuse() : path.join(home, ".codex"); // rows 4, 5
+  const homes = envEntries(instance, "CODEX_HOME");
+  if (homes.length) {
+    if (homes.some(hiddenEntry)) refuse(); // row 9
+    // T3 neither trims an environment CODEX_HOME nor resolves a relative one against a folder Tentacles knows.
+    const last = homes.at(-1).value;
+    if (last === last.trim() && path.isAbsolute(last)) return path.resolve(last); // row 6
+    if (last === last.trim() && tildeHome(last) && !serviceHome) return expand(last); // row 7
+    refuse(); // rows 8, 10, 11
+  }
+  if (envEntries(instance, "HOME").length || Object.hasOwn(serviceEnv, "CODEX_HOME") || serviceHome) refuse(); // rows 13, 14
+  return path.join(home, ".codex"); // row 12
 }
 
 /**
@@ -401,7 +616,8 @@ export async function grokHomeFor(client, { home = os.homedir(), strict = false 
   // T3 passes the value as it is; Grok would resolve a relative one from the thread folder.
   const expanded = typeof value !== "string" ? null : value === "~" ? home : value.startsWith("~/") ? path.join(home, value.slice(2)) : value;
   if (!expanded || expanded !== expanded.trim() || !path.isAbsolute(expanded)) throw new Error(R.grokHomeForm);
-  return path.normalize(expanded);
+  // resolve, not normalize: no trailing slash, so it equals the home a marker records (B3 P3-3 on #117).
+  return path.resolve(expanded);
 }
 
 /**
@@ -413,10 +629,7 @@ export async function grokHomeFor(client, { home = os.homedir(), strict = false 
  * and so does a folder inside a git repository (Grok decides at the repository root).
  */
 export function planGrokTrust(grokHome, workspace, { now = Date.now } = {}) {
-  for (let dir = path.dirname(workspace); ; dir = path.dirname(dir)) {
-    if (existsSync(path.join(dir, ".git"))) throw new Error(R.grokGitRepo);
-    if (path.dirname(dir) === dir) break;
-  }
+  refuseGitAncestor(path.dirname(workspace), R.grokGitRepo);
   const { file, text, mode, tables } = readGrokTrust(grokHome, { create: true });
   const header = `[folders.${JSON.stringify(workspace)}]`;
   if (tables.has(header)) {

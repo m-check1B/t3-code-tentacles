@@ -7,8 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
-import { BOT_CONNECTOR_CAPABILITIES, GROK_TRUST_MARKER, PUBLIC_MCP_URL, codexHomeFor, codexServerNames, commitCodexTrust, grokHomeFor, planGrokTrust, planGrokUntrust, trustCodexWorkspace } from "../src/bot-connectors.mjs";
-import { continueThread, doctor, formatDoctor } from "../src/bridge.mjs";
+import { BOT_CONNECTOR_CAPABILITIES, GROK_TRUST_MARKER, PUBLIC_MCP_URL, codexHomeAllowed, checkCodexLaunchArgs, codexHomeFor, readT3ServiceEnv, codexOuterFiles, codexHomeFromSettings, codexServerNames, commitCodexTrust, grokHomeFor, planGrokTrust, planGrokUntrust, trustCodexWorkspace } from "../src/bot-connectors.mjs";
+import { continueThread, doctor, formatDoctor, readSmallRegularFile } from "../src/bridge.mjs";
 import { freshCapability } from "./helpers/fresh-context-wire.mjs";
 import { ensureLocalTalkWorkspace } from "../src/local-talk-workspace.mjs";
 import { LoopbackRuntimeAdapter, OutboundPairer, readPairOffer } from "../src/outbound-pairer.mjs";
@@ -37,8 +37,11 @@ function setup({ jackOrigin = ORIGIN, running = () => false } = {}) {
   const sent = [];
   const stops = [];
   const at = { workspace: null }; // the thread's folder as T3 reports it on continue
+  // T3's service.env and Codex's system layers, inside the throwaway home.
+  const codexFiles = { serviceEnv: path.join(home, ".t3", "service.env"), system: ["config.toml", "managed_config.toml"].map(name => path.join(home, "etc-codex", name)) };
   const adapter = new LoopbackRuntimeAdapter({
     client: { getSettings: async () => settings },
+    codexFiles,
     prepareTalkWorkspaceImpl: value => ensureLocalTalkWorkspace(value, { home }),
     originateImpl: (_client, params) => { sent.push(params); return { ok: true }; },
     // The same hook contract continueThread uses: stop first, then the hook writes.
@@ -55,7 +58,7 @@ function setup({ jackOrigin = ORIGIN, running = () => false } = {}) {
   const read = file => JSON.parse(fs.readFileSync(path.join(workspace, file), "utf8"));
   // T3's Codex homePath, as the owner's Settings would hold it.
   settings.providerInstances = { codex: { config: { homePath: path.join(home, ".codex") } } };
-  return { home, workspace, sent, stops, adapter, read, at };
+  return { home, workspace, sent, stops, adapter, read, at, settings, codexFiles };
 }
 
 test("a Bot's connectors are written into its own workspace and never reach T3", async () => {
@@ -795,6 +798,39 @@ test("B3 P3-1 on #109: an opencode.json Tentacles did not write refuses before t
   assert.equal(fs.readFileSync(target, "utf8"), "{}\n");
 });
 
+test("B3 P3-3 on #117: a GROK_HOME with a trailing slash is the recorded home, so a second tools turn leaves the owner's file as it is", async (t) => {
+  tryGrok(t);
+  const { home, workspace, adapter } = setup();
+  const grokHome = path.join(home, "grok-home");
+  const settings = await adapter.client.getSettings();
+  settings.providerInstances.grok = { environment: [{ name: "GROK_HOME", value: `${grokHome}/` }] };
+  await adapter.originate({ workspace, message: "hi", ...grok, ...connectors([learn]) });
+  const trustFile = path.join(grokHome, "trusted_folders.toml");
+  const first = fs.readFileSync(trustFile, "utf8");
+  const stat = fs.statSync(trustFile);
+  await adapter.continue({ threadId: "t1", message: "again", ...grok, ...connectors([learn]) });
+  assert.equal(fs.readFileSync(trustFile, "utf8"), first);
+  assert.equal(fs.statSync(trustFile).ino, stat.ino); // not rewritten (a commit renames a new file in)
+  assert.match(fs.readFileSync(path.join(workspace, GROK_TRUST_MARKER), "utf8"), new RegExp(`\\n${grokHome}\\n$`));
+});
+
+test("B3 P3-4 on #117: with TRY=opencode, a Codex or Claude turn never reads, refuses on or writes an opencode.json", async (t) => {
+  tryLab(t, "opencode");
+  const { workspace, stops, adapter } = setup();
+  await adapter.originate({ workspace, message: "plain", ...codex });
+  const file = path.join(workspace, "opencode.json");
+  const owner = '{"mcp":{"mine":{"type":"local","command":["x"]}}}\n';
+  fs.writeFileSync(file, owner, { mode: 0o644 });
+  for (const lab of [codex, claude]) {
+    await adapter.continue({ threadId: "t1", message: "docs", ...lab, ...connectors([learn]) });
+    await adapter.continue({ threadId: "t1", message: "clear", ...lab, ...connectors([]) });
+  }
+  assert.equal(fs.readFileSync(file, "utf8"), owner);
+  assert.equal(fs.statSync(file).mode & 0o777, 0o644);
+  assert.equal(fs.existsSync(path.join(workspace, ".jack-opencode-mcp")), false);
+  assert.ok(stops.length > 0); // the turns ran
+});
+
 test("delta P2-1 on #110: switched off and with no marker, a Grok turn reads nothing outside the Bot workspace", async (t) => {
   const before = process.env.TENTACLES_JACK_TOOLS_TRY;
   delete process.env.TENTACLES_JACK_TOOLS_TRY;
@@ -903,7 +939,7 @@ test("KRA-10891: an owner's Codex server named like a Bot's refuses before the s
   // (codex-cli 0.169.0: "url is not supported for stdio"), and an owner's http `jack` adds its own keys to ours.
   const clash = "The Codex config in the Codex home T3 uses already has a server named like one of this Bot's Jack tools (for example jack), and Codex would merge the two; rename or remove that server there, then send again";
   const form = "The Codex config in the Codex home T3 uses keeps servers in a form Tentacles does not read; write each server as its own [mcp_servers.<name>] table, then send again";
-  for (const [owner, message] of [['[mcp_servers.jack]\ncommand = "owner-jack"\n', clash], ['[mcp_servers."jack"]\nurl = "https://owner.example/mcp"\nbearer_token_env_var = "OWNER_TOKEN"\n', clash], ['mcp_servers.jack.enabled = false\n', clash], ['[mcp_servers.linear.env]\nX = "1"\n', clash], ['mcp_servers = { other = { command = "x" } }\n', form], ['["mcp_servers".other]\ncommand = "x"\n', form], ['[mcp_servers."\\u006aack"]\ncommand = "x"\n', form]]) {
+  for (const [owner, message] of [['[mcp_servers.jack]\ncommand = "owner-jack"\n', clash], ['[mcp_servers."jack"]\nurl = "https://owner.example/mcp"\nbearer_token_env_var = "OWNER_TOKEN"\n', clash], ['mcp_servers.jack.enabled = false\n', clash], ['[mcp_servers.linear.env]\nX = "1"\n', clash], ['mcp_servers = { other = { command = "x" } }\n', form], ['["mcp_servers".other]\ncommand = "x"\n', form], ['[mcp_servers."\\u006aack"]\ncommand = "x"\n', form], ['["\\u006dcp_servers".jack]\ncommand = "x"\n', form], ['"\\u006dcp_servers".jack.command = "x"\n', form], ['developer_instructions = """\n[x]\n"""\nmcp_servers.jack.command = "x"\n', clash]]) {
     fs.writeFileSync(file, owner, { mode: 0o640 });
     await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack, linear, learn]) }), { message }, owner);
     assert.equal(fs.readFileSync(file, "utf8"), owner);
@@ -948,6 +984,427 @@ test("KRA-10891: codexServerNames reads every form Codex accepts for a server na
     '[profiles.p]\nmcp_servers = { jack = {} }\n', // inline under a profile
     '[profiles.p.mcp_servers.jack]\ncommand = "x"\n',
   ]) assert.deepEqual(read(text), { names: [], inline: false, form: false }, text);
+  // B3 P3-1 on #116: a `[` line inside a multi-line string is not a header (codex-cli 0.169.0 reads `jack` in each).
+  for (const [text, want] of [
+    ['developer_instructions = """\n[x]\n"""\nmcp_servers.jack.command = "x"\n', ["jack"]],
+    ['developer_instructions = """\n[x]\n"""\nmcp_servers.jack.url = "u"\nmcp_servers.jack.bearer_token_env_var = "OWNER_TOKEN_NAME"\n', ["jack"]],
+    ['[mcp_servers]\nother = { command = "x", args = ["""\n[y]\n"""] }\njack = { command = "x" }\n', ["other", "jack"]],
+    ["notes = '''\n[mcp_servers.fake]\n'''\n[mcp_servers.real]\n", ["real"]],
+    ['notes = """\nno brackets here \\""" still inside\n"""\n[mcp_servers.jack]\n', ["jack"]], // no [ line: unchanged
+    ['a = "x\"\"\"" # """\n[mcp_servers.jack]\n', ["jack"]], // quotes in a basic string or a comment open nothing
+  ]) assert.deepEqual(read(text).names, want, text);
+  // B3 P3-2 on #116: an escaped root key, as a header and as a dotted key, is `form`.
+  for (const text of ['["\\u006dcp_servers".jack]\ncommand = "x"\n', '"\\u006dcp_servers".jack.command = "x"\n']) {
+    assert.deepEqual(read(text), { names: [], inline: false, form: true }, text);
+  }
+});
+
+// Every row a B3 ran against codex-cli 0.169.0 (`codex mcp get jack`, throwaway homes, fake values, no turn),
+// with what Codex itself said: "jack" = it loads server jack (the reader must refuse), "none" = it does not,
+// "broken" = Codex refuses to load the whole file (refusing it too is right).
+const CODEX_ROWS = [
+  // B3 P2-1 on #117 (a closing quote run, then more on the line)
+  ['a = ["""q"""", """\n[x]\n"""]\nmcp_servers.jack.command = "x"\n', "jack"],
+  ["a = ['''q'''', '''\n[x]\n''']\nmcp_servers.jack.command = \"x\"\n", "jack"],
+  ['[mcp_servers]\nother = { command = "x", args = ["""say "hi"""", """\n[y]\n"""] }\njack = { command = "x" }\n', "jack"],
+  ['x = { a = """q"""", b = """\n[x]\n""" }\nmcp_servers.jack.command = "x"\n', "jack"],
+  ["x = { a = '''q'''', b = '''\n[x]\n''' }\nmcp_servers.jack.command = \"x\"\n", "jack"],
+  ['x = { a = """q"""", b = """\nnone\n""" }\nmcp_servers.jack.command = "x"\n', "jack"],
+  // B3 P2-2 on #117 (a `[` line inside a multi-line array)
+  ['arr = [\n  [1, 2],\n]\nmcp_servers.jack.command = "x"\n', "jack"],
+  ['arr = [\n[1],\n]\nmcp_servers.jack.command = "x"\n', "jack"],
+  // B3 delta on #116 (multi-line strings)
+  ['developer_instructions = """\n[x]\n"""\nmcp_servers.jack.command = "x"\n', "jack"],
+  ['developer_instructions = """\n[x]\n"""\nmcp_servers.jack.url = "u"\nmcp_servers.jack.bearer_token_env_var = "OWNER_TOKEN_NAME"\n', "jack"],
+  ['[mcp_servers]\nother = { command = "x", args = ["""\n[y]\n"""] }\njack = { command = "x" }\n', "jack"],
+  // B3 on #116 (forms)
+  ['["mcp_servers".jack]\ncommand = "x"\n', "jack"],
+  ["['mcp_servers'.jack]\ncommand = \"x\"\n", "jack"],
+  ['["mcp_servers"]\njack = { command = "x" }\n', "jack"],
+  ['"mcp_servers".jack.command = "x"\n', "jack"],
+  ['[mcp_servers."\\u006aack"]\ncommand = "x"\n', "jack"],
+  ['["\\u006dcp_servers".jack]\ncommand = "x"\n', "jack"],
+  ['"\\u006dcp_servers".jack.command = "x"\n', "jack"],
+  ['[ mcp_servers . jack ]\ncommand = "x"\n', "jack"],
+  ['[\tmcp_servers.jack\t]\ncommand = "x"\n', "jack"],
+  ['[mcp_servers.jack] # mine\ncommand = "x"\n', "jack"],
+  ['\uFEFF[mcp_servers.jack]\r\ncommand = "x"\r\n', "jack"],
+  ["[mcp_servers.'jack']\ncommand = \"x\"\n", "jack"],
+  ['[mcp_servers]\n"jack" = { command = "x" }\n', "jack"],
+  ['[mcp_servers]\njack.command = "x"\n', "jack"],
+  ['mcp_servers.jack = { command = "x" }\n', "jack"],
+  ['[mcp_servers.jack.env]\nX = "1"\n', "broken"],
+  [`# ${"c".repeat(2 * 1024 * 1024)}\n[mcp_servers.jack]\ncommand = "x"\n`, "jack"],
+  ['[projects."/w"]\nmcp_servers.jack.command = "x"\n', "none"],
+  ['[profiles.p]\nmcp_servers = { jack = {} }\n', "none"],
+  ['[profiles.p.mcp_servers.jack]\ncommand = "x"\n', "none"],
+  ['[mcp_servers.JACK]\ncommand = "x"\n', "none"],
+  ["", "none"],
+  ['[other]\nx = 1\n', "none"],
+  ['[mcp_servers]\n[other]\njack = 1\n', "none"],
+  ['notes = """\n[mcp_servers.jack]\n"""\n', "none"],
+  ["notes = '''\n[mcp_servers.jack]\n'''\n", "none"],
+  // B3 P3-1 on #117 (2nd review): a # inside a ''' string is text, not a comment
+  ["notes = '''#\n'''\n[mcp_servers.other]\ncommand = \"x\"\n", "none"],
+  ["notes = '''#\n'''\nmcp_servers.jack.command = \"x\"\n", "jack"],
+  ['a = "x\\"\\"\\"" # """\n[mcp_servers.other]\ncommand = "x"\n', "none"],
+];
+
+test("B3 P2-1/P2-2 on #117: the reader agrees with Codex on every row a review ran", () => {
+  for (const [text, codexSays] of CODEX_ROWS) {
+    const { names, inline, form } = codexServerNames(text);
+    assert.equal(names.has("jack") || inline || form, codexSays !== "none", JSON.stringify(text.slice(0, 120)));
+  }
+  // B3 P3-1 on #117: a file that ends inside a string or an open value is not TOML: `form`, nothing parsed.
+  for (const text of ['x = """\n[mcp_servers.other]\n', "x = '''\n", "x = [\n1,\n", "x = { a = [1\n", 'x = "open\n[mcp_servers.jack]\n', "x = ]\n", 'x = """q""""""\n']) {
+    assert.equal(codexServerNames(text).form, true, JSON.stringify(text));
+  }
+});
+
+test("B3 P2-1/P2-2 on #117: on 200 seeded files of strings, quote runs, comments, nested values and CRLF, a clash after them is always found and never invented", async () => {
+  const { codexTomlFiles } = await import("./fixtures/codex-toml-gen.mjs");
+  const files = codexTomlFiles(200, 10891);
+  assert.equal(files.filter(file => file.clash).length, 100);
+  for (const [n, { text, clash }] of files.entries()) {
+    const { names, inline, form } = codexServerNames(text);
+    assert.equal(form, false, `file ${n} is valid TOML`);
+    assert.equal(inline, false, `file ${n}`);
+    assert.equal(names.has("jack"), clash, `file ${n}: ${JSON.stringify(text.slice(0, 200))}`);
+  }
+});
+
+// B3 P2-1 on #117 (2nd review): how codex-cli 0.169.0 reads a -c override, each checked with a
+// throwaway HOME, CODEX_HOME and XDG_CONFIG_HOME and `codex <args> mcp get jack --json` (no turn):
+// "jack" = Codex loaded a server jack, "none" = it did not, "error" = Codex refused to start.
+const LAUNCH_ARG_ROWS = [
+  ['-c mcp_servers.jack.command="x"', "jack"],
+  ["-c 'mcp_servers={jack={command=\"x\"}}'", "jack"],
+  ["-c 'mcp_servers.jack={command=\"x\"}'", "jack"],
+  ["-c ' mcp_servers.jack.command=\"x\"'", "jack"],
+  ["-c 'mcp_servers.jack.command =\"x\"'", "jack"],
+  ["-c 'mcp_servers.jack.command= \"x\"'", "jack"],
+  ["-c mcp_servers.jack.command=x", "jack"],
+  ["--config mcp_servers.jack.command=x", "jack"],
+  ["--config=mcp_servers.jack.command=x", "jack"],
+  ["-cmcp_servers.jack.command=x", "jack"],
+  ["-c=mcp_servers.jack.command=x", "jack"],
+  ["-c 'mcp_servers.jack.command=\"x\" '", "jack"],
+  ['-c mcp_servers.jack.command="x"=y', "jack"],
+  ["-c mcp_servers.jack.command=x -c mcp_servers.jack.enabled=false", "jack"],
+  ["-c '\"mcp_servers\".jack.command=\"x\"'", "none"],
+  ["-c \"'mcp_servers'.jack.command=x\"", "none"],
+  ["-c 'mcp_servers.\"jack\".command=\"x\"'", "none"],
+  ["-c \"mcp_servers.'jack'.command=x\"", "none"],
+  ["-c 'mcp_servers .jack.command=x'", "none"],
+  ["-c 'mcp_servers. jack.command=x'", "none"],
+  ["-c '\"mcp\\u005fservers\".jack.command=x'", "none"],
+  ["-c 'mcp_servers.\"ja\\u0063k\".command=x'", "none"],
+  ["-c .mcp_servers.jack.command=x", "none"],
+  ["-c mcp_servers.jack", "error"],
+  ["-c mcp_servers..jack.command=x", "error"],
+  // Harmless: a plain bare dotted key outside mcp_servers.
+  ['-c model="o3"', "none", false],
+  ["-c thread_unload_delay_secs=0", "none", false], // T3 passes this one itself
+  ["-c profiles.p.mcp_servers.jack.command=x", "none", false],
+  ["-c MCP_SERVERS.jack.command=x", "none", false],
+  ["-c mcp-servers.jack.command=x", "none", false],
+];
+
+test("B3 P2-1 on #117: a Codex launch argument override that is not a plain key outside mcp_servers refuses; every row Codex loads jack from refuses", () => {
+  const refusal = "T3's Codex launch arguments carry a config override Tentacles cannot check (any mcp_servers key, a quoted or spaced key, an unclosed quote, or a hidden launch-argument entry); move server definitions from T3's Codex launch arguments into the Codex config file, then send again";
+  const at = launchArgs => ({ providerInstances: { codex: { config: { launchArgs } } } });
+  for (const [args, codexSaw, refuses = true] of LAUNCH_ARG_ROWS) {
+    assert.ok(refuses || codexSaw !== "jack", args);
+    if (refuses) assert.throws(() => checkCodexLaunchArgs(at(args)), { message: refusal }, args);
+    else assert.doesNotThrow(() => checkCodexLaunchArgs(at(args)), args);
+  }
+  // A quote left open cannot be split safely; a value that is not text cannot be read.
+  for (const args of ["-c 'model=o3", '-c "model=o3', "-c model=o3 '", 42]) assert.throws(() => checkCodexLaunchArgs(at(args)), { message: refusal }, String(args));
+  // The legacy setting, and the instance environment entry T3 lets win; a hidden value refuses.
+  assert.throws(() => checkCodexLaunchArgs({ providers: { codex: { launchArgs: "-c mcp_servers.jack.url=x" } } }), { message: refusal });
+  const env = entry => ({ providerInstances: { codex: { config: { launchArgs: '-c model="o3"' }, environment: [{ name: "OTHER", value: "-c mcp_servers.x=1" }, entry] } } });
+  assert.throws(() => checkCodexLaunchArgs(env({ name: "T3CODE_CODEX_LAUNCH_ARGS", value: "-c mcp_servers.jack.url=x" })), { message: refusal });
+  for (const hidden of [{ valueRedacted: true }, { sensitive: true, value: "x" }]) assert.throws(() => checkCodexLaunchArgs(env({ name: "T3CODE_CODEX_LAUNCH_ARGS", ...hidden })), { message: refusal });
+  assert.doesNotThrow(() => checkCodexLaunchArgs(env({ name: "T3CODE_CODEX_LAUNCH_ARGS", value: "-c model=o3" })));
+  for (const nothing of [undefined, {}, at(""), at(undefined)]) assert.doesNotThrow(() => checkCodexLaunchArgs(nothing));
+});
+
+test("B3 P2-1 on #117: a launch argument server override refuses before the stop and any write; with no list or on another lab it is never read", async () => {
+  const { home, workspace, sent, stops, adapter, settings, codexFiles } = setup();
+  const codexHome = path.join(home, ".codex");
+  fs.mkdirSync(codexHome, { mode: 0o700 });
+  const file = path.join(codexHome, "config.toml");
+  const owner = '[mcp_servers.mine]\ncommand = "x"\n';
+  fs.writeFileSync(file, owner, { mode: 0o640 });
+  const config = settings.providerInstances.codex.config;
+  for (const [args, environment] of [['-c mcp_servers.jack.command="x"', undefined], ["", [{ name: "T3CODE_CODEX_LAUNCH_ARGS", value: "--config=mcp_servers.linear.url=x" }]], ["", [{ name: "T3CODE_CODEX_LAUNCH_ARGS", valueRedacted: true }]]]) {
+    config.launchArgs = args;
+    settings.providerInstances.codex.environment = environment;
+    await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack, linear]) }), /launch arguments/, args);
+    await assert.rejects(async () => adapter.continue({ threadId: "t1", message: "hi", ...codex, ...connectors([jack]) }), /launch arguments/, args);
+    assert.deepEqual([sent, stops], [[], []]);
+    assert.equal(fs.readFileSync(file, "utf8"), owner);
+    assert.equal(fs.existsSync(path.join(workspace, ".codex", "config.toml")), false);
+  }
+  delete settings.providerInstances.codex.environment;
+  let reads = 0;
+  Object.defineProperty(config, "launchArgs", { configurable: true, get() { reads += 1; return '-c mcp_servers.jack.command="x"'; } });
+  // A FIFO service.env would refuse if it were read (B3 P2-1 on #117, 3rd review).
+  fs.mkdirSync(path.dirname(codexFiles.serviceEnv));
+  execFileSync("mkfifo", [codexFiles.serviceEnv]);
+  await adapter.originate({ workspace, message: "hi", ...codex, ...connectors([]) });
+  await adapter.continue({ threadId: "t1", message: "hi", ...claude, ...connectors([jack]) });
+  assert.equal(reads, 0);
+  fs.rmSync(codexFiles.serviceEnv);
+  Object.defineProperty(config, "launchArgs", { configurable: true, writable: true, value: "-c model=o3 --enable x" });
+  await adapter.continue({ threadId: "t1", message: "hi", ...codex, ...connectors([jack]) });
+  assert.match(fs.readFileSync(path.join(workspace, ".codex", "config.toml"), "utf8"), /^\[mcp_servers\.jack\]$/m);
+});
+
+test("B3 P2-1 on #117 (3rd review): with the Codex home field blank, an instance CODEX_HOME is the home T3 uses; the name check and the trust both use it", async () => {
+  const { home, workspace, sent, stops, adapter, settings, codexFiles } = setup();
+  const config = settings.providerInstances.codex.config;
+  config.homePath = "";
+  // The reviewer's row, checked with codex-cli 0.169.0: Codex started with CODEX_HOME=<owner> merges the
+  // owner's bearer_token_env_var into the Bot's jack. The first entry loses: the last string entry wins.
+  const ownerHome = path.join(home, "owner", ".codex");
+  fs.mkdirSync(ownerHome, { recursive: true, mode: 0o700 });
+  const file = path.join(ownerHome, "config.toml");
+  const owner = '[mcp_servers.jack]\nbearer_token_env_var = "FAKE_OWNER_VAR"\n';
+  fs.writeFileSync(file, owner, { mode: 0o640 });
+  settings.providerInstances.codex.environment = [{ name: "CODEX_HOME", value: path.join(home, "first") }, { name: "OTHER", value: "x" }, { name: "CODEX_HOME", value: ownerHome }];
+  const clash = "The Codex config in the Codex home T3 uses already has a server named like one of this Bot's Jack tools (for example jack), and Codex would merge the two; rename or remove that server there, then send again";
+  const field = "T3 sets the Codex home in a way Tentacles has not proven equal to its own (for example a ~ home with HOME in T3's service.env, a hidden, blank or relative CODEX_HOME, or unreadable settings); put the absolute path of the Codex home folder into the CODEX_HOME path field of T3's Codex settings and leave the shadow home field blank, then send again";
+  await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), { message: clash });
+  await assert.rejects(async () => adapter.continue({ threadId: "t1", message: "hi", ...codex, ...connectors([jack]) }), { message: clash });
+  // A home Tentacles cannot read, or one T3 takes from HOME or service.env, refuses with one fixed text.
+  const hidden = [
+    [[{ name: "CODEX_HOME", value: ownerHome }, { name: "CODEX_HOME", valueRedacted: true }]],
+    [[{ name: "CODEX_HOME", sensitive: true, value: ownerHome }]],
+    [[{ name: "CODEX_HOME", value: { secretRef: "x" } }]],
+    [[{ name: "HOME", value: path.join(home, "owner") }]],
+    [[{ name: "HOME", valueRedacted: true }]],
+    [[], "CODEX_HOME=/somewhere\n"],
+    [[], "HOME=/somewhere\n"],
+    [[{ name: "CODEX_HOME", value: ` ${ownerHome}` }]], // T3 does not trim it
+    [[{ name: "CODEX_HOME", value: "relative/.codex" }]], // T3 resolves it against its own folder
+  ];
+  fs.mkdirSync(path.dirname(codexFiles.serviceEnv));
+  for (const [environment, serviceEnv] of hidden) {
+    settings.providerInstances.codex.environment = environment;
+    if (serviceEnv) fs.writeFileSync(codexFiles.serviceEnv, serviceEnv); else fs.rmSync(codexFiles.serviceEnv, { force: true });
+    await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), { message: field }, JSON.stringify(environment));
+  }
+  // service.env launch arguments are checked like T3's own; a FIFO service.env cannot be read.
+  fs.writeFileSync(codexFiles.serviceEnv, "T3CODE_CODEX_LAUNCH_ARGS='-c mcp_servers.jack.url=x'\n");
+  settings.providerInstances.codex.environment = [{ name: "CODEX_HOME", value: ownerHome }];
+  await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), /launch arguments carry a config override Tentacles cannot check/);
+  fs.rmSync(codexFiles.serviceEnv);
+  execFileSync("mkfifo", [codexFiles.serviceEnv]);
+  await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), { message: field });
+  fs.rmSync(codexFiles.serviceEnv);
+  assert.deepEqual([sent, stops], [[], []]);
+  assert.equal(fs.readFileSync(file, "utf8"), owner);
+  assert.equal(fs.existsSync(path.join(workspace, ".codex", "config.toml")), false);
+  // Without the clash, the trust goes into the same owner home, and the default home stays untouched.
+  fs.writeFileSync(file, '[mcp_servers.mine]\ncommand = "x"\n');
+  settings.providerInstances.codex.environment = [{ name: "CODEX_HOME", value: ownerHome }, { name: "HOME", value: "/elsewhere" }];
+  await adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) });
+  assert.ok(fs.readFileSync(file, "utf8").includes(`[projects.${JSON.stringify(workspace)}]`));
+  assert.equal(fs.existsSync(path.join(home, ".codex")), false);
+});
+
+test("B3 P2-1 on #117 (3rd review): doctor's Codex home follows T3 0.1.11, field first, then the last readable instance CODEX_HOME, never in managed mode", () => {
+  const home = "/home/owner";
+  const at = (config, environment) => codexHomeFromSettings({ providerInstances: { codex: { config, environment } } }, { home });
+  assert.equal(at({ homePath: "" }), "/home/owner/.codex"); // the unchanged default
+  assert.equal(at({}), "/home/owner/.codex");
+  assert.equal(at({ homePath: "/field" }, [{ name: "CODEX_HOME", value: "/env" }]), "/field");
+  assert.equal(at({ homePath: " " }, [{ name: "CODEX_HOME", value: "/a" }, { name: "CODEX_HOME", value: "~/b" }]), "/home/owner/b");
+  assert.equal(at({ homePath: "", setupMode: "managed" }, [{ name: "CODEX_HOME", value: "/env" }]), "/home/owner/.codex");
+  assert.equal(at({ homePath: "" }, [{ name: "CODEX_HOME", valueRedacted: true }]), "/home/owner/.codex");
+  // Doctor only: a Bot turn with a list uses codexHomeAllowed (the closed table below), which refuses
+  // a blank last CODEX_HOME such as " " (fifth review P2-2: T3 hands Codex <cwd>/" ").
+});
+
+// EACCES on one path, also when the tests run as root (CI), where mode 0000 still reads.
+async function withEacces(file, run) {
+  const { openSync } = fs;
+  fs.openSync = (target, ...rest) => {
+    if (String(target) === file) throw Object.assign(new Error(`EACCES: permission denied, open '${file}'`), { code: "EACCES" });
+    return openSync(target, ...rest);
+  };
+  syncBuiltinESMExports();
+  try { return await run(); } finally { fs.openSync = openSync; syncBuiltinESMExports(); }
+}
+
+// KRA-10891: Table 2 of the README (Local · Codex), one entry per row. "svc" is T3's
+// service.env as file text (absent when undefined, or a FIFO, folder, oversize or 0000 file).
+const OWN = "/home/owner";
+const S = (config, environment, extra = {}) => ({ providerInstances: { codex: { config, ...(environment ? { environment } : {}) } }, ...extra });
+const CH = value => ({ name: "CODEX_HOME", value });
+const REFUSE = "codex_home_field";
+const CODEX_HOME_TABLE = [
+  [1, "field absolute, direct", S({ homePath: "/field" }), undefined, "/field"],
+  [1, "field absolute, managed, HOME and hidden CODEX_HOME entries, HOME in svc", S({ homePath: "/field", setupMode: "managed" }, [{ name: "HOME", value: "/x" }, { name: "CODEX_HOME", valueRedacted: true }]), "HOME=/svc\nCODEX_HOME=/svc\n", "/field"],
+  [1, "field absolute padded (T3's schema trims it)", S({ homePath: "  /field  " }), undefined, "/field"],
+  [2, "field ~, no HOME in svc", S({ homePath: "~" }), undefined, OWN],
+  [2, "field ~/x, a HOME entry, no HOME in svc", S({ homePath: "~/x" }, [{ name: "HOME", value: "/x" }]), "OTHER=1\n", `${OWN}/x`],
+  [3, "P2-1: field ~/x, HOME in svc", S({ homePath: "~/x" }), "HOME=/svc\n", REFUSE],
+  [3, "P2-1: field ~, HOME in svc", S({ homePath: "~" }), "HOME=/svc\n", REFUSE],
+  [3, "field ~/x, managed, HOME in svc", S({ homePath: "~/x", setupMode: "managed" }), "HOME=/svc\n", REFUSE],
+  [4, "managed, field blank, no HOME in svc", S({ homePath: "", setupMode: "managed" }, [CH("/env")]), undefined, `${OWN}/.codex`],
+  [5, "P2-1: managed, field blank, HOME in svc", S({ homePath: "", setupMode: "managed" }), "HOME=/svc\n", REFUSE],
+  [6, "direct, the last of two absolute CODEX_HOME entries", S({ homePath: "" }, [CH("/a"), { name: "OTHER", value: "x" }, CH("/b")]), undefined, "/b"],
+  [6, "direct, absolute CODEX_HOME, HOME entry and HOME/CODEX_HOME in svc", S({ homePath: " " }, [{ name: "HOME", value: "/x" }, CH("/b")]), "HOME=/svc\nCODEX_HOME=/svc\n", "/b"],
+  [7, "direct, last CODEX_HOME ~/b, no HOME in svc", S({ homePath: "" }, [CH("/a"), CH("~/b")]), undefined, `${OWN}/b`],
+  [7, "direct, last CODEX_HOME ~, no HOME in svc", S({}, [CH("~")]), undefined, OWN],
+  [8, "P2-1: direct, CODEX_HOME ~/x, HOME in svc", S({ homePath: "" }, [CH("~/x")]), "HOME=/svc\n", REFUSE],
+  [8, "P2-1: direct, CODEX_HOME ~, HOME in svc", S({ homePath: "" }, [CH("~")]), "HOME=/svc\n", REFUSE],
+  [9, "a redacted CODEX_HOME before a readable one", S({ homePath: "" }, [{ name: "CODEX_HOME", valueRedacted: true }, CH("/b")]), undefined, REFUSE],
+  [9, "a sensitive CODEX_HOME", S({ homePath: "" }, [{ name: "CODEX_HOME", sensitive: true, value: "/b" }]), undefined, REFUSE],
+  [9, "a CODEX_HOME that is not a string", S({ homePath: "" }, [{ name: "CODEX_HOME", value: { secretRef: "x" } }]), undefined, REFUSE],
+  [10, "P2-2: last CODEX_HOME one space", S({ homePath: "" }, [CH("/a"), CH(" ")]), undefined, REFUSE],
+  [10, "P2-2: last CODEX_HOME tab and newline", S({ homePath: "" }, [CH("\t\n")]), undefined, REFUSE],
+  [10, "last CODEX_HOME padded", S({ homePath: "" }, [CH(" /a")]), undefined, REFUSE],
+  [10, "last CODEX_HOME relative", S({ homePath: "" }, [CH("relative/.codex")]), undefined, REFUSE],
+  [10, "last CODEX_HOME ~\\x", S({ homePath: "" }, [CH("~\\x")]), undefined, REFUSE],
+  [10, "last CODEX_HOME ~user/x", S({ homePath: "" }, [CH("~user/x")]), undefined, REFUSE],
+  [11, "last CODEX_HOME exactly empty", S({ homePath: "" }, [CH("/a"), CH("")]), undefined, REFUSE],
+  [12, "direct, no entries, service.env absent", S({ homePath: "" }), undefined, `${OWN}/.codex`],
+  [12, "direct, other entries only, other svc names", S({}, [{ name: "OTHER", value: "x" }]), "OTHER=x\nT3CODE_CODEX_LAUNCH_ARGS=\n", `${OWN}/.codex`],
+  [13, "direct, no CODEX_HOME, a HOME entry", S({ homePath: "" }, [{ name: "HOME", value: "/x" }]), undefined, REFUSE],
+  [13, "direct, no CODEX_HOME, a hidden HOME entry", S({ homePath: "" }, [{ name: "HOME", valueRedacted: true }]), undefined, REFUSE],
+  [14, "direct, no instance CODEX_HOME, CODEX_HOME in svc", S({ homePath: "" }), "CODEX_HOME=/svc\n", REFUSE],
+  [14, "direct, no instance CODEX_HOME, HOME in svc", S({ homePath: "" }), "HOME=/svc\n", REFUSE],
+  [15, "an entry codex_home", S({ homePath: "" }, [{ name: "codex_home", value: "/x" }]), undefined, REFUSE],
+  [15, "an entry Home with a ~ field", S({ homePath: "~/x" }, [{ name: "Home", value: "/x" }]), undefined, REFUSE],
+  [15, "svc home, managed", S({ homePath: "", setupMode: "managed" }), "home=/svc\n", REFUSE],
+  [16, "svc a FIFO", S({ homePath: "~/x" }), "fifo", REFUSE],
+  [16, "svc a folder", S({ homePath: "" }), "dir", REFUSE],
+  [16, "svc over 64 KiB", S({ homePath: "" }), "big", REFUSE],
+  [16, "svc unreadable (EACCES)", S({ homePath: "" }), "eacces", REFUSE],
+  [17, "settings call failed", undefined, undefined, REFUSE],
+  [17, "no providerInstances", {}, undefined, REFUSE],
+  [17, "providerInstances.codex null", { providerInstances: { codex: null } }, undefined, REFUSE],
+  [17, "providerInstances.codex an array", { providerInstances: { codex: [] } }, undefined, REFUSE],
+  [17, "config an array", { providerInstances: { codex: { config: [] } } }, undefined, REFUSE],
+  [17, "environment an object", { providerInstances: { codex: { config: {}, environment: {} } } }, undefined, REFUSE],
+  [17, "homePath a number", S({ homePath: 1 }), undefined, REFUSE],
+  [18, "field relative", S({ homePath: "x/.codex" }), undefined, REFUSE],
+  [18, "field ~user/x", S({ homePath: "~user/x" }), undefined, REFUSE],
+  [18, "field ~\\x", S({ homePath: "~\\x" }), undefined, REFUSE],
+  [19, "no instance field, a legacy providers.codex.homePath", S({}, undefined, { providers: { codex: { homePath: "/legacy" } } }), undefined, REFUSE],
+  [19, "no instance field, a legacy homePath that is not text", S({}, undefined, { providers: { codex: { homePath: 1 } } }), undefined, REFUSE],
+  [12, "no instance field, a blank legacy homePath", S({}, undefined, { providers: { codex: { homePath: "" } } }), undefined, `${OWN}/.codex`],
+  [20, "shadow home set, with row 1 (field absolute)", S({ homePath: "/field", shadowHomePath: "/shadow" }), undefined, REFUSE],
+  [20, "shadow home set, with row 2 (field ~/x)", S({ homePath: "~/x", shadowHomePath: "~/shadow" }), undefined, REFUSE],
+  [20, "shadow home set, with row 4 (managed, field blank)", S({ homePath: "", setupMode: "managed", shadowHomePath: "/shadow" }), undefined, REFUSE],
+  [20, "shadow home set, with row 6 (absolute CODEX_HOME)", S({ homePath: "", shadowHomePath: "/shadow" }, [CH("/b")]), undefined, REFUSE],
+  [20, "shadow home set, with row 7 (CODEX_HOME ~/b)", S({ homePath: "", shadowHomePath: "/shadow" }, [CH("~/b")]), undefined, REFUSE],
+  [20, "shadow home set, with row 12 (nothing else set)", S({ homePath: "", shadowHomePath: "/shadow" }), undefined, REFUSE],
+  [20, "shadow home a non-string", S({ homePath: "/field", shadowHomePath: 1 }), undefined, REFUSE],
+  [1, "shadow home blank passes", S({ homePath: "/field", shadowHomePath: "" }), undefined, "/field"],
+  [12, "shadow home whitespace only passes as blank", S({ homePath: "", shadowHomePath: "  " }), undefined, `${OWN}/.codex`],
+];
+
+test("KRA-10891 Codex home allow-list: every row of the closed table", async () => {
+  const field = "T3 sets the Codex home in a way Tentacles has not proven equal to its own (for example a ~ home with HOME in T3's service.env, a hidden, blank or relative CODEX_HOME, or unreadable settings); put the absolute path of the Codex home folder into the CODEX_HOME path field of T3's Codex settings and leave the shadow home field blank, then send again";
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "codex-home-table-")));
+  const rows = new Set();
+  try {
+    for (const [row, name, settings, svc, expected] of CODEX_HOME_TABLE) {
+      rows.add(row);
+      const file = path.join(root, `service-${rows.size}-${name.length}.env`);
+      fs.rmSync(file, { recursive: true, force: true });
+      if (svc === "fifo") execFileSync("mkfifo", [file]);
+      else if (svc === "dir") fs.mkdirSync(file);
+      else if (svc === "big") fs.writeFileSync(file, `OTHER=${"x".repeat(64 * 1024)}\n`);
+      else if (svc === "eacces") fs.writeFileSync(file, "OTHER=1\n");
+      else if (svc !== undefined) fs.writeFileSync(file, svc);
+      const home = () => codexHomeAllowed(settings, readT3ServiceEnv(file), { home: OWN });
+      const run = svc === "eacces" ? () => withEacces(file, home) : async () => home();
+      if (expected === REFUSE) await assert.rejects(run, { message: field }, `row ${row}: ${name}`);
+      else assert.equal(await run(), expected, `row ${row}: ${name}`);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  assert.deepEqual([...rows].sort((a, b) => a - b), Array.from({ length: 20 }, (_, i) => i + 1));
+  // Row 17 on a real turn: a failing settings call refuses before the stop and any write.
+  const { workspace, sent, stops, adapter } = setup();
+  adapter.client = { getSettings: async () => { throw new Error("settings unavailable"); } };
+  await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), { message: field });
+  assert.deepEqual([sent, stops], [[], []]);
+  assert.equal(fs.existsSync(path.join(workspace, ".codex", "config.toml")), false);
+});
+
+test("B3 P3-1 on #117 (fifth review): EACCES or ENOTDIR on a Codex layer refuses with that layer's fixed text", async () => {
+  const { home, workspace, sent, stops, adapter, codexFiles } = setup();
+  const system = "A system Codex config file (/etc/codex/config.toml or /etc/codex/managed_config.toml) has a server named like one of this Bot's Jack tools, or one Tentacles cannot read, and Codex would merge it into the Bot's; remove that server there, then send again";
+  const project = "A .codex/config.toml in a folder above this Bot workspace has a server named like one of this Bot's Jack tools, or one Tentacles cannot read, and Codex merges it into the Bot's when that folder's project is trusted; remove that server there, then send again";
+  // EACCES: a root-only managed_config.toml stand-in.
+  fs.mkdirSync(path.dirname(codexFiles.system[1]));
+  fs.writeFileSync(codexFiles.system[1], '[mcp_servers.other]\ncommand = "x"\n');
+  await withEacces(codexFiles.system[1], () => assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), { message: system }));
+  fs.rmSync(codexFiles.system[1]);
+  // ENOTDIR: a file named .codex in a folder above the Bot workspace.
+  const above = path.join(home, ".jack-local-scratch", ".codex");
+  fs.mkdirSync(path.dirname(above), { recursive: true });
+  fs.writeFileSync(above, "not a folder\n");
+  await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), { message: project });
+  assert.deepEqual([sent, stops], [[], []]);
+  fs.rmSync(above);
+  await adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) });
+  assert.equal(sent.length, 1);
+});
+
+test("B3 P3-3 on #117 (fifth review): service.env is found under TENTACLES_T3_HOME, else T3CODE_HOME, else ~/.t3", () => {
+  const at = env => codexOuterFiles({ home: "/home/owner", env }).serviceEnv;
+  assert.equal(at({ TENTACLES_T3_HOME: "/t3-base", T3CODE_HOME: "/other" }), "/t3-base/service.env");
+  assert.equal(at({ TENTACLES_T3_HOME: " ", T3CODE_HOME: "/other" }), "/other/service.env");
+  assert.equal(at({}), "/home/owner/.t3/service.env");
+});
+
+test("B3 P3-1 on #117 (3rd review): the turn reads the owner's config.toml and Codex's system layers bounded; too large, a FIFO or a Bot-named system server refuses before the stop", async () => {
+  const { home, workspace, sent, stops, adapter, settings, codexFiles } = setup();
+  // B3 P3-4 (fifth review): the Codex home is not a .codex in a folder above the Bot
+  // workspace, so only the home read itself can refuse here, with its exact text.
+  const codexHome = path.join(home, "owner-codex");
+  settings.providerInstances.codex.config.homePath = codexHome;
+  fs.mkdirSync(codexHome, { mode: 0o700 });
+  const file = path.join(codexHome, "config.toml");
+  const form = "The Codex config in the Codex home T3 uses keeps servers in a form Tentacles does not read; write each server as its own [mcp_servers.<name>] table, then send again";
+  // Valid TOML of 1 MiB + 1 byte: an unbounded read would pass it.
+  const big = `${"#".repeat(1024 * 1024 - 1)}\n\n`;
+  fs.writeFileSync(file, big);
+  await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), { message: form });
+  assert.equal(fs.readFileSync(file, "utf8"), big);
+  fs.rmSync(file);
+  execFileSync("mkfifo", [file]);
+  await assert.rejects(async () => adapter.continue({ threadId: "t1", message: "hi", ...codex, ...connectors([jack]) }), { message: form });
+  fs.rmSync(file);
+  const system = "A system Codex config file (/etc/codex/config.toml or /etc/codex/managed_config.toml) has a server named like one of this Bot's Jack tools, or one Tentacles cannot read, and Codex would merge it into the Bot's; remove that server there, then send again";
+  fs.mkdirSync(path.dirname(codexFiles.system[0]));
+  for (const layer of codexFiles.system) {
+    // Checked with codex-cli 0.169.0 (a throwaway /etc in a user namespace): both files load a server.
+    for (const text of ['[mcp_servers.jack]\nbearer_token_env_var = "FAKE_SYS_VAR"\n', 'mcp_servers = { jack = {} }\n']) {
+      fs.writeFileSync(layer, text);
+      await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), { message: system }, layer);
+    }
+    fs.writeFileSync(layer, '[mcp_servers.other]\ncommand = "x"\n'); // another name passes
+  }
+  // A folder above the Bot workspace (a trusted git root merges each one; checked with codex-cli 0.169.0).
+  const above = path.join(home, ".jack-local-scratch", ".codex");
+  fs.mkdirSync(above, { recursive: true });
+  const project = "A .codex/config.toml in a folder above this Bot workspace has a server named like one of this Bot's Jack tools, or one Tentacles cannot read, and Codex merges it into the Bot's when that folder's project is trusted; remove that server there, then send again";
+  for (const text of ['[mcp_servers.jack]\nbearer_token_env_var = "FAKE_MID"\n', "mcp_servers = { other = {} }\n", "x = '''\n"]) {
+    fs.writeFileSync(path.join(above, "config.toml"), text);
+    await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), { message: project }, text);
+  }
+  fs.writeFileSync(path.join(above, "config.toml"), '[mcp_servers.other]\ncommand = "x"\n');
+  assert.deepEqual([sent, stops], [[], []]);
+  assert.equal(fs.existsSync(path.join(workspace, ".codex", "config.toml")), false);
+  await adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) });
+  assert.equal(sent.length, 1);
 });
 
 test("KRA-10891: doctor names a stale agent-jack server in the Codex home T3 uses, with one fix", async (t) => {
@@ -978,6 +1435,17 @@ test("KRA-10891: doctor names a stale agent-jack server in the Codex home T3 use
   const fifo = await doctor(client, { fetchImpl });
   assert.equal(fifo.labs.find(lab => lab.instanceId === "codex").staleJackServer, undefined);
   assert.doesNotMatch(formatDoctor(fifo), /Stale Codex server/);
+  assert.equal(readSmallRegularFile(config, 1024 * 1024), null);
+  // B3 P3-3 on #116: a link to a character device (size 0) is not read at all.
+  if (fs.existsSync("/dev/zero")) {
+    fs.rmSync(config);
+    fs.symlinkSync("/dev/zero", config);
+    assert.equal(readSmallRegularFile(config, 1024 * 1024), null);
+    assert.equal((await doctor(client, { fetchImpl })).labs.find(lab => lab.instanceId === "codex").staleJackServer, undefined);
+  }
+  fs.rmSync(config);
+  fs.writeFileSync(config, "[mcp_servers.agent-jack]\n");
+  assert.equal(readSmallRegularFile(config, 1024 * 1024), "[mcp_servers.agent-jack]\n");
 });
 
 // Every file under `root` outside `skip`, with its bytes: the owner's files, compared whole.
@@ -1158,6 +1626,42 @@ test("KRA-10869: Jack's tools reach Local Antigravity as a workspace plugin, opt
   await adapter.continue({ threadId: "t1", message: "again", ...antigravity, ...connectors([]) });
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(plugin, "mcp_config.json"), "utf8")).mcpServers, {});
   assert.equal(JSON.stringify(sent).includes("synthetic-turn-token"), false);
+});
+
+test("B3 P3-1/P3-2 on #113: Antigravity refuses inside a git repository and never adopts an owner's jack-tools folder", async (t) => {
+  tryLab(t, "antigravity");
+  const { home, workspace, stops, adapter } = setup();
+  await adapter.originate({ workspace, message: "plain", ...antigravity });
+  const dir = path.join(workspace, ".agents", "plugins", "jack-tools");
+  const notOurs = /^Error: This Bot workspace has a \.agents\/plugins\/jack-tools plugin that Tentacles did not write; remove that folder, then send again$/;
+  const inGit = /^Error: This Bot workspace is inside a git repository, where Antigravity reads the repository's own \.agents plugins; run this Bot on Server to use Jack tools$/;
+  // P3-2: a hooks.json-only folder, and our two files plus one extra entry, refuse whatever the marker says.
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "hooks.json"), "{}\n");
+  for (const message of ["again", "clear"]) {
+    await assert.rejects(adapter.continue({ threadId: "t1", message, ...antigravity, ...connectors(message === "clear" ? [] : [learn]) }), notOurs);
+  }
+  assert.deepEqual(fs.readdirSync(dir), ["hooks.json"]);
+  fs.rmSync(path.join(workspace, ".agents"), { recursive: true });
+  await adapter.continue({ threadId: "t1", message: "again", ...antigravity, ...connectors([learn]) });
+  const config = fs.readFileSync(path.join(dir, "mcp_config.json"), "utf8");
+  fs.mkdirSync(path.join(dir, "rules"));
+  const stopped = stops.length;
+  await assert.rejects(adapter.continue({ threadId: "t1", message: "again", ...antigravity, ...connectors([learn]) }), notOurs);
+  assert.equal(fs.readFileSync(path.join(dir, "mcp_config.json"), "utf8"), config);
+  assert.equal(stops.length, stopped);
+  fs.rmSync(path.join(dir, "rules"), { recursive: true });
+  // P3-1: a .git in a parent or in the Bot workspace itself refuses before the stop, and nothing is written.
+  for (const repo of [home, workspace]) {
+    fs.mkdirSync(path.join(repo, ".git"));
+    await assert.rejects(adapter.continue({ threadId: "t1", message: "again", ...antigravity, ...connectors([jack]) }), inGit);
+    assert.equal(fs.readFileSync(path.join(dir, "mcp_config.json"), "utf8"), config);
+    assert.equal(stops.length, stopped);
+    fs.rmSync(path.join(repo, ".git"), { recursive: true });
+  }
+  // Another lab's turn never walks for Antigravity.
+  fs.mkdirSync(path.join(home, ".git"));
+  await adapter.continue({ threadId: "t1", message: "docs", ...claude, ...connectors([learn]) });
 });
 
 test("KRA-10869: an Antigravity plugin Tentacles did not write refuses before the stop; switched off, nothing is read or written", async (t) => {

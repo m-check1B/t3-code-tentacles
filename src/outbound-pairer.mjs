@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { ensureLocalTalkWorkspace } from "./local-talk-workspace.mjs";
 import { BOT_CONNECTOR_REFUSALS } from "./bot-connector-refusals.mjs";
-import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, botConnectorProviders, checkBotConnectorPaths, checkCodexServerNames, codexHomeFor, commitCodexTrust, connectorsNeedRestart, GROK_TRUST_MARKER, grokHomeFor, planGrokTrust, planGrokUntrust, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors, writePrivate } from "./bot-connectors.mjs";
+import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, botConnectorProviders, checkBotConnectorPaths, checkCodexAncestorLayers, codexHomeAllowed, checkCodexLaunchArgs, checkCodexServerNames, codexOuterFiles, commitCodexTrust, readT3ServiceEnv, connectorsNeedRestart, GROK_TRUST_MARKER, grokHomeFor, planGrokTrust, planGrokUntrust, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors, writePrivate } from "./bot-connectors.mjs";
 import { privateModeOk } from "./platform.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { refusalOf } from "./refusal-codes.mjs";
@@ -45,7 +45,7 @@ const CONTINUE_PARAM_KEYS = new Set([
 function readGrokMarker(file) {
   try {
     const found = fs.lstatSync(file).isFile() && /^(\d{1,15})\n?(?:(\/[^\n]+)\n)?$/.exec(fs.readFileSync(file, "utf8"));
-    return found ? { decidedAt: found[1], home: found[2] ? path.normalize(found[2]) : undefined } : null;
+    return found ? { decidedAt: found[1], home: found[2] ? path.resolve(found[2]) : undefined } : null;
   } catch { return null; }
 }
 
@@ -269,6 +269,7 @@ export class LoopbackRuntimeAdapter {
     interruptOptions = {},
     capabilityCache = null,
     frameBytes = DEFAULT_MAX_FRAME_BYTES,
+    codexFiles = codexOuterFiles(),
   }) {
     if (!client) throw new Error("Loopback runtime requires a T3 client");
     this.client = client;
@@ -285,6 +286,7 @@ export class LoopbackRuntimeAdapter {
     this.threadEventsDirectory = threadEventsDirectory;
     this.capabilityCache = capabilityCache;
     this.frameBytes = frameBytes;
+    this.codexFiles = codexFiles;
     this.withThreadLock = createThreadLock();
     this.interrupter = new TurnInterrupter({
       readTurnResult: (tuple) => this.turnResult(tuple),
@@ -341,8 +343,14 @@ export class LoopbackRuntimeAdapter {
     // The lab's own folder-trust table (Codex or Grok), planned before the stop.
     const codexTrust = !servers?.length ? undefined
       : instanceId === "codex" ? await (async () => {
-        const codexHome = await codexHomeFor(this.client);
-        checkCodexServerNames(codexHome, servers.map(server => server.name));
+        let settings;
+        try { settings = await this.client.getSettings(); } catch { /* unreadable: the home allow-list refuses (row 17) */ }
+        const serviceEnv = readT3ServiceEnv(this.codexFiles.serviceEnv);
+        checkCodexLaunchArgs(settings, serviceEnv.T3CODE_CODEX_LAUNCH_ARGS);
+        // KRA-10891: the name check and the trust table use exactly the one allowed home.
+        const codexHome = codexHomeAllowed(settings, serviceEnv);
+        checkCodexServerNames(codexHome, servers.map(server => server.name), this.codexFiles.system);
+        checkCodexAncestorLayers(workspace, servers.map(server => server.name));
         return planCodexTrust(codexHome, workspace);
       })()
         : grokHome ? planGrokTrust(grokHome, workspace) : undefined;
