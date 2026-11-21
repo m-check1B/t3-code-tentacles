@@ -29,7 +29,7 @@ export const BOT_CONNECTOR_PROVIDERS = Object.freeze(["claudeAgent", "codex"]);
 // Labs whose road is built but not yet proven by a real turn (KRA-10869). They are
 // admitted and advertised only when the owner names them for a proof run:
 // TENTACLES_JACK_TOOLS_TRY=grok. A proven lab moves into BOT_CONNECTOR_PROVIDERS.
-export const UNPROVEN_BOT_CONNECTOR_PROVIDERS = Object.freeze(["grok"]);
+export const UNPROVEN_BOT_CONNECTOR_PROVIDERS = Object.freeze(["grok", "cursor"]);
 export function botConnectorProviders(env = process.env) {
   const tried = String(env.TENTACLES_JACK_TOOLS_TRY ?? "").split(",").map(value => value.trim());
   return Object.freeze([...BOT_CONNECTOR_PROVIDERS, ...UNPROVEN_BOT_CONNECTOR_PROVIDERS.filter(id => tried.includes(id))]);
@@ -46,6 +46,10 @@ export const BOT_CONNECTOR_PARAM_KEYS = Object.freeze(["mcpServers", "mcpScope",
 export const MCP_FILE = ".mcp.json";
 export const CODEX_DIR = ".codex";
 export const CODEX_FILE = path.join(CODEX_DIR, "config.toml");
+// T3 runs Cursor through @cursor/sdk with the `project` setting source on
+// full-access turns; its local loader reads this file with approvals ignored.
+export const CURSOR_DIR = ".cursor";
+export const CURSOR_FILE = path.join(CURSOR_DIR, "mcp.json");
 
 const NAME = /^[A-Za-z0-9_-]{1,100}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -173,15 +177,15 @@ function realDirectory(directory) {
 /**
  * Read-only: refuses, before any session stop, every workspace shape the writer
  * would refuse later. `.claude` and `.codex` must be real directories (or
- * absent) and the three files must not be directories. The Bot can plant either.
+ * absent) and the four files must not be directories. The Bot can plant either.
  */
 export function checkBotConnectorPaths(workspace) {
   const kind = file => { try { return lstatSync(file); } catch (error) { if (error.code === "ENOENT") return null; throw error; } };
-  for (const directory of [path.dirname(GUARD_FILE), CODEX_DIR]) {
+  for (const directory of [path.dirname(GUARD_FILE), CODEX_DIR, CURSOR_DIR]) {
     const info = kind(path.join(workspace, directory));
     if (info && (!info.isDirectory() || info.isSymbolicLink())) throw new Error(R.realDirectory);
   }
-  for (const file of [MCP_FILE, CODEX_FILE, GUARD_FILE]) {
+  for (const file of [MCP_FILE, CODEX_FILE, CURSOR_FILE, GUARD_FILE]) {
     if (kind(path.join(workspace, file))?.isDirectory()) throw new Error(R.fileIsDirectory);
   }
 }
@@ -351,6 +355,8 @@ export function writeBotConnectors(workspace, prepared, servers, { codexHome, co
     ...(server.headers.length ? { headers: Object.fromEntries(server.headers.map(header => [header.name, header.value])) } : {}),
   }]));
   writePrivate(path.join(workspace, MCP_FILE), `${JSON.stringify({ mcpServers }, null, 2)}\n`);
+  realDirectory(path.join(workspace, CURSOR_DIR));
+  writePrivate(path.join(workspace, CURSOR_FILE), `${JSON.stringify({ mcpServers }, null, 2)}\n`);
   realDirectory(path.join(workspace, CODEX_DIR));
   writePrivate(path.join(workspace, CODEX_FILE), `# Written by Tentacles before every Jack Bot turn.\n${codexToml(servers)}`);
   // Claude Code asks before it loads a project `.mcp.json`; a Bot turn has

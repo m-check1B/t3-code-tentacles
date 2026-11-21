@@ -20,6 +20,7 @@ const connectors = (servers, extra = {}) => ({ mcpServers: servers, mcpScope: sc
 const claude = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
 const codex = { instanceId: "codex", model: "gpt-6-astra" };
 const grok = { instanceId: "grok", model: "grok-4.7" };
+const cursor = { instanceId: "cursor", model: "composer-2.5" };
 // Jack's paired_mcp_workspace for this scope.
 const seatDigest = (value = scope) => createHash("sha256").update(`${value.businessId}:${value.seatId}`).digest("hex");
 
@@ -381,7 +382,7 @@ test("B3 P3-2 on #101: a planted .codex or .claude link, or a directory file tar
   const { home, workspace, stops, adapter } = setup();
   await adapter.originate({ workspace, message: "hi", ...codex, ...connectors([learn]) });
   const threadId = "11111111-2222-4333-8444-555555555555";
-  const snapshot = () => ["", ".codex/config.toml", ".mcp.json", ".claude/settings.local.json"].map(name => {
+  const snapshot = () => ["", ".codex/config.toml", ".cursor/mcp.json", ".mcp.json", ".claude/settings.local.json"].map(name => {
     try { return fs.readFileSync(path.join(workspace, name), "utf8"); } catch (error) { return error.code; }
   });
   const elsewhere = fs.mkdtempSync(path.join(home, "elsewhere-"));
@@ -390,6 +391,7 @@ test("B3 P3-2 on #101: a planted .codex or .claude link, or a directory file tar
     [".claude", () => { fs.rmSync(path.join(workspace, ".claude"), { recursive: true }); fs.symlinkSync(elsewhere, path.join(workspace, ".claude")); }, /real directory|director/],
     // B3 P3-3 on #105: the custody guard refuses with a fixed text and leaves no temp file.
     [".claude/settings.local.json", () => { fs.mkdirSync(path.join(workspace, ".claude"), { recursive: true, mode: 0o700 }); fs.rmSync(path.join(workspace, ".claude/settings.local.json"), { force: true }); fs.mkdirSync(path.join(workspace, ".claude/settings.local.json")); }, { message: "Talk instruction guard file must not be a directory" }],
+    [".cursor", () => { fs.rmSync(path.join(workspace, ".cursor"), { recursive: true, force: true }); fs.symlinkSync(elsewhere, path.join(workspace, ".cursor")); }, /real directory/],
     [".mcp.json", () => { fs.rmSync(path.join(workspace, ".mcp.json")); fs.mkdirSync(path.join(workspace, ".mcp.json")); }, /must not be a directory/],
   ];
   for (const [name, plant, message] of plants) {
@@ -452,9 +454,9 @@ test("B3 P2-1 on #102: an older Agent Jack's Bot with no plugins gives T3 the sa
 });
 
 // Grok's road is unproven (no signed-in Grok on dev-workers): the owner opts in for a proof run.
-function tryGrok(t) {
+function tryGrok(t, labs = "grok") {
   const before = process.env.TENTACLES_JACK_TOOLS_TRY;
-  process.env.TENTACLES_JACK_TOOLS_TRY = "grok";
+  process.env.TENTACLES_JACK_TOOLS_TRY = labs;
   t.after(() => { if (before === undefined) delete process.env.TENTACLES_JACK_TOOLS_TRY; else process.env.TENTACLES_JACK_TOOLS_TRY = before; });
 }
 
@@ -468,8 +470,8 @@ test("KRA-10869: Grok is unproven, so it is refused and not advertised unless th
   assert.equal(fs.existsSync(path.join(workspace, ".mcp.json")), false);
   const doctor = new LoopbackRuntimeAdapter({ client: {}, doctorImpl: async () => ({ capabilities: { talkTurnResult: "v1" } }) });
   assert.deepEqual([...(await doctor.doctorStatus()).capabilities.jackMcpProviders], ["claudeAgent", "codex"]);
-  process.env.TENTACLES_JACK_TOOLS_TRY = "grok, cursor";
-  assert.deepEqual([...(await doctor.doctorStatus()).capabilities.jackMcpProviders], ["claudeAgent", "codex", "grok"]);
+  process.env.TENTACLES_JACK_TOOLS_TRY = "grok, cursor, antigravity";
+  assert.deepEqual([...(await doctor.doctorStatus()).capabilities.jackMcpProviders], ["claudeAgent", "codex", "grok", "cursor"]);
 });
 
 test("KRA-10869: Jack's tools reach Local Grok through the folder's .mcp.json once Grok trusts the Bot workspace", async (t) => {
@@ -524,4 +526,26 @@ test("KRA-10869: the Grok trust entry respects the owner's file and refuses form
   fs.rmSync(file);
   fs.symlinkSync(path.join(home, "elsewhere.toml"), file);
   assert.throws(() => planGrokTrust(home, "/w"), /is a link/);
+});
+
+test("KRA-10869: Jack's tools reach Local Cursor through the folder's .cursor/mcp.json, opt-in until a real T3 turn proves it", async (t) => {
+  const { home, workspace, sent, stops, adapter } = setup();
+  await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...cursor, ...connectors([learn]) }), /not supported on this lab/);
+  tryGrok(t, "cursor");
+  const reply = await adapter.originate({ workspace, message: "weather?", ...cursor, ...connectors([jack, linear, learn]) });
+  const file = path.join(workspace, ".cursor", "mcp.json");
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")).mcpServers, {
+    jack: { type: "http", url: `${ORIGIN}/mcp`, headers: { Authorization: "Bearer synthetic-turn-token" } },
+    linear: { type: "http", url: `${ORIGIN}/mcp/connectors/linear`, headers: { Authorization: "Bearer synthetic-turn-token" } },
+    "microsoft-learn": { type: "http", url: PUBLIC_MCP_URL },
+  });
+  // The SDK ignores approvals on T3's road, so nothing outside the Bot workspace is written.
+  assert.equal(fs.existsSync(path.join(home, ".cursor")), false);
+  assert.equal(JSON.stringify([reply, sent]).includes("synthetic-turn-token"), false);
+  await adapter.continue({ threadId: "t1", message: "again", ...cursor, ...connectors([jack]) });
+  assert.deepEqual(stops, ["t1"]);
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(file, "utf8")).mcpServers), ["jack"]);
+  await adapter.continue({ threadId: "t1", message: "again", ...cursor, ...connectors([]) });
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")).mcpServers, {});
 });
