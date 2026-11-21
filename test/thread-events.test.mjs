@@ -382,3 +382,17 @@ test("KRA-8998: the sequence-gap finder refuses a cursor that is not a safe inte
   }
   assert.equal(findSequenceGap(null, 4), 5, "a malformed page at a valid cursor still reports the next sequence");
 });
+
+test("B3 P3-1 on #106: a new wording for a journaled tool line keeps the stored line and the sync going", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "thread-events-"));
+  const line = (summary) => [{ eventId: "tool:item:i1", kind: "tool_summary", occurredAt: WHEN, payload: { summary } }];
+  // Journaled with the words main used after #103, re-read with jack.20's words.
+  recordThreadEvents(THREAD, line("Searched the web"), { directory });
+  const journal = recordThreadEvents(THREAD, [...line("Read a web page"),
+    { eventId: "message:a9", kind: "message", occurredAt: WHEN, payload: { role: "assistant", text: "next", messageId: "a9" } }], { directory });
+  assert.deepEqual(journal.map((event) => [event.sequence, event.eventId, event.payload.summary ?? event.payload.text]),
+    [[1, "tool:item:i1", "Searched the web"], [2, "message:a9", "next"]]);
+  // Only tool lines relax: a tool_summary id reused for another kind still fails closed.
+  assert.throws(() => recordThreadEvents(THREAD, [{ eventId: "tool:item:i1", kind: "message", occurredAt: WHEN,
+    payload: { role: "assistant", text: "x", messageId: "x" } }], { directory }), /Source event changed/);
+});
