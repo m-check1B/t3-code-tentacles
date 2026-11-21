@@ -554,14 +554,20 @@ export function redactFailureLine(value) {
   return line || null;
 }
 
-function unavailable(id) {
+function unavailable(id, refusal = null) {
   return {
     version: PAIR_PROTOCOL_VERSION,
     type: "rpc.error",
     id,
-    error: { code: "computer.unavailable", message: "Computer unavailable", data: null },
+    error: { code: "computer.unavailable", message: "Computer unavailable", data: refusal ? { refusal } : null },
   };
 }
+
+// KRA-10870 part 2: a turn RPC that sends `refusalCodes: "v1"` gets the typed code and
+// its fixed words in `data.refusal`. Only on request: Sphere closes the whole relay on an
+// error frame it does not know, so an advert alone never changes the frame.
+export const REFUSAL_CODES_VERSION = "v1";
+const REFUSAL_CODE_METHODS = new Set(["originate", "continue"]);
 
 export class RemoteRpcShim {
   constructor(runtime, { enableInterrupt = false, onRefusal = () => {} } = {}) {
@@ -573,12 +579,17 @@ export class RemoteRpcShim {
 
   async handle(message) {
     let id = null;
+    let wantsCode;
     try {
       requireRecord(message, "RPC request");
       if (message.version !== PAIR_PROTOCOL_VERSION || message.type !== "rpc.request") throw new Error("Invalid RPC envelope");
       id = requireSafeId(message.id, "RPC request id");
       if (!this.rpcMethods.includes(message.method)) throw new Error("Unsupported RPC method");
-      const params = message.params === undefined ? {} : requireRecord(message.params, "RPC params");
+      let params = message.params === undefined ? {} : requireRecord(message.params, "RPC params");
+      // Any other value stays in params, so the runtime refuses it as an unknown parameter.
+      if (REFUSAL_CODE_METHODS.has(message.method) && params.refusalCodes === REFUSAL_CODES_VERSION) {
+        ({ refusalCodes: wantsCode, ...params } = params);
+      }
       const method = ({ "doctor-status": "doctorStatus", "turn-result": "turnResult", "thread-events": "threadEvents", "thread-artifact": "threadArtifact" })[message.method] ?? message.method;
       if (typeof this.runtime[method] !== "function") throw new Error("Runtime method is unavailable");
       let result;
@@ -586,8 +597,13 @@ export class RemoteRpcShim {
         // KRA-10870: the relay still gets only "Computer unavailable"; this computer's
         // log gets the typed code and its fixed words, never the raw error text.
         // A rejecting async hook must not become an unhandled rejection that ends the pairer.
-        try { this.onRefusal({ method: message.method, ...refusalOf(error) })?.catch?.(() => {}); } catch {}
+        const refusal = refusalOf(error);
+        try { this.onRefusal({ method: message.method, ...refusal })?.catch?.(() => {}); } catch {}
+        if (wantsCode) return unavailable(id, refusal);
         throw error;
+      }
+      if (method === "doctorStatus" && isRecord(result?.capabilities)) {
+        result = { ...result, capabilities: { ...result.capabilities, refusalCodes: REFUSAL_CODES_VERSION } };
       }
       return { version: PAIR_PROTOCOL_VERSION, type: "rpc.result", id, result: result ?? null };
     } catch {
