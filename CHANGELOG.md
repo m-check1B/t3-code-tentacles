@@ -6,7 +6,7 @@ All notable changes to this project are documented here.
 
 ## [0.5.0-jack.20] - 2026-11-21
 
-In short: an Agent Jack Bot running on your own computer through Local · Claude Code or Local · Codex can now use Agent Jack's tools (such as web search) and the connectors you granted it on the official, unmodified T3 Code (Beta). This needs an Agent Jack that writes the pinned origin into the pairing offer; with an older Agent Jack, only the public Microsoft Learn docs server works, and pairing again from an updated app fixes it. Local · Antigravity does not get Jack's tools yet, but `doctor` now names the fix for the two Antigravity runtime repairs T3 reports. Turns without tools are unchanged.
+In short: an Agent Jack Bot running on your own computer through Local · Claude Code or Local · Codex can now use Agent Jack's tools (such as web search) and the connectors you granted it on the official, unmodified T3 Code (Beta), and each tool call shows in the Talk by name (never its input or output). This needs an Agent Jack that writes the pinned origin into the pairing offer; with an older Agent Jack, only the public Microsoft Learn docs server works, and pairing again from an updated app fixes it. Local · Antigravity does not get Jack's tools yet, but `doctor` now names the fix for the two Antigravity runtime repairs T3 reports. Turns without tools are unchanged.
 
 ### Added
 
