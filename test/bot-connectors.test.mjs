@@ -462,7 +462,7 @@ test("KRA-10869: Grok is unproven, so it is refused and not advertised unless th
   const { workspace, sent, adapter } = setup();
   const before = process.env.TENTACLES_JACK_TOOLS_TRY;
   delete process.env.TENTACLES_JACK_TOOLS_TRY;
-  t.after(() => { if (before !== undefined) process.env.TENTACLES_JACK_TOOLS_TRY = before; });
+  t.after(() => { if (before === undefined) delete process.env.TENTACLES_JACK_TOOLS_TRY; else process.env.TENTACLES_JACK_TOOLS_TRY = before; });
   await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...grok, ...connectors([learn]) }), /not supported on this lab/);
   assert.deepEqual(sent, []);
   assert.equal(fs.existsSync(path.join(workspace, ".mcp.json")), false);
