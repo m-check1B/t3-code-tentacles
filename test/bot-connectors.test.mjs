@@ -1174,7 +1174,7 @@ test("B3 P2-1 on #117 (3rd review): with the Codex home field blank, an instance
   fs.writeFileSync(file, owner, { mode: 0o640 });
   settings.providerInstances.codex.environment = [{ name: "CODEX_HOME", value: path.join(home, "first") }, { name: "OTHER", value: "x" }, { name: "CODEX_HOME", value: ownerHome }];
   const clash = "The Codex config in the Codex home T3 uses already has a server named like one of this Bot's Jack tools (for example jack), and Codex would merge the two; rename or remove that server there, then send again";
-  const field = "T3 sets the Codex home in a way Tentacles has not proven equal to its own (for example a ~ home with HOME in T3's service.env, a hidden, blank or relative CODEX_HOME, or unreadable settings); put the absolute path of the Codex home folder into the CODEX_HOME path field of T3's Codex settings, then send again";
+  const field = "T3 sets the Codex home in a way Tentacles has not proven equal to its own (for example a ~ home with HOME in T3's service.env, a hidden, blank or relative CODEX_HOME, or unreadable settings); put the absolute path of the Codex home folder into the CODEX_HOME path field of T3's Codex settings and leave the shadow home field blank, then send again";
   await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), { message: clash });
   await assert.rejects(async () => adapter.continue({ threadId: "t1", message: "hi", ...codex, ...connectors([jack]) }), { message: clash });
   // A home Tentacles cannot read, or one T3 takes from HOME or service.env, refuses with one fixed text.
@@ -1297,10 +1297,19 @@ const CODEX_HOME_TABLE = [
   [19, "no instance field, a legacy providers.codex.homePath", S({}, undefined, { providers: { codex: { homePath: "/legacy" } } }), undefined, REFUSE],
   [19, "no instance field, a legacy homePath that is not text", S({}, undefined, { providers: { codex: { homePath: 1 } } }), undefined, REFUSE],
   [12, "no instance field, a blank legacy homePath", S({}, undefined, { providers: { codex: { homePath: "" } } }), undefined, `${OWN}/.codex`],
+  [20, "shadow home set, with row 1 (field absolute)", S({ homePath: "/field", shadowHomePath: "/shadow" }), undefined, REFUSE],
+  [20, "shadow home set, with row 2 (field ~/x)", S({ homePath: "~/x", shadowHomePath: "~/shadow" }), undefined, REFUSE],
+  [20, "shadow home set, with row 4 (managed, field blank)", S({ homePath: "", setupMode: "managed", shadowHomePath: "/shadow" }), undefined, REFUSE],
+  [20, "shadow home set, with row 6 (absolute CODEX_HOME)", S({ homePath: "", shadowHomePath: "/shadow" }, [CH("/b")]), undefined, REFUSE],
+  [20, "shadow home set, with row 7 (CODEX_HOME ~/b)", S({ homePath: "", shadowHomePath: "/shadow" }, [CH("~/b")]), undefined, REFUSE],
+  [20, "shadow home set, with row 12 (nothing else set)", S({ homePath: "", shadowHomePath: "/shadow" }), undefined, REFUSE],
+  [20, "shadow home a non-string", S({ homePath: "/field", shadowHomePath: 1 }), undefined, REFUSE],
+  [1, "shadow home blank passes", S({ homePath: "/field", shadowHomePath: "" }), undefined, "/field"],
+  [12, "shadow home whitespace only passes as blank", S({ homePath: "", shadowHomePath: "  " }), undefined, `${OWN}/.codex`],
 ];
 
 test("KRA-10891 Codex home allow-list: every row of the closed table", async () => {
-  const field = "T3 sets the Codex home in a way Tentacles has not proven equal to its own (for example a ~ home with HOME in T3's service.env, a hidden, blank or relative CODEX_HOME, or unreadable settings); put the absolute path of the Codex home folder into the CODEX_HOME path field of T3's Codex settings, then send again";
+  const field = "T3 sets the Codex home in a way Tentacles has not proven equal to its own (for example a ~ home with HOME in T3's service.env, a hidden, blank or relative CODEX_HOME, or unreadable settings); put the absolute path of the Codex home folder into the CODEX_HOME path field of T3's Codex settings and leave the shadow home field blank, then send again";
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "codex-home-table-")));
   const rows = new Set();
   try {
@@ -1319,7 +1328,7 @@ test("KRA-10891 Codex home allow-list: every row of the closed table", async () 
       else assert.equal(await run(), expected, `row ${row}: ${name}`);
     }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
-  assert.deepEqual([...rows].sort((a, b) => a - b), Array.from({ length: 19 }, (_, i) => i + 1));
+  assert.deepEqual([...rows].sort((a, b) => a - b), Array.from({ length: 20 }, (_, i) => i + 1));
   // Row 17 on a real turn: a failing settings call refuses before the stop and any write.
   const { workspace, sent, stops, adapter } = setup();
   adapter.client = { getSettings: async () => { throw new Error("settings unavailable"); } };

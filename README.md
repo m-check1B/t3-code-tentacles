@@ -260,7 +260,7 @@ exactly that home. Turns without a server list, and other labs, read nothing new
 A later review judges against these two tables; a new input outside them that
 fails closed is a table row to add, not a defect.
 
-Table 2, the Codex home (closed). "svc" is T3's `service.env`; "field" is the CODEX_HOME path field, trimmed as T3's schema trims it; "env" is the Codex instance's environment list. T3's `~` is T3's own `$HOME`, which a `HOME` in svc moves. Rows 16, 17 and 19 are checked first, then row 1, then row 15, then the rest. Every refusal is `bot_connectors.codex_home_field`, with one fix: put the absolute path of the Codex home into the CODEX_HOME path field of T3's Codex settings, then send again.
+Table 2, the Codex home (closed). "svc" is T3's `service.env`; "field" is the CODEX_HOME path field, trimmed as T3's schema trims it; "env" is the Codex instance's environment list. T3's `~` is T3's own `$HOME`, which a `HOME` in svc moves. Rows 16, 17, 19 and 20 are checked first, then row 1, then row 15, then the rest. Every refusal is `bot_connectors.codex_home_field`, with one fix: put the absolute path of the Codex home into the CODEX_HOME path field of T3's Codex settings and leave the shadow home field blank, then send again.
 
 | # | Input | Home T3 0.1.11 uses | Tentacles |
 |---|---|---|---|
@@ -283,6 +283,7 @@ Table 2, the Codex home (closed). "svc" is T3's `service.env`; "field" is the CO
 | 17 | the settings call fails, or `providerInstances.codex` (its `config`, `environment` or `homePath`) has another shape | unknown | refuses |
 | 18 | field relative, `~user/x` or `~\x` | `<T3 cwd>/…` or other | refuses |
 | 19 | no instance field, but a legacy `providers.codex.homePath` that is set | unknown | refuses |
+| 20 | shadow home set (`config.shadowHomePath` not a blank string; T3's auth overlay, any mode) | the shadow home | refuses |
 
 Table 1, every input stock T3 0.1.11 uses to build the Codex child:
 
@@ -291,7 +292,7 @@ Table 1, every input stock T3 0.1.11 uses to build the Codex child:
 | 1 | the CODEX_HOME path field | Table 2 rows 1-3, 18: equal to T3 or refuses |
 | 2 | instance env `CODEX_HOME`, field blank, direct | Table 2 rows 6-11: equal to T3 or refuses |
 | 3 | instance env `HOME`, field blank | Table 2 row 13: refuses |
-| 4 | shadow home | equal to T3 through row 1 (the same linked file); anything else refuses |
+| 4 | shadow home | Table 2 row 20: refuses |
 | 5 | managed mode | Table 2 rows 4-5: equal to T3 or refuses |
 | 6 | the Launch arguments setting | equal to T3 when every override is a plain key outside `mcp_servers`; else refuses (`codex_launch_args`) |
 | 7 | instance env `T3CODE_CODEX_LAUNCH_ARGS` | as 6; a hidden entry refuses |

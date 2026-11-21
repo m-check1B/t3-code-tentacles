@@ -485,7 +485,7 @@ const tildeHome = value => value === "~" || value.startsWith("~/");
  * allow-list. Only the "pass" rows of the closed table (README, Local · Codex) return
  * a home; each is proven equal to the home T3 0.1.11 gives Codex. Every other input
  * refuses with codex_home_field. `serviceEnv` is T3's parsed service.env (an unreadable
- * one already refused in readT3ServiceEnv, row 16). Order: 17, 19, 1, 15, then the rest.
+ * one already refused in readT3ServiceEnv, row 16). Order: 17, 19, 20, 1, 15, then the rest.
  */
 export function codexHomeAllowed(settings, serviceEnv, { home = os.homedir() } = {}) {
   const refuse = () => { throw new Error(R.codexHomeField); };
@@ -497,6 +497,8 @@ export function codexHomeAllowed(settings, serviceEnv, { home = os.homedir() } =
   // Row 19: no instance field, but a legacy providers.codex.homePath T3 might still read.
   const legacy = settings.providers?.codex?.homePath;
   if (config.homePath === undefined && legacy !== undefined && (typeof legacy !== "string" || legacy.trim())) refuse();
+  // Row 20: a shadow home (T3's auth overlay) becomes the child's CODEX_HOME in both modes.
+  if (config.shadowHomePath !== undefined && (typeof config.shadowHomePath !== "string" || config.shadowHomePath.trim())) refuse();
   const field = (config.homePath ?? "").trim(); // T3's schema trims the field
   if (path.isAbsolute(field)) return path.resolve(field); // row 1
   const environment = instance.environment ?? [];
