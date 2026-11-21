@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { ensureLocalTalkWorkspace } from "./local-talk-workspace.mjs";
-import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, codexHomeFor, connectorsNeedRestart, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors } from "./bot-connectors.mjs";
+import { BOT_CONNECTOR_REFUSALS } from "./bot-connector-refusals.mjs";
+import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, checkBotConnectorPaths, codexHomeFor, connectorsNeedRestart, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors } from "./bot-connectors.mjs";
 import { privateModeOk } from "./platform.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { randomUUID } from "node:crypto";
@@ -300,20 +301,27 @@ export class LoopbackRuntimeAdapter {
       ? requireFreshProviderContext(this.client, admitted).then(dispatch) : dispatch();
   }
 
-  // Order matters (B3 P2-1/P2-2 and P3-D on #99): every check that can refuse
-  // (folder scope, workspace custody, the Codex home), then stop an idle live
-  // session, then write, then (the caller) start the turn. A refusal or a failed
-  // stop leaves the old files, so the next turn still knows to restart.
+  // Order matters (B3 P2-1/P2-2 and P3-D on #99, P3-2 on #101): every check that
+  // can refuse (folder scope, workspace custody, the Codex home, the workspace's
+  // .claude/.codex directories and file targets), then stop an idle live session,
+  // then write, then (the caller) start the turn. A refusal or a failed stop
+  // leaves the old files, so the next turn still knows to restart. What can
+  // still fail after the stop: an I/O error while writing (ENOSPC, EACCES, EIO),
+  // the Codex home changing between plan and commit, or a path swapped between
+  // this check and the write. Then the turn is refused with the session stopped
+  // and the files partly rewritten; the next turn still restarts and rewrites all.
   async writeConnectors(workspace, { servers, scope, instanceId, restartIdleSession }) {
     if (servers !== undefined && !requireBotWorkspace(workspace, scope)) {
-      if (servers.length) throw new Error("Bot connectors need this Bot's own workspace");
+      // A Talk started before the upgrade lives in jack-talk/<tenant>/<agent> (B3 P3-3 on #106).
+      if (servers.length) throw new Error(workspace.split(/[\\/]/).includes("jack-talk") ? BOT_CONNECTOR_REFUSALS.oldTalk : BOT_CONNECTOR_REFUSALS.notOwnWorkspace);
       servers = undefined; // an empty list for another folder clears nothing there
     }
     // Idempotent and leaves .mcp.json alone, so it cannot change the restart decision.
     const prepared = await this.prepareTalkWorkspaceImpl(workspace);
-    if (servers?.length && prepared !== true) throw new Error("Bot connectors need a Bot workspace");
+    if (servers?.length && prepared !== true) throw new Error(BOT_CONNECTOR_REFUSALS.notBotWorkspace);
     const codexTrust = servers?.length && instanceId === "codex"
       ? planCodexTrust(await codexHomeFor(this.client), workspace) : undefined;
+    if (servers !== undefined && prepared === true) checkBotConnectorPaths(workspace);
     if (restartIdleSession && connectorsNeedRestart(workspace, servers)) await restartIdleSession();
     return writeBotConnectors(workspace, prepared, servers, { codexTrust });
   }

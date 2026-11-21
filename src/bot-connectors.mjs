@@ -15,6 +15,7 @@ import { closeSync, constants, fchmodSync, lstatSync, mkdirSync, openSync, readF
 import os from "node:os";
 import path from "node:path";
 import { createHash, randomBytes } from "node:crypto";
+import { BOT_CONNECTOR_REFUSALS as R } from "./bot-connector-refusals.mjs";
 import { GUARD_FILE } from "./talk-instruction-guard.mjs";
 
 // Jack admits a list only against exactly this advert. Three shapes pass:
@@ -163,7 +164,23 @@ function writePrivate(file, text) {
 function realDirectory(directory) {
   try { mkdirSync(directory, { mode: 0o700 }); } catch (error) { if (error.code !== "EEXIST") throw error; }
   const info = lstatSync(directory);
-  if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("Bot connector directory must be a real directory");
+  if (!info.isDirectory() || info.isSymbolicLink()) throw new Error(R.realDirectory);
+}
+
+/**
+ * Read-only: refuses, before any session stop, every workspace shape the writer
+ * would refuse later. `.claude` and `.codex` must be real directories (or
+ * absent) and the three files must not be directories. The Bot can plant either.
+ */
+export function checkBotConnectorPaths(workspace) {
+  const kind = file => { try { return lstatSync(file); } catch (error) { if (error.code === "ENOENT") return null; throw error; } };
+  for (const directory of [path.dirname(GUARD_FILE), CODEX_DIR]) {
+    const info = kind(path.join(workspace, directory));
+    if (info && (!info.isDirectory() || info.isSymbolicLink())) throw new Error(R.realDirectory);
+  }
+  for (const file of [MCP_FILE, CODEX_FILE, GUARD_FILE]) {
+    if (kind(path.join(workspace, file))?.isDirectory()) throw new Error(R.fileIsDirectory);
+  }
 }
 
 // Names match NAME and values are printable ASCII (URL.href, BEARER), so a JSON
@@ -199,7 +216,7 @@ export async function codexHomeFor(client, { home = os.homedir() } = {}) {
  */
 export function planCodexTrust(codexHome, workspace) {
   mkdirSync(codexHome, { recursive: true, mode: 0o700 });
-  if (!statSync(codexHome).isDirectory()) throw new Error("Codex home is not a directory");
+  if (!statSync(codexHome).isDirectory()) throw new Error(R.codexHomeNotDirectory);
   let file = path.join(codexHome, "config.toml");
   let text = "";
   let mode = 0o600;
@@ -209,7 +226,7 @@ export function planCodexTrust(codexHome, workspace) {
     // A dotfiles symlink keeps pointing at the owner's real file; a dangling one
     // would be replaced by a plain file, so it refuses.
     try { file = realpathSync(file); } catch (error) {
-      if (error.code === "ENOENT") throw new Error("Codex home config.toml links to a missing file; fix the link first");
+      if (error.code === "ENOENT") throw new Error(R.codexLinkMissing);
       throw error;
     }
   }
@@ -224,8 +241,18 @@ export function planCodexTrust(codexHome, workspace) {
       || line.startsWith(`projects.${key}`) || line.startsWith(`projects.'${workspace}'`))) return null;
   // A bare [projects] table, inline projects or dotted projects keys cannot take
   // a second definition of this folder without breaking the owner's file.
-  if (/^\s*projects\s*[=.]/m.test(text) || /^\s*\[\s*projects\s*\]\s*(#.*)?$/m.test(text)) {
-    throw new Error("Codex home config keeps projects in a form Tentacles does not edit; trust this Bot workspace in Codex first");
+  // Any other header whose first key may be `projects` ([ projects."…" ],
+  // [projects . "…"], ["projects"…], an escaped key, [[projects]]) may name this
+  // same folder, so only the exact form Codex itself writes is passed (B3 P3-1 on #101).
+  const refuse = () => { throw new Error(R.codexProjectsForm); };
+  if (/^\s*["']?projects["']?\s*[=.]/m.test(text) || /^\s*\[\s*projects\s*\]\s*(#.*)?$/m.test(text)) refuse();
+  for (const line of lines) {
+    // Key lines too: an escaped or quoted top-level `projects` key (B3 P3-1 on #105).
+    const keyFirst = /^("(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+)\s*[.=]/.exec(line)?.[1];
+    if (keyFirst && (keyFirst.includes("\\") || keyFirst.replace(/^["']|["']$/g, "") === "projects")) refuse();
+    const first = /^\[\[?\s*("(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+)/.exec(line)?.[1];
+    if (!first || !(first.includes("\\") || first.replace(/^["']|["']$/g, "") === "projects")) continue;
+    if (!/^\[projects\.("[^"\\]*"|'[^']*')\](\s*#.*)?$/.test(line)) refuse();
   }
   const next = `${text}${text && !text.endsWith("\n") ? "\n" : ""}\n# Agent Jack Bot workspace (Tentacles, KRA-10862)\n[projects.${key}]\ntrust_level = "trusted"\n`;
   return { file, text, mode, next };
@@ -242,7 +269,7 @@ export function commitCodexTrust(plan) {
   try {
     let now = "";
     try { now = readFileSync(file, "utf8"); } catch (error) { if (error.code !== "ENOENT") throw error; }
-    if (now !== text) throw new Error("Codex home config changed while trusting this Bot workspace; try again");
+    if (now !== text) throw new Error(R.codexChanged);
     renameSync(temporary, file);
   } catch (error) { unlinkSync(temporary); throw error; }
   return true;
@@ -268,7 +295,7 @@ function listedServers(workspace) {
 export function writeBotConnectors(workspace, prepared, servers, { codexHome, codexTrust } = {}) {
   if (servers === undefined) return false;
   if (prepared !== true) {
-    if (servers.length) throw new Error("Bot connectors need a Bot workspace");
+    if (servers.length) throw new Error(R.notBotWorkspace);
     return false;
   }
   if (codexTrust !== undefined && servers.length) commitCodexTrust(codexTrust);
