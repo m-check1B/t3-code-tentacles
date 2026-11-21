@@ -125,3 +125,21 @@ export function antigravityAction(code) {
       return null;
   }
 }
+
+// KRA-10869: a spent Google quota comes back as an ordinary Antigravity reply
+// ("Individual quota reached…"), so any probe reply but OK means quota there.
+// Only a reset time is read out of it, by shape; the reply is never echoed.
+const QUOTA_RESET = /\bresets? (?:at|in|on|after) ([0-9A-Za-z][0-9A-Za-z:,+ -]{0,38}[0-9A-Za-z])/i;
+export function antigravityQuotaAction(reply) {
+  const reset = typeof reply === "string" ? QUOTA_RESET.exec(reply)?.[1] : undefined;
+  const when = reset && /[0-9]/.test(reset) ? `; resets ${reset}` : "";
+  return `not responding: quota${when}; pass --model with another Antigravity model, or wait until its quota resets`;
+}
+
+// KRA-10869: runtime 1.5.13 dropped the effort-suffixed ids (gemini-4-hydrogen-high);
+// effort is the thought_level option now. Never mapped to xhigh (Founder-manual).
+const OLD_EFFORT_MODEL = /^(gemini-[a-z0-9][a-z0-9.-]*?)-(low|medium|high)$/;
+export function antigravityModelAlias(model) {
+  const match = typeof model === "string" ? OLD_EFFORT_MODEL.exec(model) : null;
+  return match ? { model: match[1], options: [{ id: "thought_level", value: match[2] }] } : null;
+}

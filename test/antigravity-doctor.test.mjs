@@ -177,3 +177,20 @@ test("after the runtime update, a signed-out Antigravity reaches not_signed_in",
   assert.equal(row.signedIn, false);
   assert.match(row.action, /^Sign in with Google in T3 Code: /);
 });
+
+test("KRA-10869: an old effort id maps to its base id plus thought_level only when T3 no longer lists it; never xhigh", async () => {
+  const { liveModelSelection } = await import("../src/bridge.mjs");
+  const live = (models) => ({ rpc: async (method) => { assert.equal(method, "server.getConfig"); return { providers: [{ instanceId: "antigravity", models: models.map((slug) => ({ slug })) }] }; } });
+  const old = { instanceId: "antigravity", model: "gemini-4-argon-high" };
+  assert.deepEqual(await liveModelSelection(live(["gemini-4-argon", "gemini-4-neon"]), old),
+    { instanceId: "antigravity", model: "gemini-4-argon", options: [{ id: "thought_level", value: "high" }] });
+  // A runtime that still lists the old id keeps it.
+  assert.deepEqual(await liveModelSelection(live(["gemini-4-argon-high"]), old), old);
+  // xhigh is never produced, and is not an alias source.
+  assert.deepEqual(await liveModelSelection(live(["gemini-4-argon"]), { instanceId: "antigravity", model: "gemini-4-argon-xhigh" }), { instanceId: "antigravity", model: "gemini-4-argon-xhigh" });
+  await assert.rejects(liveModelSelection(live(["gemini-4-argon"]), { ...old, options: [{ id: "thought_level", value: "low" }] }), /conflicts with option thought_level/);
+  // Other labs and plain ids make no T3 call.
+  const none = { rpc: async () => assert.fail("no T3 call") };
+  assert.deepEqual(await liveModelSelection(none, { instanceId: "codex", model: "gpt-5-high" }), { instanceId: "codex", model: "gpt-5-high" });
+  assert.deepEqual(await liveModelSelection(none, { instanceId: "antigravity", model: "gemini-4-argon" }), { instanceId: "antigravity", model: "gemini-4-argon" });
+});

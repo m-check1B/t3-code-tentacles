@@ -8,7 +8,9 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { ensureProject, probeTalkCapabilities, startThread } from "./bridge.mjs";
 import { DEFAULT_STATE_DIR, ensurePrivateDirectory } from "./config.mjs";
+import { antigravityQuotaAction } from "./antigravity.mjs";
 import { classifyFailure, classifyFailureText } from "./failure-codes.mjs";
+import { baseLabId } from "./model-selection.mjs";
 import { T3HttpError } from "./t3-client.mjs";
 import { createThreadLock, TurnInterrupter } from "./turn-interrupt.mjs";
 
@@ -101,6 +103,9 @@ async function probeLab(client, lab, { workspace, timeoutMs, intervalMs, interru
       if (reply) {
         const text = typeof reply.text === "string" ? reply.text.trim() : "";
         if (/^ok\.?$/i.test(text)) return { ...row, threadId: turn.threadId, status: "responds", firstEventMs: Date.now() - started };
+        if (baseLabId(lab.instanceId) === "antigravity") {
+          return { ...row, threadId: turn.threadId, status: "no_response", firstEventMs: null, code: "usage_limit", action: antigravityQuotaAction(text) };
+        }
         const quota = classifyFailureText(text) === "usage_limit";
         return { ...row, threadId: turn.threadId, status: "error", firstEventMs: Date.now() - started,
           code: quota ? "usage_limit" : "provider_error", action: quota ? QUOTA_ACTION : WRONG_REPLY_ACTION };

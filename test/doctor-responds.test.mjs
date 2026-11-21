@@ -54,6 +54,7 @@ function fakeT3(t, behaviour, { failProject = false, noTurnResult = false, capab
         if (mode === "answer") thread.messages.push({ id: "assistant-1", role: "assistant", text: "OK" });
         // Antigravity 1.5.13's own out-of-quota reply, and a reply that is not OK.
         if (mode === "quota") thread.messages.push({ id: "assistant-1", role: "assistant", text: "You have exhausted your quota on this model." });
+        if (mode === "quota-reset") thread.messages.push({ id: "assistant-1", role: "assistant", text: "Individual quota reached SECRET-CANARY. Your quota resets at 14:05 UTC." });
         if (mode === "chatty") thread.messages.push({ id: "assistant-1", role: "assistant", text: "Sure! SECRET-CANARY OK" });
         thread.session = mode === "error"
           ? { status: "error", activeTurnId: null, lastError: "rate limit exceeded SECRET-CANARY" }
@@ -400,4 +401,17 @@ test("only a reply of exactly OK responds; a quota reply is usage_limit with a p
   assert.deepEqual([row("grok").status, row("grok").code], ["error", "provider_error"]);
   assert.match(row("grok").action, /answered, but not with OK/);
   assert.doesNotMatch(JSON.stringify(result), /SECRET-CANARY|exhausted your quota/);
+});
+
+test("KRA-10869: any Antigravity reply but OK is 'not responding: quota', with the reset time when the message has one", async (t) => {
+  const agLabs = [{ instanceId: "antigravity", ready: true, defaultModel: "gemini-synthetic" }];
+  const probe = async (mode) => {
+    const { client, workspace } = fakeT3(t, { antigravity: mode });
+    const result = await probeResponds(client, agLabs, options(workspace));
+    assert.doesNotMatch(JSON.stringify(result), /SECRET-CANARY|Individual quota/);
+    const { status, code, action } = result.labs[0];
+    return { status, code, action };
+  };
+  assert.deepEqual(await probe("quota-reset"), { status: "no_response", code: "usage_limit", action: "not responding: quota; resets 14:05 UTC; pass --model with another Antigravity model, or wait until its quota resets" });
+  assert.deepEqual(await probe("chatty"), { status: "no_response", code: "usage_limit", action: "not responding: quota; pass --model with another Antigravity model, or wait until its quota resets" });
 });
