@@ -9,12 +9,12 @@
  * project and local setting sources). Codex reads `<workspace>/.codex/config.toml`,
  * but only for a project its home's config.toml marks trusted, so the Bot
  * workspace is trusted there once. T3 keeps a lab process alive across turns,
- * so the caller restarts the thread's session whenever `restart` is true.
+ * so the caller stops an idle live session before the files change.
  */
-import { closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync, appendFileSync } from "node:fs";
+import { closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { GUARD_FILE } from "./talk-instruction-guard.mjs";
 
 // Jack admits a list only against exactly this advert. Three shapes pass:
@@ -50,7 +50,7 @@ function exactKeys(value, keys) {
 }
 
 /** The https origin of a Jack-hosted entry, or null when the URL is not one of Jack's two paths. */
-function jackOrigin(server) {
+function serverOrigin(server) {
   try {
     const url = new URL(server.url);
     const wanted = server.name === JACK_SERVER_NAME ? "/mcp" : `/mcp/connectors/${server.name}`;
@@ -66,16 +66,29 @@ function admittedServer(server) {
       || server.type !== "http" || typeof server.url !== "string" || !Array.isArray(server.headers)) return false;
   if (server.url === PUBLIC_MCP_URL) return server.headers.length === 0 && server.name !== JACK_SERVER_NAME;
   const [header] = server.headers;
-  return jackOrigin(server) !== null && server.headers.length === 1 && exactKeys(header, ["name", "value"])
+  return serverOrigin(server) !== null && server.headers.length === 1 && exactKeys(header, ["name", "value"])
     && header.name === "Authorization" && typeof header.value === "string" && BEARER.test(header.value);
 }
+
+/** The Jack origin a pair offer names: canonical https origin only, else null. */
+export function pinnedJackOrigin(value) {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.origin === value ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export const REPAIR_FOR_JACK_TOOLS = "Jack tools need this computer paired again from an updated Agent Jack (Settings > Local labs > pair this computer)";
 
 /**
  * Split the connector fields off remote params. Returns `servers` undefined
  * when Jack sent none (files stay as they are), else the validated list.
  * Every refusal happens here, before the workspace or T3 is touched.
  */
-export function admitBotConnectors(params, { now = Date.now } = {}) {
+export function admitBotConnectors(params, { now = Date.now, jackOrigin = null } = {}) {
   const { mcpServers, mcpScope, mcpExpiresAt, ...rest } = params;
   if (mcpServers === undefined) {
     if (mcpScope !== undefined || mcpExpiresAt !== undefined) throw new Error("Bot connector metadata requires mcpServers");
@@ -84,7 +97,7 @@ export function admitBotConnectors(params, { now = Date.now } = {}) {
   if (!Array.isArray(mcpServers) || mcpServers.length > MAX_SERVERS || !mcpServers.every(admittedServer)
       || new Set(mcpServers.map(server => server.name)).size !== mcpServers.length
       // Jack's own entries all come from the one Jack that sent the turn.
-      || new Set(mcpServers.filter(server => server.url !== PUBLIC_MCP_URL).map(jackOrigin)).size > 1) {
+      || new Set(mcpServers.filter(server => server.url !== PUBLIC_MCP_URL).map(serverOrigin)).size > 1) {
     throw new Error("Bot connectors are not an admitted list");
   }
   if (!exactKeys(mcpScope, ["businessId", "seatId", "agentId"]) || !Object.values(mcpScope).every(id => typeof id === "string" && UUID.test(id))) {
@@ -96,7 +109,31 @@ export function admitBotConnectors(params, { now = Date.now } = {}) {
   if (mcpServers.length && !BOT_CONNECTOR_PROVIDERS.includes(rest.instanceId)) {
     throw new Error("Bot connectors are not supported on this lab");
   }
-  return { params: rest, servers: mcpServers };
+  // B3 P1-1 on #99: a token and a full-access lab go only to the Jack this
+  // computer was paired with. The origin comes from the one-shot pair offer the
+  // owner's own Agent Jack wrote, never from the request.
+  const hosted = mcpServers.filter(server => server.url !== PUBLIC_MCP_URL);
+  if (hosted.length && jackOrigin === null) throw new Error(REPAIR_FOR_JACK_TOOLS);
+  if (hosted.some(server => serverOrigin(server) !== jackOrigin)) throw new Error("Bot connectors name a host this computer is not paired with");
+  return { params: rest, servers: mcpServers, scope: mcpScope };
+}
+
+/** Jack's paired_mcp_workspace, relative to the Local Talk root's parent. */
+export function botWorkspaceSuffix(scope) {
+  const seat = createHash("sha256").update(`${scope.businessId}:${scope.seatId}`).digest("hex");
+  return path.join(".jack-local-scratch", "seats", seat, "agents", scope.agentId);
+}
+
+/** B3 P2-1 on #99: one Bot's list lands only in that Bot's own folder. */
+export function requireBotWorkspace(workspace, scope) {
+  return typeof workspace === "string" && workspace.endsWith(`${path.sep}${botWorkspaceSuffix(scope)}`);
+}
+
+/** True when a live lab session would hold a stale list or token after this list is written. */
+export function connectorsNeedRestart(workspace, servers) {
+  // Tokens change every turn, so a non-empty list always needs a fresh session;
+  // an empty list after an empty list changes nothing.
+  return servers !== undefined && (servers.length > 0 || listedServers(workspace) > 0);
 }
 
 function readJson(file) {
@@ -115,7 +152,7 @@ function writePrivate(file, text) {
   try { writeSync(fd, text); } catch (error) { closeSync(fd); unlinkSync(temporary); throw error; }
   closeSync(fd);
   // rename replaces a planted symlink itself, never its target.
-  renameSync(temporary, file);
+  try { renameSync(temporary, file); } catch (error) { unlinkSync(temporary); throw error; }
 }
 
 function realDirectory(directory) {
@@ -149,24 +186,40 @@ export async function codexHomeFor(client, { home = os.homedir() } = {}) {
 
 /**
  * Codex loads a folder's `.codex/config.toml` only when its home trusts that
- * folder. Add the one table for this Bot workspace, once; an existing table for
- * it (trusted or not) is the owner's and stays. An inline `projects = {...}`
- * cannot take a new table, so that refuses instead of breaking the owner's file.
+ * folder. Add the one table for this Bot workspace, once; an existing entry for
+ * it (trusted or not) is the owner's and stays. `projects` kept inline or as
+ * top-level dotted keys cannot take a new table, so that refuses instead of
+ * breaking the owner's file. The new file replaces the old one atomically, and
+ * a concurrent writer between read and rename makes this refuse, not merge.
  */
 export function trustCodexWorkspace(codexHome, workspace) {
-  const file = path.join(codexHome, "config.toml");
+  mkdirSync(codexHome, { recursive: true, mode: 0o700 });
+  if (!statSync(codexHome).isDirectory()) throw new Error("Codex home is not a directory");
+  let file = path.join(codexHome, "config.toml");
   let text = "";
-  try { text = readFileSync(file, "utf8"); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  let mode = 0o600;
+  try {
+    file = realpathSync(file); // a dotfiles symlink keeps pointing at the owner's real file
+    text = readFileSync(file, "utf8");
+    mode = statSync(file).mode & 0o777;
+  } catch (error) { if (error.code !== "ENOENT") throw error; }
   const key = JSON.stringify(workspace);
   const single = `'${workspace}'`;
-  if (text.split(/\r?\n/).some(line => [`[projects.${key}]`, `[projects.${single}]`].includes(line.trim()))) return false;
-  if (/^\s*projects\s*=/m.test(text)) throw new Error("Codex home config keeps projects inline; trust this Bot workspace in Codex first");
-  if (!text) {
-    realDirectory(codexHome);
-    const fd = openSync(file, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
-    closeSync(fd);
-  }
-  appendFileSync(file, `${text && !text.endsWith("\n") ? "\n" : ""}\n# Agent Jack Bot workspace (Tentacles, KRA-10862)\n[projects.${key}]\ntrust_level = "trusted"\n`);
+  const lines = text.split(/\r?\n/).map(line => line.trim());
+  if (lines.some(line => [`[projects.${key}]`, `[projects.${single}]`].includes(line)
+      || line.startsWith(`projects.${key}`) || line.startsWith(`projects.${single}`))) return false;
+  if (/^\s*projects\s*[=.]/m.test(text)) throw new Error("Codex home config keeps projects inline; trust this Bot workspace in Codex first");
+  const next = `${text}${text && !text.endsWith("\n") ? "\n" : ""}\n# Agent Jack Bot workspace (Tentacles, KRA-10862)\n[projects.${key}]\ntrust_level = "trusted"\n`;
+  const temporary = `${file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+  const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW || 0), mode);
+  try { writeSync(fd, next); } catch (error) { closeSync(fd); unlinkSync(temporary); throw error; }
+  closeSync(fd);
+  try {
+    let now = "";
+    try { now = readFileSync(file, "utf8"); } catch (error) { if (error.code !== "ENOENT") throw error; }
+    if (now !== text) throw new Error("Codex home config changed while trusting this Bot workspace; try again");
+    renameSync(temporary, file);
+  } catch (error) { unlinkSync(temporary); throw error; }
   return true;
 }
 
@@ -180,17 +233,14 @@ function listedServers(workspace) {
  * private workspace, where the guard has already made `.claude` a real
  * directory. Anywhere else a non-empty list is refused and nothing is written.
  * `codexHome` is set for a Codex turn with a list; that home then trusts this workspace.
- * Returns `{ restart }`: true when a live lab session would hold a stale list or token.
+ * The caller restarts a live session first (connectorsNeedRestart), then writes.
  */
 export function writeBotConnectors(workspace, prepared, servers, { codexHome } = {}) {
-  if (servers === undefined) return { restart: false };
+  if (servers === undefined) return false;
   if (prepared !== true) {
     if (servers.length) throw new Error("Bot connectors need a Bot workspace");
-    return { restart: false };
+    return false;
   }
-  // Tokens change every turn, so a non-empty list always needs a fresh session;
-  // an empty list after an empty list changes nothing.
-  const restart = servers.length > 0 || listedServers(workspace) > 0;
   if (codexHome && servers.length) trustCodexWorkspace(codexHome, workspace);
   const mcpServers = Object.fromEntries(servers.map(server => [server.name, {
     type: "http", url: server.url,
@@ -203,6 +253,6 @@ export function writeBotConnectors(workspace, prepared, servers, { codexHome } =
   // nobody to ask. Only this file, which is rewritten every turn, is approved.
   const settings = path.join(workspace, GUARD_FILE);
   writePrivate(settings, `${JSON.stringify({ ...readJson(settings), enableAllProjectMcpServers: servers.length > 0 }, null, 2)}\n`);
-  return { restart };
+  return true;
 }
 

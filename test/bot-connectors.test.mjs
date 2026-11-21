@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,36 +8,52 @@ import { BOT_CONNECTOR_CAPABILITIES, PUBLIC_MCP_URL, codexHomeFor, trustCodexWor
 import { continueThread } from "../src/bridge.mjs";
 import { freshCapability } from "./helpers/fresh-context-wire.mjs";
 import { ensureLocalTalkWorkspace } from "../src/local-talk-workspace.mjs";
-import { LoopbackRuntimeAdapter } from "../src/outbound-pairer.mjs";
+import { LoopbackRuntimeAdapter, readPairOffer } from "../src/outbound-pairer.mjs";
 
+const ORIGIN = "https://jack.example";
 const scope = { businessId: "11111111-1111-4111-8111-111111111111", seatId: "22222222-2222-4222-8222-222222222222", agentId: "33333333-3333-4333-8333-333333333333" };
+const bearer = [{ name: "Authorization", value: "Bearer synthetic-turn-token" }];
 const learn = { name: "microsoft-learn", type: "http", url: PUBLIC_MCP_URL, headers: [] };
-const linear = { name: "linear", type: "http", url: "https://jack.example/mcp/connectors/linear", headers: [{ name: "Authorization", value: "Bearer synthetic-turn-token" }] };
-const jack = { name: "jack", type: "http", url: "https://jack.example/mcp", headers: [{ name: "Authorization", value: "Bearer synthetic-turn-token" }] };
+const linear = { name: "linear", type: "http", url: `${ORIGIN}/mcp/connectors/linear`, headers: bearer };
+const jack = { name: "jack", type: "http", url: `${ORIGIN}/mcp`, headers: bearer };
 const connectors = (servers, extra = {}) => ({ mcpServers: servers, mcpScope: scope, mcpExpiresAt: Date.now() + 60_000, ...extra });
+const claude = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
+const codex = { instanceId: "codex", model: "gpt-6-astra" };
+// Jack's paired_mcp_workspace for this scope.
+const seatDigest = (value = scope) => createHash("sha256").update(`${value.businessId}:${value.seatId}`).digest("hex");
 
-function setup() {
+function setup({ jackOrigin = ORIGIN, running = () => false } = {}) {
   const settings = {};
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "bot-connectors-")));
   fs.chmodSync(home, 0o700);
-  // The path Jack sends for a Bot with connectors (paired_mcp_workspace).
-  const workspace = path.join(home, ".jack-local-scratch", "seats", "a".repeat(64), "agents", scope.agentId);
+  const workspace = path.join(home, ".jack-local-scratch", "seats", seatDigest(), "agents", scope.agentId);
   const sent = [];
+  const stops = [];
+  const at = { workspace: null }; // the thread's folder as T3 reports it on continue
   const adapter = new LoopbackRuntimeAdapter({
     client: { getSettings: async () => settings },
     prepareTalkWorkspaceImpl: value => ensureLocalTalkWorkspace(value, { home }),
     originateImpl: (_client, params) => { sent.push(params); return { ok: true }; },
-    continueImpl: async (_client, params, { prepareTalkWorkspace }) => { sent.push({ ...params, prepared: await prepareTalkWorkspace(workspace) }); return { ok: true }; },
+    // The same hook contract continueThread uses: stop first, then the hook writes.
+    continueImpl: async (_client, params, { prepareTalkWorkspace }) => {
+      await prepareTalkWorkspace(at.workspace ?? workspace, { restartIdleSession: async () => {
+        if (running()) throw new Error("This Talk is still answering.");
+        stops.push(params.threadId);
+      } });
+      sent.push(params);
+      return { ok: true };
+    },
   });
+  adapter.jackOrigin = jackOrigin; // what the pairer pins from the owner's pair offer
   const read = file => JSON.parse(fs.readFileSync(path.join(workspace, file), "utf8"));
   // T3's Codex homePath, as the owner's Settings would hold it.
   settings.providerInstances = { codex: { config: { homePath: path.join(home, ".codex") } } };
-  return { home, workspace, sent, adapter, read };
+  return { home, workspace, sent, stops, adapter, read, at };
 }
 
 test("a Bot's connectors are written into its own workspace and never reach T3", async () => {
-  const { workspace, sent, adapter, read } = setup();
-  await adapter.originate({ workspace, message: "hi", instanceId: "claudeAgent", ...connectors([learn]) });
+  const { workspace, sent, stops, adapter, read } = setup();
+  await adapter.originate({ workspace, message: "hi", ...claude, ...connectors([learn]) });
   assert.deepEqual(read(".mcp.json"), { mcpServers: { "microsoft-learn": { type: "http", url: PUBLIC_MCP_URL } } });
   const settings = read(path.join(".claude", "settings.local.json"));
   assert.equal(settings.enableAllProjectMcpServers, true);
@@ -44,51 +61,55 @@ test("a Bot's connectors are written into its own workspace and never reach T3",
   assert.equal(fs.statSync(path.join(workspace, ".mcp.json")).mode & 0o777, 0o600);
   assert.deepEqual(Object.keys(sent[0]).filter(key => key.startsWith("mcp")), []);
 
-  // The next turn's list is the truth: an empty list takes the tools away.
-  await adapter.continue({ threadId: "t1", message: "again", instanceId: "claudeAgent", model: "claude-opus-5-5", ...connectors([]) });
+  // The next turn's list is the truth: an empty list takes the tools away, and
+  // the live session that still holds the old list is stopped first.
+  await adapter.continue({ threadId: "t1", message: "again", ...claude, ...connectors([]) });
   assert.deepEqual(read(".mcp.json"), { mcpServers: {} });
   assert.equal(read(path.join(".claude", "settings.local.json")).enableAllProjectMcpServers, false);
   assert.deepEqual(Object.keys(sent[1]).filter(key => key.startsWith("mcp")), []);
-  // A live session still holds the old list, so the caller restarts it once more.
-  assert.equal(sent[1].prepared.restart, true);
-  await adapter.continue({ threadId: "t1", message: "again", instanceId: "claudeAgent", model: "claude-opus-5-5", ...connectors([]) });
-  assert.equal(sent[2].prepared.restart, false); // empty after empty changes nothing
+  assert.deepEqual(stops, ["t1"]);
+  await adapter.continue({ threadId: "t1", message: "again", ...claude, ...connectors([]) });
+  assert.deepEqual(stops, ["t1"]); // empty after empty changes nothing
 });
 
 test("a signed-in connector reaches the lab as Jack's proxy with the turn token, in a private file", async () => {
   const { workspace, sent, adapter, read } = setup();
-  const reply = await adapter.originate({ workspace, message: "hi", instanceId: "claudeAgent", ...connectors([learn, linear]) });
+  const reply = await adapter.originate({ workspace, message: "hi", ...claude, ...connectors([learn, linear, jack]) });
   assert.deepEqual(read(".mcp.json").mcpServers.linear, { type: "http", url: linear.url, headers: { Authorization: "Bearer synthetic-turn-token" } });
+  assert.deepEqual(read(".mcp.json").mcpServers.jack, { type: "http", url: jack.url, headers: { Authorization: "Bearer synthetic-turn-token" } });
   assert.equal(fs.statSync(path.join(workspace, ".mcp.json")).mode & 0o777, 0o600);
   // The token is in that one file only: not in the reply, not in what T3 gets.
   assert.equal(JSON.stringify([reply, sent]).includes("synthetic-turn-token"), false);
-  await adapter.continue({ threadId: "t1", message: "again", instanceId: "claudeAgent", model: "claude-opus-5-5", ...connectors([]) });
+  await adapter.continue({ threadId: "t1", message: "again", ...claude, ...connectors([]) });
   assert.equal(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8").includes("synthetic-turn-token"), false);
+  // No temporary file with the token is ever left next to it.
+  assert.deepEqual(fs.readdirSync(workspace).filter(name => name.endsWith(".tmp")), []);
 });
 
 test("a turn without connector fields leaves the workspace as it is", async () => {
-  const { workspace, adapter } = setup();
-  await adapter.originate({ workspace, message: "hi", instanceId: "codex" });
+  const { workspace, stops, adapter } = setup();
+  await adapter.originate({ workspace, message: "hi", ...codex });
   assert.equal(fs.existsSync(path.join(workspace, ".mcp.json")), false);
   assert.equal(fs.existsSync(path.join(workspace, ".codex")), false);
-  await adapter.continue({ threadId: "t1", message: "again", instanceId: "codex", model: "gpt-6-astra" });
+  await adapter.continue({ threadId: "t1", message: "again", ...codex });
   assert.equal(fs.existsSync(path.join(workspace, ".mcp.json")), false);
+  assert.deepEqual(stops, []);
 });
 
 test("anything Jack's gate would not admit is refused before the workspace or T3 is touched", async () => {
   const { home, workspace, sent, adapter } = setup();
-  const base = { workspace, message: "hi", instanceId: "claudeAgent" };
+  const base = { workspace, message: "hi", ...claude };
   for (const [bad, pattern] of [
     [connectors([{ ...learn, url: "https://example.com/mcp" }]), /not an admitted list/],
-    [connectors([{ ...learn, headers: [{ name: "Authorization", value: "Bearer x" }] }]), /not an admitted list/],
+    [connectors([{ ...learn, headers: bearer }]), /not an admitted list/],
     [connectors([learn, { ...learn }]), /not an admitted list/],
     [connectors([{ ...linear, headers: [] }]), /not an admitted list/],
     [connectors([{ ...linear, headers: [{ name: "Cookie", value: "Bearer x" }] }]), /not an admitted list/],
     [connectors([{ ...linear, headers: [{ name: "Authorization", value: "Bearer a b" }] }]), /not an admitted list/],
     [connectors([{ ...linear, url: "http://jack.example/mcp/connectors/linear" }]), /not an admitted list/],
-    [connectors([{ ...linear, url: "https://jack.example/mcp/connectors/clickup" }]), /not an admitted list/],
+    [connectors([{ ...linear, url: `${ORIGIN}/mcp/connectors/clickup` }]), /not an admitted list/],
     [connectors([{ ...linear, url: "https://user@jack.example/mcp/connectors/linear" }]), /not an admitted list/],
-    [connectors([{ ...linear, url: "https://jack.example/mcp/connectors/linear?x=1" }]), /not an admitted list/],
+    [connectors([{ ...linear, url: `${ORIGIN}/mcp/connectors/linear?x=1` }]), /not an admitted list/],
     [connectors([learn], { mcpScope: { ...scope, agentId: "nope" } }), /exact ownership/],
     [connectors([learn], { mcpExpiresAt: Date.now() - 1 }), /expired/],
     [connectors([learn], { mcpExpiresAt: Date.now() + 600_000 }), /expired/],
@@ -96,16 +117,75 @@ test("anything Jack's gate would not admit is refused before the workspace or T3
     [connectors([learn], { instanceId: undefined }), /not supported on this lab/],
     [connectors([{ ...jack, headers: [] }]), /not an admitted list/],
     [connectors([{ ...jack, name: "jack2" }]), /not an admitted list/],
-    [connectors([{ ...jack, url: "https://jack.example/mcp/" }]), /not an admitted list/],
+    [connectors([{ ...jack, url: `${ORIGIN}/mcp/` }]), /not an admitted list/],
     [connectors([{ ...learn, name: "jack" }]), /not an admitted list/],
     [connectors([jack, { ...linear, url: "https://other.example/mcp/connectors/linear" }]), /not an admitted list/],
     [{ mcpScope: scope }, /requires mcpServers/],
   ]) assert.throws(() => adapter.originate({ ...base, ...bad }), pattern);
   // An operator seat's folder is not a Bot workspace.
-  await assert.rejects(() => adapter.originate({ ...base, workspace: home, ...connectors([learn]) }), /need a Bot workspace/);
+  await assert.rejects(() => adapter.originate({ ...base, workspace: home, ...connectors([learn]) }), /this Bot's own workspace/);
   assert.equal(fs.existsSync(path.join(home, ".mcp.json")), false);
-  assert.equal(fs.existsSync(workspace), false);
+  assert.equal(fs.existsSync(path.join(home, ".jack-local-scratch")), false);
   assert.equal(sent.length, 0);
+});
+
+test("B3 P1-1: Jack-hosted entries go only to the Jack origin pinned at pairing", async () => {
+  // A host the computer is not paired with, even in the exact proxy or self shape.
+  for (const url of ["https://evil.example/mcp", "https://jack.example:8443/mcp", "https://10.0.0.1/mcp"]) {
+    const { workspace, sent, adapter } = setup();
+    assert.throws(() => adapter.originate({ workspace, message: "hi", ...claude, ...connectors([{ ...jack, url }]) }), /not paired with/);
+    assert.throws(() => adapter.continue({ threadId: "t1", message: "hi", ...claude, ...connectors([{ ...linear, url: `${url}/connectors/linear` }]) }), /not paired with/);
+    assert.equal(fs.existsSync(workspace), false);
+    assert.equal(sent.length, 0);
+  }
+  // Paired by an Agent Jack that named no origin: Jack entries fail closed with the fix; the public docs server still works.
+  const { workspace, adapter, read } = setup({ jackOrigin: null });
+  assert.throws(() => adapter.originate({ workspace, message: "hi", ...claude, ...connectors([jack]) }), /paired again from an updated Agent Jack/);
+  await adapter.originate({ workspace, message: "hi", ...claude, ...connectors([learn]) });
+  assert.deepEqual(Object.keys(read(".mcp.json").mcpServers), ["microsoft-learn"]);
+});
+
+test("B3 P1-1: the pair offer carries the pinned origin, canonical https only", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pair-offer-"));
+  const offer = (extra) => {
+    const file = path.join(dir, `offer-${Math.random().toString(16).slice(2)}.json`);
+    fs.writeFileSync(file, JSON.stringify({ version: 1, endpoint: "wss://sphere.example/api/v1/jack/pairs/relay", pairToken: "p".repeat(40), expiresAt: new Date(Date.now() + 60_000).toISOString(), ...extra }), { mode: 0o600 });
+    return readPairOffer(file);
+  };
+  assert.equal(offer({ jackOrigin: ORIGIN }).jackOrigin, ORIGIN);
+  assert.equal(offer({}).jackOrigin, null);
+  for (const bad of ["http://jack.example", `${ORIGIN}/`, `${ORIGIN}/mcp`, "https://user@jack.example", 7]) {
+    assert.throws(() => offer({ jackOrigin: bad }), /jackOrigin/);
+  }
+});
+
+test("B3 P2-1: a list lands only in the folder Jack derives from its own scope", async () => {
+  const { home, sent, adapter, at } = setup();
+  const otherBot = path.join(home, ".jack-local-scratch", "seats", seatDigest(), "agents", "44444444-4444-4444-8444-444444444444");
+  const otherSeat = path.join(home, ".jack-local-scratch", "seats", "b".repeat(64), "agents", scope.agentId);
+  for (const workspace of [otherBot, otherSeat]) {
+    await assert.rejects(() => adapter.originate({ workspace, message: "hi", ...claude, ...connectors([learn]) }), /this Bot's own workspace/);
+    at.workspace = workspace;
+    await assert.rejects(() => adapter.continue({ threadId: "t1", message: "hi", ...claude, ...connectors([learn]) }), /this Bot's own workspace/);
+    assert.equal(fs.existsSync(workspace), false);
+  }
+  assert.equal(sent.length, 0);
+});
+
+test("B3 P2-2: a refused clear changes no file, and its retry still stops the stale session", async () => {
+  let running = true;
+  const { workspace, stops, sent, adapter, read } = setup({ running: () => running });
+  await adapter.originate({ workspace, message: "hi", ...claude, ...connectors([learn]) });
+  // The Talk is still answering: the clear is refused before any file changes.
+  await assert.rejects(() => adapter.continue({ threadId: "t1", message: "clear", ...claude, ...connectors([]) }), /still answering/);
+  assert.deepEqual(Object.keys(read(".mcp.json").mcpServers), ["microsoft-learn"]);
+  assert.equal(read(path.join(".claude", "settings.local.json")).enableAllProjectMcpServers, true);
+  // Once idle, the retry stops the session that loaded the old list, then clears.
+  running = false;
+  await adapter.continue({ threadId: "t1", message: "clear", ...claude, ...connectors([]) });
+  assert.deepEqual(stops, ["t1"]);
+  assert.deepEqual(read(".mcp.json"), { mcpServers: {} });
+  assert.equal(sent.length, 2);
 });
 
 test("doctor-status advertises exactly what Jack's gate reads, only with Local Talk support", async () => {
@@ -118,8 +198,8 @@ test("doctor-status advertises exactly what Jack's gate reads, only with Local T
 });
 
 test("Jack's own tools and a connector reach Local Codex through a trusted per-folder config", async () => {
-  const { home, workspace, sent, adapter } = setup();
-  const reply = await adapter.originate({ workspace, message: "weather?", instanceId: "codex", model: "gpt-6-astra", ...connectors([jack, linear, learn]) });
+  const { home, workspace, sent, stops, adapter } = setup();
+  const reply = await adapter.originate({ workspace, message: "weather?", ...codex, ...connectors([jack, linear, learn]) });
   const toml = fs.readFileSync(path.join(workspace, ".codex", "config.toml"), "utf8");
   assert.match(toml, /\[mcp_servers\.jack\]\nurl = "https:\/\/jack\.example\/mcp"\nhttp_headers = \{ "Authorization" = "Bearer synthetic-turn-token" \}/);
   assert.match(toml, /\[mcp_servers\.microsoft-learn\]\nurl = "https:\/\/learn\.microsoft\.com\/api\/mcp"\n/);
@@ -129,23 +209,41 @@ test("Jack's own tools and a connector reach Local Codex through a trusted per-f
   const trust = fs.readFileSync(path.join(home, ".codex", "config.toml"), "utf8");
   assert.equal(trust.split(`[projects.${JSON.stringify(workspace)}]`).length, 2);
   assert.equal(trust.includes("synthetic-turn-token"), false);
-  await adapter.continue({ threadId: "t1", message: "again", instanceId: "codex", model: "gpt-6-astra", ...connectors([jack]) });
+  await adapter.continue({ threadId: "t1", message: "again", ...codex, ...connectors([jack]) });
   assert.equal(fs.readFileSync(path.join(home, ".codex", "config.toml"), "utf8"), trust);
-  assert.equal(sent[1].prepared.restart, true);
+  assert.deepEqual(stops, ["t1"]);
   assert.equal(JSON.stringify([reply, sent]).includes("synthetic-turn-token"), false);
-  await adapter.continue({ threadId: "t1", message: "again", instanceId: "codex", model: "gpt-6-astra", ...connectors([]) });
+  await adapter.continue({ threadId: "t1", message: "again", ...codex, ...connectors([]) });
   assert.equal(fs.readFileSync(path.join(workspace, ".codex", "config.toml"), "utf8").includes("mcp_servers"), false);
 });
 
 test("the Codex trust entry respects the owner's file", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "codex-home-"));
   const file = path.join(home, "config.toml");
+  // B3 P3-2: an existing empty file is a normal file, not a refusal.
+  fs.writeFileSync(file, "", { mode: 0o640 });
+  assert.equal(trustCodexWorkspace(home, "/u"), true);
+  assert.equal(fs.statSync(file).mode & 0o777, 0o640); // the owner's mode stays
   fs.writeFileSync(file, 'model = "x"\n[projects."/w"]\ntrust_level = "untrusted"\n');
   assert.equal(trustCodexWorkspace(home, "/w"), false); // the owner's own table stays
   assert.equal(trustCodexWorkspace(home, "/v"), true);
   assert.match(fs.readFileSync(file, "utf8"), /^model = "x"\n\[projects\."\/w"\]\ntrust_level = "untrusted"\n\n# Agent Jack.*\n\[projects\."\/v"\]\ntrust_level = "trusted"\n$/);
+  assert.deepEqual(fs.readdirSync(home).filter(name => name.endsWith(".tmp")), []);
+  // B3 P3-3: a dotted-key entry for the same folder is the owner's, other dotted or inline projects refuse.
+  fs.writeFileSync(file, 'projects."/w".trust_level = "trusted"\n');
+  assert.equal(trustCodexWorkspace(home, "/w"), false);
+  assert.throws(() => trustCodexWorkspace(home, "/v"), /projects inline/);
   fs.writeFileSync(file, 'projects = { "/w" = { trust_level = "trusted" } }\n');
   assert.throws(() => trustCodexWorkspace(home, "/v"), /projects inline/);
+  assert.equal(fs.readFileSync(file, "utf8"), 'projects = { "/w" = { trust_level = "trusted" } }\n');
+  // A dotfiles symlink keeps pointing at the owner's real file.
+  const real = path.join(home, "real.toml");
+  fs.rmSync(file);
+  fs.writeFileSync(real, 'model = "y"\n');
+  fs.symlinkSync(real, file);
+  assert.equal(trustCodexWorkspace(home, "/v"), true);
+  assert.equal(fs.lstatSync(file).isSymbolicLink(), true);
+  assert.match(fs.readFileSync(real, "utf8"), /\[projects\."\/v"\]/);
   assert.equal(await codexHomeFor({ getSettings: async () => ({ providerInstances: { codex: { config: { homePath: "~/alt" } } } }) }, { home: "/h" }), "/h/alt");
   assert.equal(await codexHomeFor({ getSettings: async () => { throw new Error("no"); } }, { home: "/h" }), "/h/.codex");
 });
@@ -170,17 +268,21 @@ test("continue restarts an idle live session before a turn with tools, never a r
     return state;
   };
   const input = { threadId, message: "weather?", runtimeMode: "full-access", messageId: "m1" };
-  const restart = { prepareTalkWorkspace: async () => ({ restart: true }) };
+  const order = [];
+  const restart = { prepareTalkWorkspace: async (_workspace, { restartIdleSession }) => { await restartIdleSession(); order.push("write"); } };
   const live = fake("ready");
   await continueThread(live.client, input, restart);
   assert.deepEqual(live.commands, ["thread.session.stop", "thread.turn.start"]);
+  assert.deepEqual(order, ["write"]); // stop, then write, then start
   const stopped = fake("stopped");
   await continueThread(stopped.client, input, restart);
   assert.deepEqual(stopped.commands, ["thread.turn.start"]);
   const unchanged = fake("ready");
-  await continueThread(unchanged.client, input, { prepareTalkWorkspace: async () => ({ restart: false }) });
+  await continueThread(unchanged.client, input, { prepareTalkWorkspace: async () => {} });
   assert.deepEqual(unchanged.commands, ["thread.turn.start"]);
   const running = fake("running");
+  order.length = 0;
   await assert.rejects(continueThread(running.client, input, restart), /still answering/);
   assert.deepEqual(running.commands, []);
+  assert.deepEqual(order, []); // nothing written for a refused turn
 });

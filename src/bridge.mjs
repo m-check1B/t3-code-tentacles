@@ -718,6 +718,8 @@ export async function startThread(client, { projectId, title, message, instanceI
   return { threadId, projectId, messageId, turnCommandId };
 }
 
+// shortcut: T3 has no conditional stop, so a turn the owner starts in the T3 window
+// between this read and the stop is cut; Bot Talks are not driven from T3's UI.
 async function restartIdleSession(client, threadId, turnCommandId) {
   const session = (await waitForThread(client, threadId)).thread.session;
   const status = session?.status ?? null;
@@ -763,11 +765,11 @@ export async function continueThread(client, {
         workspace = project?.workspaceRoot;
       }
       if (typeof workspace !== "string") throw new Error("Thread workspace could not be resolved; continue refused before T3");
-      const prepared = await prepareTalkWorkspace(workspace);
       // KRA-10862: T3 keeps a lab process alive across turns, and that process
-      // loaded its MCP list and turn token once. Stop an idle session so the
-      // next turn starts a fresh one (it resumes the conversation) on this list.
-      if (prepared?.restart === true) await restartIdleSession(client, threadId, turnCommandId);
+      // loaded its MCP list and turn token once. The hook stops an idle session
+      // before it rewrites them, so this turn starts a fresh one (it resumes the
+      // conversation) on the new list.
+      await prepareTalkWorkspace(workspace, { restartIdleSession: () => restartIdleSession(client, threadId, turnCommandId) });
     }
     await client.dispatch({
       type: "thread.turn.start",
