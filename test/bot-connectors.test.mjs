@@ -1227,6 +1227,17 @@ test("B3 P2-1 on #117 (3rd review): doctor's Codex home follows T3 0.1.11, field
   // a blank last CODEX_HOME such as " " (fifth review P2-2: T3 hands Codex <cwd>/" ").
 });
 
+// EACCES on one path, also when the tests run as root (CI), where mode 0000 still reads.
+async function withEacces(file, run) {
+  const { openSync } = fs;
+  fs.openSync = (target, ...rest) => {
+    if (String(target) === file) throw Object.assign(new Error(`EACCES: permission denied, open '${file}'`), { code: "EACCES" });
+    return openSync(target, ...rest);
+  };
+  syncBuiltinESMExports();
+  try { return await run(); } finally { fs.openSync = openSync; syncBuiltinESMExports(); }
+}
+
 // KRA-10891: Table 2 of the README (Local · Codex), one entry per row. "svc" is T3's
 // service.env as file text (absent when undefined, or a FIFO, folder, oversize or 0000 file).
 const OWN = "/home/owner";
@@ -1300,11 +1311,12 @@ test("KRA-10891 Codex home allow-list: every row of the closed table", async () 
       if (svc === "fifo") execFileSync("mkfifo", [file]);
       else if (svc === "dir") fs.mkdirSync(file);
       else if (svc === "big") fs.writeFileSync(file, `OTHER=${"x".repeat(64 * 1024)}\n`);
-      else if (svc === "eacces") fs.writeFileSync(file, "OTHER=1\n", { mode: 0o000 });
+      else if (svc === "eacces") fs.writeFileSync(file, "OTHER=1\n");
       else if (svc !== undefined) fs.writeFileSync(file, svc);
-      const run = () => codexHomeAllowed(settings, readT3ServiceEnv(file), { home: OWN });
-      if (expected === REFUSE) assert.throws(run, { message: field }, `row ${row}: ${name}`);
-      else assert.equal(run(), expected, `row ${row}: ${name}`);
+      const home = () => codexHomeAllowed(settings, readT3ServiceEnv(file), { home: OWN });
+      const run = svc === "eacces" ? () => withEacces(file, home) : async () => home();
+      if (expected === REFUSE) await assert.rejects(run, { message: field }, `row ${row}: ${name}`);
+      else assert.equal(await run(), expected, `row ${row}: ${name}`);
     }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
   assert.deepEqual([...rows].sort((a, b) => a - b), Array.from({ length: 19 }, (_, i) => i + 1));
@@ -1322,8 +1334,8 @@ test("B3 P3-1 on #117 (fifth review): EACCES or ENOTDIR on a Codex layer refuses
   const project = "A .codex/config.toml in a folder above this Bot workspace has a server named like one of this Bot's Jack tools, or one Tentacles cannot read, and Codex merges it into the Bot's when that folder's project is trusted; remove that server there, then send again";
   // EACCES: a root-only managed_config.toml stand-in.
   fs.mkdirSync(path.dirname(codexFiles.system[1]));
-  fs.writeFileSync(codexFiles.system[1], '[mcp_servers.other]\ncommand = "x"\n', { mode: 0o000 });
-  await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), { message: system });
+  fs.writeFileSync(codexFiles.system[1], '[mcp_servers.other]\ncommand = "x"\n');
+  await withEacces(codexFiles.system[1], () => assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), { message: system }));
   fs.rmSync(codexFiles.system[1]);
   // ENOTDIR: a file named .codex in a folder above the Bot workspace.
   const above = path.join(home, ".jack-local-scratch", ".codex");
