@@ -263,7 +263,12 @@ Ready means T3 accepts the lab, not that its model answers. To check that, run
 probe costs one model call per lab: it originates one no-tools turn per selected
 lab in a `doctor-probe` workspace under the Tentacles state directory, in threads
 titled `Tentacles doctor probe: <lab>`, and reports `responds`, `no_response` or
-`error` with the time to the first model event. A turn with no answer within
+`error` with the time to the first model event. On Antigravity only, a spent
+Google quota arrives as an ordinary reply, so the reply is classified (never
+shown): a usage limit gives `no_response` / `usage_limit` with "not responding:
+quota" and, when the reply names one in a strict time form, its reset time;
+another known failure class gives `error` with that class; any other reply is
+`responds`, as for every lab. A turn with no answer within
 `--responds-timeout` seconds (default 60), or whose T3 read fails, is
 interrupted through the turn interrupt path and gets a next action. On a T3
 without the turn-result route the turn cannot be interrupted; the row then says
@@ -394,6 +399,7 @@ assistant content are never published.
 | Claude Code CLI | `claudeAgent` | `claude-sonnet-5`; ready when T3 reports it ready and signed in (`auth_required` → `claude auth login`). T3 without auth status: skipped | Originate + continue |
 | Grok Code CLI | `grok` | `grok-4.6` when doctor advertises it | Originate + continue |
 | Cursor CLI | `cursor` | always pass a model shown by doctor | Originate + continue |
+| Antigravity (Gemini) | `antigravity` | always pass a model shown by doctor. An old `gemini-…-low`/`-medium`/`-high` id is sent as the base id plus `thought_level` only when T3's live list lacks the old id, lists the base id, and (if T3 describes it) offers that level; never `xhigh`. Raw `act` intents send the id as given | Not proved on a real turn |
 | DeepSeek CLI adapter | `deepseek` | `deepseek/deepseek-v4-flash` when doctor advertises it | Originate + continue |
 | Kimi CLI adapter | `kimi` | `moonshotai/kimi-k3` when doctor advertises it | Originate + continue |
 | Pi CLI adapter | `pi` | `gpt-5.6-terra` when doctor advertises it | Originate + continue |
