@@ -53,7 +53,7 @@ import { boundDoctorInventories } from "./inventory-budget.mjs";
 import { pluginInventoryBlock } from "./plugin-inventory.mjs";
 import { LAB_NAMES, labName } from "./lab-names.mjs";
 import { inspectInstanceWebTools } from "./web-tools.mjs";
-import { ANTIGRAVITY_INSTANCE_ID, antigravityAction, applyAntigravityState } from "./antigravity.mjs";
+import { ANTIGRAVITY_INSTANCE_ID, antigravityAction, antigravityModelAlias, applyAntigravityState } from "./antigravity.mjs";
 import { enforceManagedPolicy, isDriverAllowed, managedPolicyReport, policySummary } from "./managed-policy.mjs";
 
 const HERMES_MENTION = /(^|\s)@hermes\b/i;
@@ -690,7 +690,7 @@ export async function ensureProject(client, { workspace, title, instanceId = DEF
   const projects = Array.isArray(snapshot?.projects) ? snapshot.projects : [];
   const existing = projects.find((project) => project?.deletedAt == null && (project.workspaceRoot === workspace || project.id === projectId));
   if (existing) return { project: existing, created: false, shell: snapshot };
-  const defaultModelSelection = resolveModelSelection({ instanceId, model, options, budget });
+  const defaultModelSelection = await liveModelSelection(client, resolveModelSelection({ instanceId, model, options, budget }));
   await client.dispatch({ type: "project.create", commandId: projectCommandId, projectId, title: title || path.basename(workspace) || "Hermes", workspaceRoot: workspace, createWorkspaceRootIfMissing: false, defaultModelSelection, createdAt: now() });
   const projected = await waitFor(async () => {
     const current = await readOrchestrationSnapshot(client);
@@ -700,7 +700,7 @@ export async function ensureProject(client, { workspace, title, instanceId = DEF
 }
 
 export async function startThread(client, { projectId, title, message, instanceId, model = DEFAULT_MODEL, options, budget, runtimeMode, freshProviderContext, fixedTitle, threadId = randomUUID(), threadCommandId = randomUUID(), turnCommandId = randomUUID(), messageId = randomUUID() }) {
-  const modelSelection = resolveModelSelection({ instanceId: instanceId === undefined ? DEFAULT_INSTANCE_ID : instanceId, model, options, budget });
+  const modelSelection = await liveModelSelection(client, resolveModelSelection({ instanceId: instanceId === undefined ? DEFAULT_INSTANCE_ID : instanceId, model, options, budget }));
   runtimeMode = requireExplicitRuntimeMode(runtimeMode);
   requireFreshFlags({ freshProviderContext, fixedTitle });
   await requireFreshProviderContext(client, { freshProviderContext, fixedTitle, instanceId });
@@ -746,7 +746,7 @@ export async function continueThread(client, {
 }, { prepareTalkWorkspace } = {}) {
   // Partial selection input is refused before any read or dispatch.
   const retained = !requireContinueSelection({ instanceId, model, options, budget });
-  let modelSelection = retained ? undefined : resolveModelSelection({ instanceId, model, options, budget });
+  let modelSelection = retained ? undefined : await liveModelSelection(client, resolveModelSelection({ instanceId, model, options, budget }));
   runtimeMode = requireExplicitRuntimeMode(runtimeMode);
   await requireFreshProviderContext(client, { freshProviderContext, instanceId });
   const detail = await waitForThread(client, threadId);
@@ -1117,16 +1117,44 @@ export function skillInventoryRow(instanceId, configProvider) {
 }
 const DOCTOR_STATUS_VALUES = new Set(["absent", "configured", "disabled", "error", "installed", "ready", "unavailable"]);
 
+// KRA-10869: an old effort-suffixed Antigravity id maps to its base id plus thought_level,
+// only on evidence: T3's live model list for that lab is non-empty, no longer has the
+// old id, does have the base id, and (when T3 describes that model's thought_level)
+// offers that level. Anything less keeps the id as given.
+export async function liveModelSelection(client, selection) {
+  const alias = baseLabId(selection.instanceId) === "antigravity" ? antigravityModelAlias(selection.model) : null;
+  if (!alias) return selection;
+  let providers = [];
+  try { providers = (await client.rpc("server.getConfig", {}))?.providers ?? []; } catch { return selection; }
+  const provider = Array.isArray(providers) ? providers.find((entry) => entry?.instanceId === selection.instanceId) : undefined;
+  const slugs = normalizedModelSlugs(provider);
+  if (slugs.includes(selection.model) || !slugs.includes(alias.model)) return selection;
+  // B3 P3-3 on #114: the same key as the slug list, and no descriptor means no alias.
+  const target = provider.models.find((entry) => modelSlug(entry) === alias.model);
+  const descriptors = target?.capabilities?.optionDescriptors;
+  const level = Array.isArray(descriptors) ? descriptors.find((entry) => entry?.id === "thought_level") : undefined;
+  if (!level || !Array.isArray(level.options) || !alias.options.every((wanted) => level.options.some((choice) => choice?.id === wanted.value))) return selection;
+  const options = [...(selection.options ?? [])];
+  for (const required of alias.options) {
+    const configured = options.find((entry) => entry.id === required.id);
+    if (configured && configured.value !== required.value) throw new Error(`Antigravity model alias ${selection.model} conflicts with option ${required.id}`);
+    if (!configured) options.push({ ...required });
+  }
+  return { ...selection, model: alias.model, options };
+}
+
+function modelSlug(model) {
+  const value = typeof model === "string" ? model : model?.slug || model?.id || model?.model || model?.name || null;
+  return typeof value === "string" ? value.trim() : null;
+}
+
 function normalizedModelSlugs(provider) {
   const models = Array.isArray(provider?.models) ? provider.models : [];
   const seen = new Set();
   const normalized = [];
   for (const model of models) {
-    const value = typeof model === "string"
-      ? model
-      : model?.slug || model?.id || model?.model || model?.name || null;
-    if (typeof value !== "string") continue;
-    const slug = value.trim();
+    const slug = modelSlug(model);
+    if (slug === null) continue;
     if (!/^[^\u0000-\u001f\u007f]{1,256}$/.test(slug) || seen.has(slug)) continue;
     seen.add(slug);
     normalized.push(slug);

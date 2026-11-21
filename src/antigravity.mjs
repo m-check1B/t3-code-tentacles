@@ -30,16 +30,18 @@ export function t3SupportsAntigravity(serverVersion) {
 // whole and never echoed.
 const T3_HEALTH_CHECK_TIMEOUT = /^Antigravity did not respond to its local health check within [0-9]{1,6} [a-z]{1,12}\.$/;
 
-// KRA-10863: T3's two managed-runtime messages that its own Antigravity setup
+// KRA-10863: T3's three managed-runtime messages that its own Antigravity setup
 // repairs (AntigravityInstallation, T3 0.1.11), matched whole and never echoed.
 // "changed on disk" arrives with installed=false, so it is read before that.
 const T3_RUNTIME_PREDATES_CLI = /^Antigravity [0-9A-Za-z.+-]{1,64} predates the Antigravity CLI and no longer works with this T3 Code release\. Update it in Antigravity setup\.$/;
 const T3_RUNTIME_CHANGED = /^The managed Antigravity runtime changed on disk\. Reinstall it in Antigravity setup\.$/;
+// A managed runtime whose release T3 has withdrawn (resolve step); same fix as "predates".
+const T3_RUNTIME_WITHDRAWN = /^Antigravity [0-9A-Za-z.+-]{1,64} no longer works with this T3 Code release\. Update it in Antigravity setup\.$/;
 
 function repairCode(configProvider) {
   if (configProvider.status !== "error" || typeof configProvider.message !== "string") return null;
   const message = configProvider.message.trim();
-  return T3_RUNTIME_PREDATES_CLI.test(message) ? "runtime_update_required"
+  return T3_RUNTIME_PREDATES_CLI.test(message) || T3_RUNTIME_WITHDRAWN.test(message) ? "runtime_update_required"
     : T3_RUNTIME_CHANGED.test(message) ? "runtime_changed" : null;
 }
 
@@ -122,4 +124,65 @@ export function antigravityAction(code) {
     default:
       return null;
   }
+}
+
+// KRA-10869: a spent Google quota comes back as an ordinary Antigravity reply. Only
+// a reset time is read out of it, by a strict time grammar, and printed from its
+// parsed parts; nothing else from the reply reaches the doctor output.
+const RESET_PREFIX = String.raw`\bresets? (at|in|on|after) `;
+const END = String.raw`(?=$|[\s.,;!)])`;
+const RESET_ISO = new RegExp(`${RESET_PREFIX}(\\d{4})-(\\d{2})-(\\d{2})[T ](\\d{2}):(\\d{2})(?::(\\d{2}))?(?: ?(Z|UTC|GMT|[+-]\\d{2}:?\\d{2}))?${END}`, "i");
+const RESET_CLOCK = new RegExp(`${RESET_PREFIX}(\\d{1,2}):(\\d{2})(?::(\\d{2}))?(?: ?(AM|PM))?(?: (UTC|GMT|[+-]\\d{2}:?\\d{2}))?${END}`, "i");
+const RESET_IN = new RegExp(`${RESET_PREFIX}(\\d{1,4}) (second|minute|hour|day)(s?)${END}`, "i");
+const two = value => String(Number(value)).padStart(2, "0");
+// B3 P3-4 on #114: an offset is at most ±14:59; a capital-letter zone the reader does not know refuses the time.
+const zoneOk = zone => !zone || !/^[+-]/.test(zone) || (+zone.slice(1, 3) <= 14 && +zone.slice(-2) <= 59);
+const unknownZone = (text, match) => /^ ?[A-Z]{2,5}(?![A-Za-z])/.test(text.slice(match.index + match[0].length));
+export function antigravityResetTime(reply) {
+  if (typeof reply !== "string") return null;
+  const text = reply.slice(0, 4096);
+  let m = RESET_ISO.exec(text);
+  if (m) {
+    const [, , y, mo, d, h, mi, sec, zone] = m;
+    if (+mo < 1 || +mo > 12 || +d < 1 || new Date(Date.UTC(+y, +mo - 1, +d)).getUTCDate() !== +d || +h > 23 || +mi > 59 || (sec && +sec > 59) || !zoneOk(zone) || (!zone && unknownZone(text, m))) return null;
+    return `${y}-${mo}-${d} ${h}:${mi}${sec ? `:${sec}` : ""}${zone ? ` ${zone.toUpperCase()}` : ""}`;
+  }
+  m = RESET_CLOCK.exec(text);
+  if (m) {
+    const [, , h, mi, sec, half, zone] = m;
+    if (+mi > 59 || (sec && +sec > 59) || (half ? +h < 1 || +h > 12 : +h > 23) || !zoneOk(zone) || (!zone && unknownZone(text, m))) return null;
+    return `${half ? Number(h) : two(h)}:${mi}${sec ? `:${sec}` : ""}${half ? ` ${half.toUpperCase()}` : ""}${zone ? ` ${zone.toUpperCase()}` : ""}`;
+  }
+  m = RESET_IN.exec(text);
+  if (m && /^(in|after)$/i.test(m[1]) && Number(m[2]) >= 1) return `${m[1].toLowerCase()} ${Number(m[2])} ${m[3].toLowerCase()}${Number(m[2]) === 1 ? "" : "s"}`;
+  return null;
+}
+export function antigravityQuotaAction(reply) {
+  const reset = antigravityResetTime(reply);
+  return `not responding: quota${reset ? `; resets ${reset}` : ""}; pass --model with another Antigravity model, or wait until its quota resets`;
+}
+
+// Antigravity 1.5.13's own out-of-quota reply, which the shared classifier does not
+// know; kept here so other labs' classification stays as it is. A leading sentence, so a
+// trailing reset sentence still reaches the reset-time reader (B3 P3-2 on #114).
+const ANTIGRAVITY_QUOTA_REPLY = /^You have exhausted your quota on this model(?:\.(?:\s|$)|$)/;
+/**
+ * The probe outcome for an Antigravity reply that is not OK, or null for main's
+ * outcome. Only a reply the shared classifier (or the sentence above) reads as a
+ * usage limit is quota; every other reply is left to main (B3 P3-1 on #114). The
+ * reply is never echoed.
+ */
+export function antigravityReplyOutcome(text, classify) {
+  const reply = typeof text === "string" ? text.trim() : "";
+  if (/^ok\.?$/i.test(reply)) return null;
+  const code = ANTIGRAVITY_QUOTA_REPLY.test(reply) ? "usage_limit" : classify(reply);
+  return code === "usage_limit" ? { status: "no_response", code, action: antigravityQuotaAction(reply) } : null;
+}
+
+// KRA-10869: runtime 1.5.13 dropped the effort-suffixed ids (gemini-4-hydrogen-high);
+// effort is the thought_level option now. Never mapped to xhigh (Founder-manual).
+const OLD_EFFORT_MODEL = /^(gemini-[a-z0-9][a-z0-9.-]*?)-(low|medium|high)$/;
+export function antigravityModelAlias(model) {
+  const match = typeof model === "string" ? OLD_EFFORT_MODEL.exec(model) : null;
+  return match ? { model: match[1], options: [{ id: "thought_level", value: match[2] }] } : null;
 }

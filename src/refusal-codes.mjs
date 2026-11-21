@@ -16,6 +16,8 @@ export const REFUSALS = Object.freeze({
   "bot_connectors.admission": "Agent Jack and this computer disagree about the Bot's tools; update both, then send again.",
   "talk.still_answering": "This Talk is still answering; send again once it finishes.",
   "talk.workspace_custody": "This computer refused the Talk's folder; check the Tentacles log on this computer.",
+  "model.thinking_level_twice": "This Antigravity model already sets a thinking level; drop the old -low/-medium/-high from the model or the thinking-level option.",
+  "model.fast_mode_twice": "This Cursor model already sets fast mode; use composer-2.5 with the fast-mode option, or composer-2.5-fast without it.",
   "tentacles.update": "Update Tentacles on this computer, then send again.",
   "t3.unreachable": "Start T3 Code (Beta) on this computer, then send again.",
   try_again: "This computer was busy as the turn started; send again.",
@@ -43,6 +45,8 @@ export const BOT_CONNECTOR_CODES = Object.freeze({
   grokNotTrusted: "bot_connectors.grok_home",
   grokGitRepo: "bot_connectors.lab_not_covered",
   grokChanged: "try_again",
+  cursorGitRepo: "bot_connectors.lab_not_covered",
+  cursorFileNotOurs: "bot_connectors.bot_folder",
 });
 
 const BY_TEXT = new Map([
@@ -63,6 +67,8 @@ const BY_TEXT = new Map([
 const BY_SHAPE = [
   [/^[a-z-]{1,40} does not accept remote parameter \S{1,200}$/, "tentacles.update"],
   [/^T3 RPC [\w.:/-]{1,80} websocket failed$/, "t3.unreachable"],
+  [/^Antigravity model alias gemini-[a-z0-9.-]{1,80} conflicts with option thought_level$/, "model.thinking_level_twice"],
+  [/^Cursor model alias composer-2\.5-fast conflicts with option fastMode$/, "model.fast_mode_twice"],
 ];
 
 function codeOf(error) {
