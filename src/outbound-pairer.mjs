@@ -7,7 +7,7 @@ import { privateModeOk } from "./platform.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { refusalOf } from "./refusal-codes.mjs";
 import { randomUUID } from "node:crypto";
-import { continueThread, doctor, originate, probeTalkCapabilities } from "./bridge.mjs";
+import { continueThread, doctor, labVersion, originate, probeTalkCapabilities } from "./bridge.mjs";
 import { requireFreshFlags, requireFreshProviderContext } from "./fresh-provider-context.mjs";
 import { observe, REPORT_MODEL_LABEL, threadReportFailure, threadReportStatus } from "./orchestrate.mjs";
 import { classifyFailure } from "./failure-codes.mjs";
@@ -325,9 +325,10 @@ export class LoopbackRuntimeAdapter {
     const codexTrust = !servers?.length ? undefined
       : instanceId === "codex" ? planCodexTrust(await codexHomeFor(this.client), workspace)
         : instanceId === "grok" ? planGrokTrust(await grokHomeFor(this.client), workspace) : undefined;
-    if (servers !== undefined && prepared === true) checkBotConnectorPaths(workspace);
+    const opencode = instanceId === "opencode" && botConnectorProviders().includes("opencode");
+    if (servers !== undefined && prepared === true) checkBotConnectorPaths(workspace, { opencode });
     if (restartIdleSession && connectorsNeedRestart(workspace, servers)) await restartIdleSession();
-    const written = writeBotConnectors(workspace, prepared, servers, { codexTrust });
+    const written = writeBotConnectors(workspace, prepared, servers, { codexTrust, opencode });
     const marker = path.join(workspace, GROK_TRUST_MARKER);
     // The marker records the table Tentacles itself added, so only that one is ever removed.
     // It also names the Grok home written to, so a later GROK_HOME change cannot strand the table.
@@ -404,6 +405,12 @@ export class LoopbackRuntimeAdapter {
     // then refuses its own connector turns as it did on jack.19. Learn still rides.
     const { jackMcpProxy, jackMcpSelf, ...unpinned } = BOT_CONNECTOR_CAPABILITIES;
     const advert = { ...(this.jackOrigin ? BOT_CONNECTOR_CAPABILITIES : unpinned), jackMcpProviders: botConnectorProviders() };
+    // Only T3's OpenCode 2 road (one shared server, per-request folder) is built;
+    // T3 runs OpenCode below 2 through another adapter.
+    const opencode = report.labs?.find(lab => lab.instanceId === "opencode");
+    if (!/^v?([2-9]|[1-9][0-9]+)\./.test(labVersion(opencode) ?? "")) {
+      advert.jackMcpProviders = Object.freeze(advert.jackMcpProviders.filter(id => id !== "opencode"));
+    }
     const result = { ...report, capabilities: capabilities?.talkTurnResult === "v1" ? { ...capabilities, ...advert } : capabilities };
     if (this.capabilityCache) {
       // KRA-7369: the connector inventory rides the lab-catalog answer, because

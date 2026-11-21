@@ -1305,6 +1305,9 @@ const T3_FIXED_PROBE_TIMEOUTS = [
   [/^Failed to load OpenCode provider inventory: Timed out while checking the OpenCode server version\.$/, { command: "opencode serve", probe: "opencode-server" }],
 ];
 const probeCommands = new WeakMap();
+// T3's provider snapshot version per doctor row, kept off the wire.
+const labVersions = new WeakMap();
+export const labVersion = lab => labVersions.get(lab) ?? null;
 
 function providerProbeTimeout(message) {
   if (typeof message !== "string") return null;
@@ -1377,6 +1380,7 @@ function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
     defaultAvailable,
     webTools: inspectInstanceWebTools(settings, instanceId),
   };
+  labVersions.set(row, configProvider?.version);
   if (code === "provider_probe_timeout") probeCommands.set(row, providerProbeTimeout(configProvider.message));
   if (defaultSource?.startsWith("t3-") && kind !== "external") {
     const pick = labDefaultModel(instanceId, instance);
