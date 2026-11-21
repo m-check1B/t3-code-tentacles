@@ -241,14 +241,62 @@ function codexToml(servers) {
 
 /** The Codex home T3's `codex` instance shares: its homePath setting, else ~/.codex. */
 export async function codexHomeFor(client, { home = os.homedir() } = {}) {
-  let configured = "";
-  try {
-    const settings = await client.getSettings();
-    configured = settings?.providerInstances?.codex?.config?.homePath ?? settings?.providers?.codex?.homePath ?? "";
-  } catch { /* unreadable settings: T3's own default below */ }
+  let settings;
+  try { settings = await client.getSettings(); } catch { /* unreadable settings: T3's own default below */ }
+  return codexHomeFromSettings(settings, { home });
+}
+
+export function codexHomeFromSettings(settings, { home = os.homedir(), instanceId = "codex" } = {}) {
+  const configured = settings?.providerInstances?.[instanceId]?.config?.homePath ?? settings?.providers?.codex?.homePath ?? "";
   if (typeof configured !== "string" || !configured.trim()) return path.join(home, ".codex");
   const value = configured.trim();
   return path.resolve(value === "~" ? home : value.startsWith("~/") ? path.join(home, value.slice(2)) : value);
+}
+
+// KRA-10891: the server names the Codex home config defines. Codex deep-merges a
+// project `[mcp_servers.<name>]` into the home's table of the same name, so an
+// owner's keys (`command`, `bearer_token_env_var`, headers, `enabled`) would join a
+// Bot's entry. `inline` is a top-level `mcp_servers = {…}` (names not parsed); `form`
+// is a quoted `mcp_servers` root or an escaped name, which Codex reads but this does not.
+// shortcut: a header inside a multi-line string still counts; Codex's own writer never emits one.
+export function codexServerNames(text) {
+  const names = new Set();
+  let inline = false, form = false, table = false, headerSeen = false;
+  const key = String.raw`("(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+)`;
+  const header = new RegExp(String.raw`^\[\s*${key}\s*(?:\.\s*${key}\s*)?[\].]`);
+  const keyLine = new RegExp(String.raw`^${key}\s*(?:\.\s*${key}\s*)?[.=]`);
+  const bare = value => value.replace(/^"(.*)"$|^'(.*)'$/s, "$1$2");
+  const add = name => { if (name.startsWith('"') && name.includes("\\")) form = true; else names.add(bare(name)); };
+  const isRoot = name => {
+    if (bare(name) !== "mcp_servers") return false;
+    if (name !== "mcp_servers") form = true; // a quoted root key
+    return true;
+  };
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line.startsWith("[")) {
+      headerSeen = true;
+      table = false;
+      if (line.startsWith("[[")) continue; // an array of tables is not a server
+      const match = header.exec(line);
+      if (match && isRoot(match[1])) { if (match[2]) add(match[2]); else table = true; }
+      continue;
+    }
+    const match = keyLine.exec(line);
+    if (!match) continue;
+    if (table) add(match[1]);
+    // Dotted and inline keys name a server only at the top level, before any header.
+    else if (!headerSeen && isRoot(match[1])) { if (match[2]) add(match[2]); else inline = true; }
+  }
+  return { names, inline, form };
+}
+
+export function checkCodexServerNames(codexHome, names) {
+  let text = "";
+  try { text = readFileSync(path.join(codexHome, "config.toml"), "utf8"); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  const owner = codexServerNames(text);
+  if (names.some(name => owner.names.has(name))) throw new Error(R.codexServerClash);
+  if (owner.inline || owner.form) throw new Error(R.codexServersForm);
 }
 
 /**

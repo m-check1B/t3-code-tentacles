@@ -18,6 +18,8 @@ export const BOT_CONNECTOR_REFUSALS = Object.freeze({
   grokGitRepo: "This Bot workspace is inside a git repository, where Grok decides trust for the whole repository; run this Bot on Server to use Jack tools",
   grokChanged: "Grok trusted_folders.toml changed while trusting this Bot workspace; try again",
   grokTrustForm: "Grok trusted_folders.toml holds a form Tentacles does not edit; trust this Bot workspace in Grok first",
+  codexServerClash: "The Codex config in the Codex home T3 uses already has a server named like one of this Bot's Jack tools (for example jack), and Codex would merge the two; rename or remove that server there, then send again",
+  codexServersForm: "The Codex config in the Codex home T3 uses keeps servers in a form Tentacles does not read; write each server as its own [mcp_servers.<name>] table, then send again",
   cursorGitRepo: "This Bot workspace is inside a git repository, where Cursor reads the repository's own .cursor/mcp.json; run this Bot on Server to use Jack tools",
   antigravityFileNotOurs: "This Bot workspace has a .agents/plugins/jack-tools plugin that Tentacles did not write; remove that folder, then send again",
   cursorFileNotOurs: "This Bot workspace has a .cursor/mcp.json that Tentacles did not write; remove it, then send again",

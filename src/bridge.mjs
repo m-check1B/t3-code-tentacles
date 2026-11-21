@@ -53,6 +53,7 @@ import { boundDoctorInventories } from "./inventory-budget.mjs";
 import { pluginInventoryBlock } from "./plugin-inventory.mjs";
 import { LAB_NAMES, labName } from "./lab-names.mjs";
 import { inspectInstanceWebTools } from "./web-tools.mjs";
+import { codexHomeFromSettings, codexServerNames } from "./bot-connectors.mjs";
 import { ANTIGRAVITY_INSTANCE_ID, antigravityAction, antigravityModelAlias, applyAntigravityState } from "./antigravity.mjs";
 import { enforceManagedPolicy, isDriverAllowed, managedPolicyReport, policySummary } from "./managed-policy.mjs";
 
@@ -1361,6 +1362,24 @@ function providerSignedIn(configProvider) {
   return status === "authenticated" ? true : status === "unauthenticated" ? false : null;
 }
 
+// KRA-10891: the old static Agent Jack road left an `agent-jack` server in some Codex
+// homes; Jack's tools now come per Bot, so it duplicates them, and it fails when its
+// variable is unset. Names only are read, from a regular file of at most 1 MiB.
+export const STALE_JACK_SERVER = "agent-jack";
+function staleCodexJackServer(settings, instanceId, instance) {
+  if (instanceId !== "codex" && instance?.driver !== "codex") return false;
+  try {
+    const home = codexHomeFromSettings(settings, { instanceId });
+    // B3 P3-6 on #116: a FIFO or a huge file must not block or slow doctor; skip it.
+    const fd = fs.openSync(path.join(home, "config.toml"), fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    try {
+      const info = fs.fstatSync(fd);
+      if (!info.isFile() || info.size > 1024 * 1024) return false;
+      return codexServerNames(fs.readFileSync(fd, "utf8")).names.has(STALE_JACK_SERVER);
+    } finally { fs.closeSync(fd); }
+  } catch { return false; }
+}
+
 function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
   const configProvider = configById.get(instanceId);
   const instance = settings?.providerInstances?.[instanceId];
@@ -1407,6 +1426,7 @@ function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
     defaultAvailable,
     webTools: inspectInstanceWebTools(settings, instanceId),
   };
+  if (installed && staleCodexJackServer(settings, instanceId, instance)) row.staleJackServer = STALE_JACK_SERVER;
   labVersions.set(row, configProvider?.version);
   if (code === "provider_probe_timeout") probeCommands.set(row, providerProbeTimeout(configProvider.message));
   if (defaultSource?.startsWith("t3-") && kind !== "external") {
@@ -2001,6 +2021,9 @@ export function formatDoctor(result = {}) {
       if (action) parts.push(`action: ${action}`);
       lines.push(`  - ${parts.join("  ")}`);
     }
+  }
+  for (const lab of labs.filter((entry) => entry.staleJackServer === STALE_JACK_SERVER)) {
+    lines.push(`Stale Codex server (${lab.instanceId}): the Codex config has an old \`agent-jack\` server from the static Agent Jack road; Jack's tools now come per Bot, so it duplicates them, and it fails on every turn when its variable is unset. Fix: remove the [mcp_servers.agent-jack] table from config.toml in the Codex home T3 uses.`);
   }
   const blockedByPolicy = Array.isArray(result.blockedByPolicy) ? result.blockedByPolicy : [];
   if (blockedByPolicy.length) {

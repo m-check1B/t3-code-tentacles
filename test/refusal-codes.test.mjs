@@ -13,6 +13,8 @@ test("KRA-10870: a known refusal is logged with its typed code; the relay frame 
     ["Jack tools need this computer paired again from an updated Agent Jack (Settings > Local labs > pair this computer)", "bot_connectors.pair_again"],
     ["Codex home config keeps projects in a form Tentacles does not edit; trust this Bot workspace in Codex first", "bot_connectors.codex_home"],
     ["Bot connectors need this Bot's own workspace", "bot_connectors.new_talk"],
+    ["The Codex config in the Codex home T3 uses already has a server named like one of this Bot's Jack tools (for example jack), and Codex would merge the two; rename or remove that server there, then send again", "bot_connectors.codex_servers"],
+    ["The Codex config in the Codex home T3 uses keeps servers in a form Tentacles does not read; write each server as its own [mcp_servers.<name>] table, then send again", "bot_connectors.codex_servers"],
     ["This lab cannot use Jack tools on Local yet; run this Bot on Server to use them", "bot_connectors.lab_not_covered"],
     ["This Talk is still answering. Its tools change once it finishes; try again then.", "talk.still_answering"],
   ];

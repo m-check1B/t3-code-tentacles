@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
@@ -6,8 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
-import { BOT_CONNECTOR_CAPABILITIES, GROK_TRUST_MARKER, PUBLIC_MCP_URL, codexHomeFor, commitCodexTrust, grokHomeFor, planGrokTrust, planGrokUntrust, trustCodexWorkspace } from "../src/bot-connectors.mjs";
-import { continueThread, doctor } from "../src/bridge.mjs";
+import { BOT_CONNECTOR_CAPABILITIES, GROK_TRUST_MARKER, PUBLIC_MCP_URL, codexHomeFor, codexServerNames, commitCodexTrust, grokHomeFor, planGrokTrust, planGrokUntrust, trustCodexWorkspace } from "../src/bot-connectors.mjs";
+import { continueThread, doctor, formatDoctor } from "../src/bridge.mjs";
 import { freshCapability } from "./helpers/fresh-context-wire.mjs";
 import { ensureLocalTalkWorkspace } from "../src/local-talk-workspace.mjs";
 import { LoopbackRuntimeAdapter, OutboundPairer, readPairOffer } from "../src/outbound-pairer.mjs";
@@ -809,6 +810,92 @@ test("KRA-10869: the Grok trust entry respects the owner's file and refuses form
   fs.rmSync(file);
   fs.symlinkSync(path.join(home, "elsewhere.toml"), file);
   assert.throws(() => planGrokTrust(home, "/w"), /is a link/);
+});
+
+test("KRA-10891: an owner's Codex server named like a Bot's refuses before the stop; the owner's stale agent-jack does not shadow ours", async () => {
+  const { home, workspace, sent, stops, adapter } = setup();
+  const codexHome = path.join(home, ".codex");
+  fs.mkdirSync(codexHome, { mode: 0o700 });
+  const file = path.join(codexHome, "config.toml");
+  // Codex deep-merges same-named tables: an owner's stdio `jack` plus Bot `url` breaks every Codex config load
+  // (codex-cli 0.169.0: "url is not supported for stdio"), and an owner's http `jack` adds its own keys to ours.
+  const clash = "The Codex config in the Codex home T3 uses already has a server named like one of this Bot's Jack tools (for example jack), and Codex would merge the two; rename or remove that server there, then send again";
+  const form = "The Codex config in the Codex home T3 uses keeps servers in a form Tentacles does not read; write each server as its own [mcp_servers.<name>] table, then send again";
+  for (const [owner, message] of [['[mcp_servers.jack]\ncommand = "owner-jack"\n', clash], ['[mcp_servers."jack"]\nurl = "https://owner.example/mcp"\nbearer_token_env_var = "OWNER_TOKEN"\n', clash], ['mcp_servers.jack.enabled = false\n', clash], ['[mcp_servers.linear.env]\nX = "1"\n', clash], ['mcp_servers = { other = { command = "x" } }\n', form], ['["mcp_servers".other]\ncommand = "x"\n', form], ['[mcp_servers."\\u006aack"]\ncommand = "x"\n', form]]) {
+    fs.writeFileSync(file, owner, { mode: 0o640 });
+    await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack, linear, learn]) }), { message }, owner);
+    assert.equal(fs.readFileSync(file, "utf8"), owner);
+    assert.equal(fs.statSync(file).mode & 0o777, 0o640);
+    assert.deepEqual([sent, stops], [[], []]);
+    assert.equal(fs.existsSync(path.join(workspace, ".codex", "config.toml")), false);
+  }
+  // The Founder's shape: the old static `agent-jack` road plus servers of his own. No name clash, so the
+  // Bot's `jack` is the Bot's alone; the owner's tables stay byte for byte (only the folder trust is appended).
+  const owner = '[mcp_servers.agent-jack]\ncommand = "agent-jack-mcp"\nenv_vars = ["AGENT_JACK_TOKEN"]\n\n[mcp_servers.mine]\ncommand = "fails-to-start"\n';
+  fs.writeFileSync(file, owner, { mode: 0o640 });
+  await adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack, learn]) });
+  assert.ok(fs.readFileSync(file, "utf8").startsWith(owner));
+  assert.deepEqual([...codexServerNames(fs.readFileSync(file, "utf8")).names], ["agent-jack", "mine"]);
+  assert.match(fs.readFileSync(path.join(workspace, ".codex", "config.toml"), "utf8"), /^\[mcp_servers\.jack\]$/m);
+  // A turn without tools for another lab never reads the Codex home.
+  fs.writeFileSync(file, '[mcp_servers.jack]\ncommand = "owner-jack"\n');
+  await adapter.continue({ threadId: "t1", message: "docs", ...claude, ...connectors([jack]) });
+});
+
+test("KRA-10891: codexServerNames reads every form Codex accepts for a server name", () => {
+  const names = text => [...codexServerNames(text).names];
+  assert.deepEqual(names('mcp_servers.d.url = "u"\n[mcp_servers.a]\n[mcp_servers."b"]\n[mcp_servers.\'c\'.env]\n[mcp_servers]\ne = { url = "u" }\n[other]\nf = 1\n'), ["d", "a", "b", "c", "e"]);
+  assert.equal(codexServerNames('mcp_servers = { a = {} }\n').inline, true);
+  assert.deepEqual(names('[projects."/w"]\ntrust_level = "trusted"\n# [mcp_servers.x]\n'), []);
+  // B3 P3-1 on #116: one row per form Codex 0.169.0 reads as server `jack`. A quoted root or an escaped name is `form`.
+  const read = text => { const r = codexServerNames(text); return { names: [...r.names], inline: r.inline, form: r.form }; };
+  for (const [text, want] of [
+    ['["mcp_servers".jack]\ncommand = "x"\n', { names: ["jack"], inline: false, form: true }],
+    ["['mcp_servers'.jack]\ncommand = \"x\"\n", { names: ["jack"], inline: false, form: true }],
+    ['["mcp_servers"]\njack = { command = "x" }\n', { names: ["jack"], inline: false, form: true }],
+    ['"mcp_servers".jack.command = "x"\n', { names: ["jack"], inline: false, form: true }],
+    ['[mcp_servers."\\u006aack"]\ncommand = "x"\n', { names: [], inline: false, form: true }],
+    ['[ mcp_servers . jack ]\ncommand = "x"\n', { names: ["jack"], inline: false, form: false }],
+    ['\uFEFF[mcp_servers.jack]\r\ncommand = "x"\r\n', { names: ["jack"], inline: false, form: false }],
+    ['mcp_servers = { jack = { command = "x" } }\n', { names: [], inline: true, form: false }],
+  ]) assert.deepEqual(read(text), want, text);
+  // B3 P3-2 on #116: forms Codex does not read as a server name.
+  for (const text of [
+    '[projects."/w"]\nmcp_servers.jack.command = "x"\n', // a dotted key under another table belongs to that table
+    '[[mcp_servers.jack]]\ncommand = "x"\n', // an array of tables
+    '[profiles.p]\nmcp_servers = { jack = {} }\n', // inline under a profile
+    '[profiles.p.mcp_servers.jack]\ncommand = "x"\n',
+  ]) assert.deepEqual(read(text), { names: [], inline: false, form: false }, text);
+});
+
+test("KRA-10891: doctor names a stale agent-jack server in the Codex home T3 uses, with one fix", async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "codex-stale-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const client = {
+    snapshot: async () => ({ projects: [], threads: [] }),
+    getSettings: async () => ({ providerInstances: { codex: { driver: "codex", enabled: true, config: { homePath: home } } } }),
+    rpc: async () => ({ environment: { serverVersion: "0.1.11" }, providers: [{ instanceId: "codex", driver: "codex", installed: true, status: "ready", models: [{ slug: "gpt-6-astra", isDefault: true }] }] }),
+  };
+  const fetchImpl = async () => { throw new Error("no Hermes"); };
+  const fix = "Stale Codex server (codex): the Codex config has an old `agent-jack` server from the static Agent Jack road; Jack's tools now come per Bot, so it duplicates them, and it fails on every turn when its variable is unset. Fix: remove the [mcp_servers.agent-jack] table from config.toml in the Codex home T3 uses.";
+  fs.writeFileSync(path.join(home, "config.toml"), '[mcp_servers.agent-jack]\ncommand = "agent-jack-mcp"\nenv_vars = ["SECRET_NAME_ONLY"]\n');
+  const stale = await doctor(client, { fetchImpl });
+  assert.equal(stale.labs.find(lab => lab.instanceId === "codex").staleJackServer, "agent-jack");
+  assert.ok(formatDoctor(stale).split("\n").includes(fix));
+  assert.doesNotMatch(JSON.stringify(stale) + formatDoctor(stale), /SECRET_NAME_ONLY|agent-jack-mcp/);
+  fs.writeFileSync(path.join(home, "config.toml"), '[mcp_servers.jack-other]\ncommand = "x"\n');
+  const clean = await doctor(client, { fetchImpl });
+  assert.equal(clean.labs.find(lab => lab.instanceId === "codex").staleJackServer, undefined);
+  assert.doesNotMatch(formatDoctor(clean), /Stale Codex server/);
+  // B3 P3-6 on #116: an oversized file or a FIFO is skipped silently, and doctor does not block.
+  const config = path.join(home, "config.toml");
+  fs.writeFileSync(config, `[mcp_servers.agent-jack]\ncommand = "x"\n${"#".repeat(1024 * 1024)}\n`);
+  assert.equal((await doctor(client, { fetchImpl })).labs.find(lab => lab.instanceId === "codex").staleJackServer, undefined);
+  fs.rmSync(config);
+  execFileSync("mkfifo", [config]);
+  const fifo = await doctor(client, { fetchImpl });
+  assert.equal(fifo.labs.find(lab => lab.instanceId === "codex").staleJackServer, undefined);
+  assert.doesNotMatch(formatDoctor(fifo), /Stale Codex server/);
 });
 
 // Every file under `root` outside `skip`, with its bytes: the owner's files, compared whole.
