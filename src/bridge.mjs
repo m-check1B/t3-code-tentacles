@@ -1118,14 +1118,23 @@ export function skillInventoryRow(instanceId, configProvider) {
 const DOCTOR_STATUS_VALUES = new Set(["absent", "configured", "disabled", "error", "installed", "ready", "unavailable"]);
 
 // KRA-10869: an old effort-suffixed Antigravity id maps to its base id plus thought_level,
-// but only when T3's live model list for that lab no longer has the old id.
+// only on evidence: T3's live model list for that lab is non-empty, no longer has the
+// old id, does have the base id, and (when T3 describes that model's thought_level)
+// offers that level. Anything less keeps the id as given.
 export async function liveModelSelection(client, selection) {
   const alias = baseLabId(selection.instanceId) === "antigravity" ? antigravityModelAlias(selection.model) : null;
   if (!alias) return selection;
   let providers = [];
   try { providers = (await client.rpc("server.getConfig", {}))?.providers ?? []; } catch { return selection; }
   const provider = Array.isArray(providers) ? providers.find((entry) => entry?.instanceId === selection.instanceId) : undefined;
-  if (!provider || normalizedModelSlugs(provider).includes(selection.model)) return selection;
+  const slugs = normalizedModelSlugs(provider);
+  if (slugs.includes(selection.model) || !slugs.includes(alias.model)) return selection;
+  const target = provider.models.find((entry) => (typeof entry === "string" ? entry : entry?.slug ?? entry?.id) === alias.model);
+  const descriptors = target?.capabilities?.optionDescriptors;
+  if (Array.isArray(descriptors)) {
+    const level = descriptors.find((entry) => entry?.id === "thought_level");
+    if (!level || !Array.isArray(level.options) || !alias.options.every((wanted) => level.options.some((choice) => choice?.id === wanted.value))) return selection;
+  }
   const options = [...(selection.options ?? [])];
   for (const required of alias.options) {
     const configured = options.find((entry) => entry.id === required.id);

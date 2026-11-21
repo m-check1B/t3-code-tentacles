@@ -126,14 +126,54 @@ export function antigravityAction(code) {
   }
 }
 
-// KRA-10869: a spent Google quota comes back as an ordinary Antigravity reply
-// ("Individual quota reached…"), so any probe reply but OK means quota there.
-// Only a reset time is read out of it, by shape; the reply is never echoed.
-const QUOTA_RESET = /\bresets? (?:at|in|on|after) ([0-9A-Za-z][0-9A-Za-z:,+ -]{0,38}[0-9A-Za-z])/i;
+// KRA-10869: a spent Google quota comes back as an ordinary Antigravity reply. Only
+// a reset time is read out of it, by a strict time grammar, and printed from its
+// parsed parts; nothing else from the reply reaches the doctor output.
+const RESET_PREFIX = String.raw`\bresets? (at|in|on|after) `;
+const END = String.raw`(?=$|[\s.,;!)])`;
+const RESET_ISO = new RegExp(`${RESET_PREFIX}(\\d{4})-(\\d{2})-(\\d{2})[T ](\\d{2}):(\\d{2})(?::(\\d{2}))?(?: ?(Z|UTC|GMT|[+-]\\d{2}:?\\d{2}))?${END}`, "i");
+const RESET_CLOCK = new RegExp(`${RESET_PREFIX}(\\d{1,2}):(\\d{2})(?::(\\d{2}))?(?: ?(AM|PM))?(?: (UTC|GMT|[+-]\\d{2}:?\\d{2}))?${END}`, "i");
+const RESET_IN = new RegExp(`${RESET_PREFIX}(\\d{1,4}) (second|minute|hour|day)(s?)${END}`, "i");
+const two = value => String(Number(value)).padStart(2, "0");
+export function antigravityResetTime(reply) {
+  if (typeof reply !== "string") return null;
+  const text = reply.slice(0, 4096);
+  let m = RESET_ISO.exec(text);
+  if (m) {
+    const [, , y, mo, d, h, mi, sec, zone] = m;
+    if (+mo < 1 || +mo > 12 || +d < 1 || +d > 31 || +h > 23 || +mi > 59 || (sec && +sec > 59)) return null;
+    return `${y}-${mo}-${d} ${h}:${mi}${sec ? `:${sec}` : ""}${zone ? ` ${zone.toUpperCase()}` : ""}`;
+  }
+  m = RESET_CLOCK.exec(text);
+  if (m) {
+    const [, , h, mi, sec, half, zone] = m;
+    if (+mi > 59 || (sec && +sec > 59) || (half ? +h < 1 || +h > 12 : +h > 23)) return null;
+    return `${half ? Number(h) : two(h)}:${mi}${sec ? `:${sec}` : ""}${half ? ` ${half.toUpperCase()}` : ""}${zone ? ` ${zone.toUpperCase()}` : ""}`;
+  }
+  m = RESET_IN.exec(text);
+  if (m && /^(in|after)$/i.test(m[1])) return `${m[1].toLowerCase()} ${Number(m[2])} ${m[3].toLowerCase()}${Number(m[2]) === 1 ? "" : "s"}`;
+  return null;
+}
 export function antigravityQuotaAction(reply) {
-  const reset = typeof reply === "string" ? QUOTA_RESET.exec(reply)?.[1] : undefined;
-  const when = reset && /[0-9]/.test(reset) ? `; resets ${reset}` : "";
-  return `not responding: quota${when}; pass --model with another Antigravity model, or wait until its quota resets`;
+  const reset = antigravityResetTime(reply);
+  return `not responding: quota${reset ? `; resets ${reset}` : ""}; pass --model with another Antigravity model, or wait until its quota resets`;
+}
+
+// Antigravity 1.5.13's own out-of-quota reply, which the shared classifier does not
+// know; kept here so other labs' classification stays as it is.
+const ANTIGRAVITY_QUOTA_REPLY = /^You have exhausted your quota on this model\.?$/;
+/**
+ * The probe outcome for an Antigravity reply that is not OK, or null for main's
+ * outcome. Only a reply the shared classifier (or the exact text above) reads as a
+ * usage limit is quota; another known failure class gets that class; anything else
+ * is left to main. The reply is never echoed.
+ */
+export function antigravityReplyOutcome(text, classify) {
+  const reply = typeof text === "string" ? text.trim() : "";
+  if (/^ok\.?$/i.test(reply)) return null;
+  const code = ANTIGRAVITY_QUOTA_REPLY.test(reply) ? "usage_limit" : classify(reply);
+  if (code === "usage_limit") return { status: "no_response", code, action: antigravityQuotaAction(reply) };
+  return code ? { status: "error", code } : null;
 }
 
 // KRA-10869: runtime 1.5.13 dropped the effort-suffixed ids (gemini-4-hydrogen-high);

@@ -8,8 +8,8 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { ensureProject, probeTalkCapabilities, startThread } from "./bridge.mjs";
 import { DEFAULT_STATE_DIR, ensurePrivateDirectory } from "./config.mjs";
-import { antigravityQuotaAction } from "./antigravity.mjs";
-import { classifyFailure, classifyFailureText } from "./failure-codes.mjs";
+import { antigravityReplyOutcome } from "./antigravity.mjs";
+import { classifyFailure, classifyFailureText, FAILURE_MESSAGES } from "./failure-codes.mjs";
 import { baseLabId } from "./model-selection.mjs";
 import { T3HttpError } from "./t3-client.mjs";
 import { createThreadLock, TurnInterrupter } from "./turn-interrupt.mjs";
@@ -17,8 +17,6 @@ import { createThreadLock, TurnInterrupter } from "./turn-interrupt.mjs";
 export const DEFAULT_PROBE_TIMEOUT_MS = 60_000;
 export const DEFAULT_PROBE_WORKSPACE = path.join(DEFAULT_STATE_DIR, "doctor-probe");
 const PROBE_MESSAGE = "Reply with the single word OK. Do not use any tools.";
-const QUOTA_ACTION = "this model is out of quota; pass --model with another model or wait until its quota resets";
-const WRONG_REPLY_ACTION = "the model answered, but not with OK; check the CLI's sign-in and quota, or pass --model with a model that answers";
 const NO_RESPONSE_ACTION = "model accepts requests but never answers; check the CLI's sign-in and quota, or pass --model with a model that answers";
 const NO_MODEL_ACTION = "the lab reports no default model to probe; set one in T3";
 
@@ -97,18 +95,14 @@ async function probeLab(client, lab, { workspace, timeoutMs, intervalMs, interru
       const thread = (await client.thread(turn.threadId))?.thread;
       const messages = Array.isArray(thread?.messages) ? thread.messages : [];
       const index = messages.findIndex((message) => message?.id === turn.messageId);
-      // The reply is compared here and never reported; only exactly OK proves the
-      // model answers (an out-of-quota lab still replies, with its quota error).
-      const reply = index >= 0 ? messages.slice(index + 1).find((message) => message?.role === "assistant" && message.streaming !== true) : undefined;
+      // Only message roles and session status are read; message text never leaves T3.
+      const reply = index >= 0 ? messages.slice(index + 1).find((message) => message?.role === "assistant") : undefined;
       if (reply) {
-        const text = typeof reply.text === "string" ? reply.text.trim() : "";
-        if (/^ok\.?$/i.test(text)) return { ...row, threadId: turn.threadId, status: "responds", firstEventMs: Date.now() - started };
-        if (baseLabId(lab.instanceId) === "antigravity") {
-          return { ...row, threadId: turn.threadId, status: "no_response", firstEventMs: null, code: "usage_limit", action: antigravityQuotaAction(text) };
-        }
-        const quota = classifyFailureText(text) === "usage_limit";
-        return { ...row, threadId: turn.threadId, status: "error", firstEventMs: Date.now() - started,
-          code: quota ? "usage_limit" : "provider_error", action: quota ? QUOTA_ACTION : WRONG_REPLY_ACTION };
+        // KRA-10869, Antigravity only: a spent quota arrives as a reply, so its text is
+        // classified here (never reported). Anything not classified is main's outcome.
+        const failed = baseLabId(lab.instanceId) === "antigravity" ? antigravityReplyOutcome(reply.text, classifyFailureText) : null;
+        if (failed) return { ...row, threadId: turn.threadId, firstEventMs: null, action: FAILURE_MESSAGES[failed.code], ...failed };
+        return { ...row, threadId: turn.threadId, status: "responds", firstEventMs: Date.now() - started };
       }
       if (thread?.session?.status === "error") {
         const { code } = classifyFailure({ sessionStatus: "error", error: typeof thread.session.lastError === "string" ? thread.session.lastError : null });

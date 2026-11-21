@@ -178,19 +178,68 @@ test("after the runtime update, a signed-out Antigravity reaches not_signed_in",
   assert.match(row.action, /^Sign in with Google in T3 Code: /);
 });
 
-test("KRA-10869: an old effort id maps to its base id plus thought_level only when T3 no longer lists it; never xhigh", async () => {
+test("KRA-10869 B3 P2-2 on #114: an old effort id maps only on evidence from T3's live list; never xhigh", async () => {
   const { liveModelSelection } = await import("../src/bridge.mjs");
-  const live = (models) => ({ rpc: async (method) => { assert.equal(method, "server.getConfig"); return { providers: [{ instanceId: "antigravity", models: models.map((slug) => ({ slug })) }] }; } });
+  const live = (models) => ({ rpc: async (method) => { assert.equal(method, "server.getConfig"); return { providers: [{ instanceId: "antigravity", ...(models === undefined ? {} : { models }) }] }; } });
+  const slugs = (...ids) => ids.map((slug) => ({ slug }));
   const old = { instanceId: "antigravity", model: "gemini-4-argon-high" };
-  assert.deepEqual(await liveModelSelection(live(["gemini-4-argon", "gemini-4-neon"]), old),
-    { instanceId: "antigravity", model: "gemini-4-argon", options: [{ id: "thought_level", value: "high" }] });
+  const mapped = { instanceId: "antigravity", model: "gemini-4-argon", options: [{ id: "thought_level", value: "high" }] };
+  assert.deepEqual(await liveModelSelection(live(slugs("gemini-4-argon", "gemini-4-neon")), old), mapped);
+  // No evidence keeps the id: an empty list, no models field, a base id T3 does not list.
+  assert.deepEqual(await liveModelSelection(live([]), old), old);
+  assert.deepEqual(await liveModelSelection(live(undefined), old), old);
+  assert.deepEqual(await liveModelSelection(live(slugs("gemini-4-neon")), old), old);
   // A runtime that still lists the old id keeps it.
-  assert.deepEqual(await liveModelSelection(live(["gemini-4-argon-high"]), old), old);
+  assert.deepEqual(await liveModelSelection(live(slugs("gemini-4-argon-high", "gemini-4-argon")), old), old);
+  // When T3 describes the base model's thought_level, the level must be offered.
+  const level = (...ids) => [{ slug: "gemini-4-argon", capabilities: { optionDescriptors: [{ id: "thought_level", type: "select", label: "Thinking", options: ids.map((id) => ({ id, label: id })) }] } }];
+  assert.deepEqual(await liveModelSelection(live(level("low", "medium", "high", "xhigh")), old), mapped);
+  assert.deepEqual(await liveModelSelection(live(level("low", "medium")), old), old);
+  assert.deepEqual(await liveModelSelection(live([{ slug: "gemini-4-argon", capabilities: { optionDescriptors: [] } }]), old), old);
   // xhigh is never produced, and is not an alias source.
-  assert.deepEqual(await liveModelSelection(live(["gemini-4-argon"]), { instanceId: "antigravity", model: "gemini-4-argon-xhigh" }), { instanceId: "antigravity", model: "gemini-4-argon-xhigh" });
-  await assert.rejects(liveModelSelection(live(["gemini-4-argon"]), { ...old, options: [{ id: "thought_level", value: "low" }] }), /conflicts with option thought_level/);
+  assert.deepEqual(await liveModelSelection(live(slugs("gemini-4-argon")), { instanceId: "antigravity", model: "gemini-4-argon-xhigh" }), { instanceId: "antigravity", model: "gemini-4-argon-xhigh" });
+  await assert.rejects(liveModelSelection(live(slugs("gemini-4-argon")), { ...old, options: [{ id: "thought_level", value: "low" }] }), /conflicts with option thought_level/);
   // Other labs and plain ids make no T3 call.
   const none = { rpc: async () => assert.fail("no T3 call") };
   assert.deepEqual(await liveModelSelection(none, { instanceId: "codex", model: "gpt-5-high" }), { instanceId: "codex", model: "gpt-5-high" });
   assert.deepEqual(await liveModelSelection(none, { instanceId: "antigravity", model: "gemini-4-argon" }), { instanceId: "antigravity", model: "gemini-4-argon" });
+});
+
+test("KRA-10869 B3 P2-1 on #114: only a strictly parsed reset time reaches the action, rendered from its parts", async () => {
+  const { antigravityQuotaAction, antigravityResetTime } = await import("../src/antigravity.mjs");
+  const cases = [
+    ["Your quota resets at 9 SECRET CANARY sk-ant-api03-ABCDEFGH", null],
+    ["resets at 14:05 UTC and your password is hunter2 ok", "14:05 UTC"],
+    ["quota resets in 1 token ghp-AbCdEf0123456789xyz now", null],
+    ["Individual quota reached. Your quota resets at 9:05 pm.", "9:05 PM"],
+    ["It resets at 2026-11-22T07:00:00Z.", "2026-11-22 07:00:00 Z"],
+    ["It resets at 2026-11-22 07:00 +01:00, sorry", "2026-11-22 07:00 +01:00"],
+    ["It resets in 3 hours", "in 3 hours"],
+    ["It resets after 1 day!", "after 1 day"],
+    ["resets in 03 minutes", "in 3 minutes"],
+    ["resets at 25:61 UTC", null],
+    ["resets at 13:00 PM", null],
+    ["resets at 14:05UTCSECRET", null],
+    ["resets at 14:05 UTC-SECRET", "14:05"], // only the parsed clock, never the trailing text
+    ["resets on Monday", null],
+    ["resets at 2026-13-01T00:00Z", null],
+    ["no time here", null],
+  ];
+  for (const [reply, reset] of cases) {
+    assert.equal(antigravityResetTime(reply), reset, reply);
+    const action = antigravityQuotaAction(reply);
+    assert.equal(action, `not responding: quota${reset ? `; resets ${reset}` : ""}; pass --model with another Antigravity model, or wait until its quota resets`, reply);
+    assert.doesNotMatch(action, /SECRET|CANARY|sk-ant|hunter2|ghp-|token/, reply);
+  }
+});
+
+test("KRA-10869 B3 P3-2 on #114: both model-alias conflicts carry a refusal code with a fixed text", async () => {
+  const { refusalOf } = await import("../src/refusal-codes.mjs");
+  assert.deepEqual(refusalOf(new Error("Antigravity model alias gemini-4-argon-high conflicts with option thought_level")),
+    { code: "model.thinking_level_twice", text: "This Antigravity model already sets a thinking level; drop the old -low/-medium/-high from the model or the thinking-level option." });
+  assert.throws(() => resolveModelSelection({ instanceId: "cursor", model: "composer-2.5-fast", options: [{ id: "fastMode", value: false }] }), (error) => {
+    assert.deepEqual(refusalOf(error), { code: "model.fast_mode_twice", text: "This Cursor model already sets fast mode; use composer-2.5 with the fast-mode option, or composer-2.5-fast without it." });
+    return true;
+  });
+  assert.equal(refusalOf(new Error("Antigravity model alias gemini-4-argon-high conflicts with option thought_level SECRET")).code, "unknown");
 });
