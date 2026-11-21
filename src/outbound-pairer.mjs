@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { ensureLocalTalkWorkspace } from "./local-talk-workspace.mjs";
 import { BOT_CONNECTOR_REFUSALS } from "./bot-connector-refusals.mjs";
-import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, botConnectorProviders, checkBotConnectorPaths, checkCodexLaunchArgs, checkCodexServerNames, codexHomeFromSettings, commitCodexTrust, connectorsNeedRestart, GROK_TRUST_MARKER, grokHomeFor, planGrokTrust, planGrokUntrust, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors, writePrivate } from "./bot-connectors.mjs";
+import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, botConnectorProviders, checkBotConnectorPaths, checkCodexAncestorLayers, checkCodexHome, checkCodexLaunchArgs, checkCodexServerNames, codexHomeFromSettings, codexOuterFiles, commitCodexTrust, readT3ServiceEnv, connectorsNeedRestart, GROK_TRUST_MARKER, grokHomeFor, planGrokTrust, planGrokUntrust, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors, writePrivate } from "./bot-connectors.mjs";
 import { privateModeOk } from "./platform.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { refusalOf } from "./refusal-codes.mjs";
@@ -269,6 +269,7 @@ export class LoopbackRuntimeAdapter {
     interruptOptions = {},
     capabilityCache = null,
     frameBytes = DEFAULT_MAX_FRAME_BYTES,
+    codexFiles = codexOuterFiles(),
   }) {
     if (!client) throw new Error("Loopback runtime requires a T3 client");
     this.client = client;
@@ -285,6 +286,7 @@ export class LoopbackRuntimeAdapter {
     this.threadEventsDirectory = threadEventsDirectory;
     this.capabilityCache = capabilityCache;
     this.frameBytes = frameBytes;
+    this.codexFiles = codexFiles;
     this.withThreadLock = createThreadLock();
     this.interrupter = new TurnInterrupter({
       readTurnResult: (tuple) => this.turnResult(tuple),
@@ -343,9 +345,13 @@ export class LoopbackRuntimeAdapter {
       : instanceId === "codex" ? await (async () => {
         let settings;
         try { settings = await this.client.getSettings(); } catch { /* unreadable: T3's default home, no launch arguments seen */ }
-        checkCodexLaunchArgs(settings);
+        const serviceEnv = readT3ServiceEnv(this.codexFiles.serviceEnv);
+        checkCodexLaunchArgs(settings, serviceEnv.T3CODE_CODEX_LAUNCH_ARGS);
+        checkCodexHome(settings, serviceEnv);
+        // The name check and the trust table use the one home T3 resolves.
         const codexHome = codexHomeFromSettings(settings);
-        checkCodexServerNames(codexHome, servers.map(server => server.name));
+        checkCodexServerNames(codexHome, servers.map(server => server.name), this.codexFiles.system);
+        checkCodexAncestorLayers(workspace, servers.map(server => server.name));
         return planCodexTrust(codexHome, workspace);
       })()
         : grokHome ? planGrokTrust(grokHome, workspace) : undefined;

@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
-import { BOT_CONNECTOR_CAPABILITIES, GROK_TRUST_MARKER, PUBLIC_MCP_URL, checkCodexLaunchArgs, codexHomeFor, codexServerNames, commitCodexTrust, grokHomeFor, planGrokTrust, planGrokUntrust, trustCodexWorkspace } from "../src/bot-connectors.mjs";
+import { BOT_CONNECTOR_CAPABILITIES, GROK_TRUST_MARKER, PUBLIC_MCP_URL, checkCodexHome, checkCodexLaunchArgs, codexHomeFor, codexHomeFromSettings, codexServerNames, commitCodexTrust, grokHomeFor, planGrokTrust, planGrokUntrust, trustCodexWorkspace } from "../src/bot-connectors.mjs";
 import { continueThread, doctor, formatDoctor, readSmallRegularFile } from "../src/bridge.mjs";
 import { freshCapability } from "./helpers/fresh-context-wire.mjs";
 import { ensureLocalTalkWorkspace } from "../src/local-talk-workspace.mjs";
@@ -37,8 +37,11 @@ function setup({ jackOrigin = ORIGIN, running = () => false } = {}) {
   const sent = [];
   const stops = [];
   const at = { workspace: null }; // the thread's folder as T3 reports it on continue
+  // T3's service.env and Codex's system layers, inside the throwaway home.
+  const codexFiles = { serviceEnv: path.join(home, ".t3", "service.env"), system: ["config.toml", "managed_config.toml"].map(name => path.join(home, "etc-codex", name)) };
   const adapter = new LoopbackRuntimeAdapter({
     client: { getSettings: async () => settings },
+    codexFiles,
     prepareTalkWorkspaceImpl: value => ensureLocalTalkWorkspace(value, { home }),
     originateImpl: (_client, params) => { sent.push(params); return { ok: true }; },
     // The same hook contract continueThread uses: stop first, then the hook writes.
@@ -55,7 +58,7 @@ function setup({ jackOrigin = ORIGIN, running = () => false } = {}) {
   const read = file => JSON.parse(fs.readFileSync(path.join(workspace, file), "utf8"));
   // T3's Codex homePath, as the owner's Settings would hold it.
   settings.providerInstances = { codex: { config: { homePath: path.join(home, ".codex") } } };
-  return { home, workspace, sent, stops, adapter, read, at, settings };
+  return { home, workspace, sent, stops, adapter, read, at, settings, codexFiles };
 }
 
 test("a Bot's connectors are written into its own workspace and never reach T3", async () => {
@@ -1108,7 +1111,7 @@ const LAUNCH_ARG_ROWS = [
 ];
 
 test("B3 P2-1 on #117: a Codex launch argument override that is not a plain key outside mcp_servers refuses; every row Codex loads jack from refuses", () => {
-  const refusal = "T3's Codex launch arguments carry a config override that may add or change a server named like one of this Bot's Jack tools; take the server override out of T3's Codex launch arguments, or define that server under another name, then send again";
+  const refusal = "T3's Codex launch arguments carry a config override Tentacles cannot check (any mcp_servers key, a quoted or spaced key, or an unclosed quote); move server definitions from T3's Codex launch arguments into the Codex config file, then send again";
   const at = launchArgs => ({ providerInstances: { codex: { config: { launchArgs } } } });
   for (const [args, codexSaw, refuses = true] of LAUNCH_ARG_ROWS) {
     assert.ok(refuses || codexSaw !== "jack", args);
@@ -1127,7 +1130,7 @@ test("B3 P2-1 on #117: a Codex launch argument override that is not a plain key 
 });
 
 test("B3 P2-1 on #117: a launch argument server override refuses before the stop and any write; with no list or on another lab it is never read", async () => {
-  const { home, workspace, sent, stops, adapter, settings } = setup();
+  const { home, workspace, sent, stops, adapter, settings, codexFiles } = setup();
   const codexHome = path.join(home, ".codex");
   fs.mkdirSync(codexHome, { mode: 0o700 });
   const file = path.join(codexHome, "config.toml");
@@ -1146,12 +1149,130 @@ test("B3 P2-1 on #117: a launch argument server override refuses before the stop
   delete settings.providerInstances.codex.environment;
   let reads = 0;
   Object.defineProperty(config, "launchArgs", { configurable: true, get() { reads += 1; return '-c mcp_servers.jack.command="x"'; } });
+  // A FIFO service.env would refuse if it were read (B3 P2-1 on #117, 3rd review).
+  fs.mkdirSync(path.dirname(codexFiles.serviceEnv));
+  execFileSync("mkfifo", [codexFiles.serviceEnv]);
   await adapter.originate({ workspace, message: "hi", ...codex, ...connectors([]) });
   await adapter.continue({ threadId: "t1", message: "hi", ...claude, ...connectors([jack]) });
   assert.equal(reads, 0);
+  fs.rmSync(codexFiles.serviceEnv);
   Object.defineProperty(config, "launchArgs", { configurable: true, writable: true, value: "-c model=o3 --enable x" });
   await adapter.continue({ threadId: "t1", message: "hi", ...codex, ...connectors([jack]) });
   assert.match(fs.readFileSync(path.join(workspace, ".codex", "config.toml"), "utf8"), /^\[mcp_servers\.jack\]$/m);
+});
+
+test("B3 P2-1 on #117 (3rd review): with the Codex home field blank, an instance CODEX_HOME is the home T3 uses; the name check and the trust both use it", async () => {
+  const { home, workspace, sent, stops, adapter, settings, codexFiles } = setup();
+  const config = settings.providerInstances.codex.config;
+  config.homePath = "";
+  // The reviewer's row, checked with codex-cli 0.169.0: Codex started with CODEX_HOME=<owner> merges the
+  // owner's bearer_token_env_var into the Bot's jack. The first entry loses: the last string entry wins.
+  const ownerHome = path.join(home, "owner", ".codex");
+  fs.mkdirSync(ownerHome, { recursive: true, mode: 0o700 });
+  const file = path.join(ownerHome, "config.toml");
+  const owner = '[mcp_servers.jack]\nbearer_token_env_var = "FAKE_OWNER_VAR"\n';
+  fs.writeFileSync(file, owner, { mode: 0o640 });
+  settings.providerInstances.codex.environment = [{ name: "CODEX_HOME", value: path.join(home, "first") }, { name: "OTHER", value: "x" }, { name: "CODEX_HOME", value: ownerHome }];
+  const clash = "The Codex config in the Codex home T3 uses already has a server named like one of this Bot's Jack tools (for example jack), and Codex would merge the two; rename or remove that server there, then send again";
+  const field = "T3 sets the Codex home in a way Tentacles cannot read (a hidden CODEX_HOME, a HOME entry, or CODEX_HOME or HOME in T3's service.env); put the Codex home folder into the CODEX_HOME path field of T3's Codex settings, then send again";
+  await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), { message: clash });
+  await assert.rejects(async () => adapter.continue({ threadId: "t1", message: "hi", ...codex, ...connectors([jack]) }), { message: clash });
+  // A home Tentacles cannot read, or one T3 takes from HOME or service.env, refuses with one fixed text.
+  const hidden = [
+    [[{ name: "CODEX_HOME", value: ownerHome }, { name: "CODEX_HOME", valueRedacted: true }]],
+    [[{ name: "CODEX_HOME", sensitive: true, value: ownerHome }]],
+    [[{ name: "CODEX_HOME", value: { secretRef: "x" } }]],
+    [[{ name: "HOME", value: path.join(home, "owner") }]],
+    [[{ name: "HOME", valueRedacted: true }]],
+    [[], "CODEX_HOME=/somewhere\n"],
+    [[], "HOME=/somewhere\n"],
+    [[{ name: "CODEX_HOME", value: ` ${ownerHome}` }]], // T3 does not trim it
+    [[{ name: "CODEX_HOME", value: "relative/.codex" }]], // T3 resolves it against its own folder
+  ];
+  fs.mkdirSync(path.dirname(codexFiles.serviceEnv));
+  for (const [environment, serviceEnv] of hidden) {
+    settings.providerInstances.codex.environment = environment;
+    if (serviceEnv) fs.writeFileSync(codexFiles.serviceEnv, serviceEnv); else fs.rmSync(codexFiles.serviceEnv, { force: true });
+    await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), { message: field }, JSON.stringify(environment));
+  }
+  // service.env launch arguments are checked like T3's own; a FIFO service.env cannot be read.
+  fs.writeFileSync(codexFiles.serviceEnv, "T3CODE_CODEX_LAUNCH_ARGS='-c mcp_servers.jack.url=x'\n");
+  settings.providerInstances.codex.environment = [{ name: "CODEX_HOME", value: ownerHome }];
+  await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), /launch arguments carry a config override Tentacles cannot check/);
+  fs.rmSync(codexFiles.serviceEnv);
+  execFileSync("mkfifo", [codexFiles.serviceEnv]);
+  await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), { message: field });
+  fs.rmSync(codexFiles.serviceEnv);
+  assert.deepEqual([sent, stops], [[], []]);
+  assert.equal(fs.readFileSync(file, "utf8"), owner);
+  assert.equal(fs.existsSync(path.join(workspace, ".codex", "config.toml")), false);
+  // Without the clash, the trust goes into the same owner home, and the default home stays untouched.
+  fs.writeFileSync(file, '[mcp_servers.mine]\ncommand = "x"\n');
+  settings.providerInstances.codex.environment = [{ name: "CODEX_HOME", value: ownerHome }, { name: "HOME", value: "/elsewhere" }];
+  await adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) });
+  assert.ok(fs.readFileSync(file, "utf8").includes(`[projects.${JSON.stringify(workspace)}]`));
+  assert.equal(fs.existsSync(path.join(home, ".codex")), false);
+});
+
+test("B3 P2-1 on #117 (3rd review): the Codex home follows T3 0.1.11, field first, then the last readable instance CODEX_HOME, never in managed mode", () => {
+  const home = "/home/owner";
+  const at = (config, environment) => codexHomeFromSettings({ providerInstances: { codex: { config, environment } } }, { home });
+  assert.equal(at({ homePath: "" }), "/home/owner/.codex"); // the unchanged default
+  assert.equal(at({}), "/home/owner/.codex");
+  assert.equal(at({ homePath: "/field" }, [{ name: "CODEX_HOME", value: "/env" }]), "/field");
+  assert.equal(at({ homePath: " " }, [{ name: "CODEX_HOME", value: "/a" }, { name: "CODEX_HOME", value: "~/b" }]), "/home/owner/b");
+  assert.equal(at({ homePath: "" }, [{ name: "CODEX_HOME", value: "/a" }, { name: "CODEX_HOME", value: " " }]), "/home/owner/.codex"); // T3: the last entry, blank, wins
+  assert.equal(at({ homePath: "", setupMode: "managed" }, [{ name: "CODEX_HOME", value: "/env" }]), "/home/owner/.codex");
+  assert.equal(at({ homePath: "" }, [{ name: "CODEX_HOME", valueRedacted: true }]), "/home/owner/.codex");
+  // checkCodexHome: a set field, managed mode, or no HOME at all never refuses.
+  const field = /CODEX_HOME path field/;
+  const check = (config, environment, serviceEnv) => () => checkCodexHome({ providerInstances: { codex: { config, environment } } }, serviceEnv);
+  assert.doesNotThrow(check({ homePath: "/field" }, [{ name: "HOME", value: "/x" }, { name: "CODEX_HOME", valueRedacted: true }], { HOME: "/x" }));
+  assert.doesNotThrow(check({ homePath: "", setupMode: "managed" }, [{ name: "HOME", value: "/x" }], { CODEX_HOME: "/x" }));
+  assert.doesNotThrow(check({ homePath: "" }, [{ name: "CODEX_HOME", value: "/env" }, { name: "HOME", value: "/x" }], { HOME: "/x" }));
+  assert.doesNotThrow(check({ homePath: "" }, [{ name: "OTHER", value: "x" }], { OTHER: "x" }));
+  assert.doesNotThrow(() => checkCodexHome(undefined));
+  assert.throws(check({ homePath: "" }, [{ name: "CODEX_HOME", value: "" }, { name: "HOME", value: "/x" }]), field);
+});
+
+test("B3 P3-1 on #117 (3rd review): the turn reads the owner's config.toml and Codex's system layers bounded; too large, a FIFO or a Bot-named system server refuses before the stop", async () => {
+  const { home, workspace, sent, stops, adapter, codexFiles } = setup();
+  const codexHome = path.join(home, ".codex");
+  fs.mkdirSync(codexHome, { mode: 0o700 });
+  const file = path.join(codexHome, "config.toml");
+  const form = "The Codex config in the Codex home T3 uses keeps servers in a form Tentacles does not read; write each server as its own [mcp_servers.<name>] table, then send again";
+  // Valid TOML of 1 MiB + 1 byte: an unbounded read would pass it.
+  const big = `${"#".repeat(1024 * 1024 - 1)}\n\n`;
+  fs.writeFileSync(file, big);
+  await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), { message: form });
+  assert.equal(fs.readFileSync(file, "utf8"), big);
+  fs.rmSync(file);
+  execFileSync("mkfifo", [file]);
+  await assert.rejects(async () => adapter.continue({ threadId: "t1", message: "hi", ...codex, ...connectors([jack]) }), { message: form });
+  fs.rmSync(file);
+  const system = "A system Codex config file (/etc/codex/config.toml or /etc/codex/managed_config.toml) has a server named like one of this Bot's Jack tools, or one Tentacles cannot read, and Codex would merge it into the Bot's; remove that server there, then send again";
+  fs.mkdirSync(path.dirname(codexFiles.system[0]));
+  for (const layer of codexFiles.system) {
+    // Checked with codex-cli 0.169.0 (a throwaway /etc in a user namespace): both files load a server.
+    for (const text of ['[mcp_servers.jack]\nbearer_token_env_var = "FAKE_SYS_VAR"\n', 'mcp_servers = { jack = {} }\n']) {
+      fs.writeFileSync(layer, text);
+      await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), { message: system }, layer);
+    }
+    fs.writeFileSync(layer, '[mcp_servers.other]\ncommand = "x"\n'); // another name passes
+  }
+  // A folder above the Bot workspace (a trusted git root merges each one; checked with codex-cli 0.169.0).
+  const above = path.join(home, ".jack-local-scratch", ".codex");
+  fs.mkdirSync(above, { recursive: true });
+  const project = "A .codex/config.toml in a folder above this Bot workspace has a server named like one of this Bot's Jack tools, or one Tentacles cannot read, and Codex merges it into the Bot's when that folder's project is trusted; remove that server there, then send again";
+  for (const text of ['[mcp_servers.jack]\nbearer_token_env_var = "FAKE_MID"\n', "mcp_servers = { other = {} }\n", "x = '''\n"]) {
+    fs.writeFileSync(path.join(above, "config.toml"), text);
+    await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), { message: project }, text);
+  }
+  fs.writeFileSync(path.join(above, "config.toml"), '[mcp_servers.other]\ncommand = "x"\n');
+  assert.deepEqual([sent, stops], [[], []]);
+  assert.equal(fs.existsSync(path.join(workspace, ".codex", "config.toml")), false);
+  await adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) });
+  assert.equal(sent.length, 1);
 });
 
 test("KRA-10891: doctor names a stale agent-jack server in the Codex home T3 uses, with one fix", async (t) => {

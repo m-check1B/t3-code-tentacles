@@ -15,6 +15,7 @@ import { closeSync, constants, existsSync, fchmodSync, fstatSync, lstatSync, mkd
 import os from "node:os";
 import path from "node:path";
 import { createHash, randomBytes } from "node:crypto";
+import { parseEnv } from "node:util";
 import { BOT_CONNECTOR_REFUSALS as R } from "./bot-connector-refusals.mjs";
 import { GUARD_FILE } from "./talk-instruction-guard.mjs";
 
@@ -268,8 +269,16 @@ export async function codexHomeFor(client, { home = os.homedir() } = {}) {
   return codexHomeFromSettings(settings, { home });
 }
 
+// The instance environment entries named `name`; a hidden entry's value cannot be read.
+const envEntries = (instance, name) => (Array.isArray(instance?.environment) ? instance.environment : []).filter(entry => entry?.name === name);
+const hiddenEntry = entry => entry.valueRedacted === true || entry.sensitive === true || typeof entry.value !== "string";
+
+// B3 P2-1 on #117 (3rd review): with the field blank, T3 0.1.11 in direct mode uses the
+// last string CODEX_HOME entry of the instance environment; managed mode ignores it.
 export function codexHomeFromSettings(settings, { home = os.homedir(), instanceId = "codex" } = {}) {
-  const configured = settings?.providerInstances?.[instanceId]?.config?.homePath ?? settings?.providers?.codex?.homePath ?? "";
+  const instance = settings?.providerInstances?.[instanceId];
+  let configured = instance?.config?.homePath ?? settings?.providers?.codex?.homePath ?? "";
+  if ((typeof configured !== "string" || !configured.trim()) && instance?.config?.setupMode !== "managed") configured = envEntries(instance, "CODEX_HOME").filter(entry => !hiddenEntry(entry)).at(-1)?.value;
   if (typeof configured !== "string" || !configured.trim()) return path.join(home, ".codex");
   const value = configured.trim();
   return path.resolve(value === "~" ? home : value.startsWith("~/") ? path.join(home, value.slice(2)) : value);
@@ -386,14 +395,15 @@ function codexLaunchTokens(text) {
 }
 
 /**
- * Refuses a Codex Bot turn whose T3 Codex launch arguments (the setting, or a
- * T3CODE_CODEX_LAUNCH_ARGS entry in the instance environment) carry a config override
+ * Refuses a Codex Bot turn whose T3 Codex launch arguments (the setting, a
+ * T3CODE_CODEX_LAUNCH_ARGS entry in the instance environment, or one in T3's
+ * service.env) carry a config override
  * that is not a plain bare dotted key outside `mcp_servers`. Names no value.
  */
-export function checkCodexLaunchArgs(settings) {
+export function checkCodexLaunchArgs(settings, serviceValue) {
   const instance = settings?.providerInstances?.codex;
-  const entries = (Array.isArray(instance?.environment) ? instance.environment : []).filter(entry => entry?.name === "T3CODE_CODEX_LAUNCH_ARGS");
-  for (const text of [instance?.config?.launchArgs ?? settings?.providers?.codex?.launchArgs, ...entries.map(entry => entry.valueRedacted === true || entry.sensitive === true ? null : entry.value)]) {
+  const entries = envEntries(instance, "T3CODE_CODEX_LAUNCH_ARGS");
+  for (const text of [instance?.config?.launchArgs ?? settings?.providers?.codex?.launchArgs, ...entries.map(entry => hiddenEntry(entry) ? null : entry.value), serviceValue]) {
     if (text === undefined || text === "") continue;
     const tokens = typeof text === "string" ? codexLaunchTokens(text) : null;
     if (!tokens) throw new Error(R.codexLaunchArgs);
@@ -420,14 +430,64 @@ export function readSmallRegularFile(file, cap) {
   } finally { closeSync(fd); }
 }
 
-export function checkCodexServerNames(codexHome, names) {
-  let text = "";
-  // The same bounded, regular-file-only read the doctor uses; anything else cannot be checked.
-  try { text = readSmallRegularFile(path.join(codexHome, "config.toml"), 1024 * 1024); } catch (error) { if (error.code !== "ENOENT") throw error; }
-  if (text === null) throw new Error(R.codexServersForm);
-  const owner = codexServerNames(text);
-  if (names.some(name => owner.names.has(name))) throw new Error(R.codexServerClash);
-  if (owner.inline || owner.form) throw new Error(R.codexServersForm);
+// The same bounded, regular-file-only read the doctor uses; absent is "", anything else null.
+function readCodexLayer(file, cap) {
+  try { return readSmallRegularFile(file, cap); } catch (error) { if (error.code === "ENOENT") return ""; throw error; }
+}
+
+/**
+ * Refuses when the Codex home's config.toml, or a system layer Codex 0.169.0 also loads
+ * (/etc/codex/config.toml, /etc/codex/managed_config.toml), names one of `names`.
+ */
+export function checkCodexServerNames(codexHome, names, systemFiles = []) {
+  for (const [file, clash, form] of [[path.join(codexHome, "config.toml"), R.codexServerClash, R.codexServersForm], ...systemFiles.map(file => [file, R.codexSystemServers, R.codexSystemServers])]) {
+    const text = readCodexLayer(file, 1024 * 1024);
+    if (text === null) throw new Error(form);
+    const owner = codexServerNames(text);
+    if (names.some(name => owner.names.has(name))) throw new Error(clash);
+    if (owner.inline || owner.form) throw new Error(form);
+  }
+}
+
+// B3 3rd review, table row "working folder": in a trusted project (a git root, or Codex's
+// project_root_markers), Codex 0.169.0 merges every .codex/config.toml from the project root
+// down to the folder into the Bot's file. Every folder above the Bot workspace is checked.
+export function checkCodexAncestorLayers(workspace, names) {
+  for (let dir = path.dirname(workspace); ; dir = path.dirname(dir)) {
+    const text = readCodexLayer(path.join(dir, ".codex", "config.toml"), 1024 * 1024);
+    const owner = text === null ? null : codexServerNames(text);
+    if (!owner || owner.inline || owner.form || names.some(name => owner.names.has(name))) throw new Error(R.codexProjectServers);
+    if (path.dirname(dir) === dir) return;
+  }
+}
+
+/** Where T3 keeps its service.env, and the Codex system layers; tests pass their own. */
+export function codexOuterFiles({ home = os.homedir(), env = process.env } = {}) {
+  return { serviceEnv: path.join(env.T3CODE_HOME?.trim() || path.join(home, ".t3"), "service.env"), system: ["/etc/codex/config.toml", "/etc/codex/managed_config.toml"] };
+}
+
+// T3's service launcher adds service.env to the server's environment (serviceLauncher.ts).
+export function readT3ServiceEnv(file) {
+  const text = readCodexLayer(file, 64 * 1024);
+  if (text === null) throw new Error(R.codexHomeField);
+  return parseEnv(text);
+}
+
+/**
+ * B3 P2-1 on #117 (3rd review): refuses a Codex Bot turn whose Codex home Tentacles
+ * cannot resolve as T3 does: the field blank (direct mode) and a hidden CODEX_HOME entry,
+ * or a HOME entry, or a CODEX_HOME/HOME in T3's service.env, with no readable CODEX_HOME entry.
+ */
+export function checkCodexHome(settings, serviceEnv = {}) {
+  const instance = settings?.providerInstances?.codex;
+  const field = instance?.config?.homePath ?? settings?.providers?.codex?.homePath;
+  if (instance?.config?.setupMode === "managed" || (typeof field === "string" && field.trim())) return;
+  const homes = envEntries(instance, "CODEX_HOME");
+  if (homes.some(hiddenEntry)) throw new Error(R.codexHomeField);
+  // T3 neither trims an environment CODEX_HOME nor resolves a relative one against a folder Tentacles knows.
+  const last = homes.at(-1)?.value;
+  if (last?.trim()) { if (last === last.trim() && (last === "~" || last.startsWith("~/") || path.isAbsolute(last))) return; throw new Error(R.codexHomeField); }
+  if (envEntries(instance, "HOME").length || Object.hasOwn(serviceEnv, "CODEX_HOME") || Object.hasOwn(serviceEnv, "HOME")) throw new Error(R.codexHomeField);
 }
 
 /**

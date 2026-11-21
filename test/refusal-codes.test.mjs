@@ -15,7 +15,10 @@ test("KRA-10870: a known refusal is logged with its typed code; the relay frame 
     ["Bot connectors need this Bot's own workspace", "bot_connectors.new_talk"],
     ["The Codex config in the Codex home T3 uses already has a server named like one of this Bot's Jack tools (for example jack), and Codex would merge the two; rename or remove that server there, then send again", "bot_connectors.codex_servers"],
     ["The Codex config in the Codex home T3 uses keeps servers in a form Tentacles does not read; write each server as its own [mcp_servers.<name>] table, then send again", "bot_connectors.codex_servers"],
-    ["T3's Codex launch arguments carry a config override that may add or change a server named like one of this Bot's Jack tools; take the server override out of T3's Codex launch arguments, or define that server under another name, then send again", "bot_connectors.codex_launch_args"],
+    ["T3's Codex launch arguments carry a config override Tentacles cannot check (any mcp_servers key, a quoted or spaced key, or an unclosed quote); move server definitions from T3's Codex launch arguments into the Codex config file, then send again", "bot_connectors.codex_launch_args"],
+    ["T3 sets the Codex home in a way Tentacles cannot read (a hidden CODEX_HOME, a HOME entry, or CODEX_HOME or HOME in T3's service.env); put the Codex home folder into the CODEX_HOME path field of T3's Codex settings, then send again", "bot_connectors.codex_home_field"],
+    ["A .codex/config.toml in a folder above this Bot workspace has a server named like one of this Bot's Jack tools, or one Tentacles cannot read, and Codex merges it into the Bot's when that folder's project is trusted; remove that server there, then send again", "bot_connectors.codex_project_servers"],
+    ["A system Codex config file (/etc/codex/config.toml or /etc/codex/managed_config.toml) has a server named like one of this Bot's Jack tools, or one Tentacles cannot read, and Codex would merge it into the Bot's; remove that server there, then send again", "bot_connectors.codex_system_servers"],
     ["This lab cannot use Jack tools on Local yet; run this Bot on Server to use them", "bot_connectors.lab_not_covered"],
     ["This Talk is still answering. Its tools change once it finishes; try again then.", "talk.still_answering"],
   ];
