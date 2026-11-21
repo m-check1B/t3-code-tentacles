@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { ensureLocalTalkWorkspace } from "./local-talk-workspace.mjs";
 import { BOT_CONNECTOR_REFUSALS } from "./bot-connector-refusals.mjs";
-import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, botConnectorProviders, checkBotConnectorPaths, checkCodexAncestorLayers, checkCodexHome, checkCodexLaunchArgs, checkCodexServerNames, codexHomeFromSettings, codexOuterFiles, commitCodexTrust, readT3ServiceEnv, connectorsNeedRestart, GROK_TRUST_MARKER, grokHomeFor, planGrokTrust, planGrokUntrust, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors, writePrivate } from "./bot-connectors.mjs";
+import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, botConnectorProviders, checkBotConnectorPaths, checkCodexAncestorLayers, codexHomeAllowed, checkCodexLaunchArgs, checkCodexServerNames, codexOuterFiles, commitCodexTrust, readT3ServiceEnv, connectorsNeedRestart, GROK_TRUST_MARKER, grokHomeFor, planGrokTrust, planGrokUntrust, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors, writePrivate } from "./bot-connectors.mjs";
 import { privateModeOk } from "./platform.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { refusalOf } from "./refusal-codes.mjs";
@@ -344,12 +344,11 @@ export class LoopbackRuntimeAdapter {
     const codexTrust = !servers?.length ? undefined
       : instanceId === "codex" ? await (async () => {
         let settings;
-        try { settings = await this.client.getSettings(); } catch { /* unreadable: T3's default home, no launch arguments seen */ }
+        try { settings = await this.client.getSettings(); } catch { /* unreadable: the home allow-list refuses (row 17) */ }
         const serviceEnv = readT3ServiceEnv(this.codexFiles.serviceEnv);
         checkCodexLaunchArgs(settings, serviceEnv.T3CODE_CODEX_LAUNCH_ARGS);
-        checkCodexHome(settings, serviceEnv);
-        // The name check and the trust table use the one home T3 resolves.
-        const codexHome = codexHomeFromSettings(settings);
+        // KRA-10891: the name check and the trust table use exactly the one allowed home.
+        const codexHome = codexHomeAllowed(settings, serviceEnv);
         checkCodexServerNames(codexHome, servers.map(server => server.name), this.codexFiles.system);
         checkCodexAncestorLayers(workspace, servers.map(server => server.name));
         return planCodexTrust(codexHome, workspace);

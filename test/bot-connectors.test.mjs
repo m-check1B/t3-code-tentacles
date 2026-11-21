@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
-import { BOT_CONNECTOR_CAPABILITIES, GROK_TRUST_MARKER, PUBLIC_MCP_URL, checkCodexHome, checkCodexLaunchArgs, codexHomeFor, codexHomeFromSettings, codexServerNames, commitCodexTrust, grokHomeFor, planGrokTrust, planGrokUntrust, trustCodexWorkspace } from "../src/bot-connectors.mjs";
+import { BOT_CONNECTOR_CAPABILITIES, GROK_TRUST_MARKER, PUBLIC_MCP_URL, codexHomeAllowed, checkCodexLaunchArgs, codexHomeFor, readT3ServiceEnv, codexOuterFiles, codexHomeFromSettings, codexServerNames, commitCodexTrust, grokHomeFor, planGrokTrust, planGrokUntrust, trustCodexWorkspace } from "../src/bot-connectors.mjs";
 import { continueThread, doctor, formatDoctor, readSmallRegularFile } from "../src/bridge.mjs";
 import { freshCapability } from "./helpers/fresh-context-wire.mjs";
 import { ensureLocalTalkWorkspace } from "../src/local-talk-workspace.mjs";
@@ -1111,7 +1111,7 @@ const LAUNCH_ARG_ROWS = [
 ];
 
 test("B3 P2-1 on #117: a Codex launch argument override that is not a plain key outside mcp_servers refuses; every row Codex loads jack from refuses", () => {
-  const refusal = "T3's Codex launch arguments carry a config override Tentacles cannot check (any mcp_servers key, a quoted or spaced key, or an unclosed quote); move server definitions from T3's Codex launch arguments into the Codex config file, then send again";
+  const refusal = "T3's Codex launch arguments carry a config override Tentacles cannot check (any mcp_servers key, a quoted or spaced key, an unclosed quote, or a hidden launch-argument entry); move server definitions from T3's Codex launch arguments into the Codex config file, then send again";
   const at = launchArgs => ({ providerInstances: { codex: { config: { launchArgs } } } });
   for (const [args, codexSaw, refuses = true] of LAUNCH_ARG_ROWS) {
     assert.ok(refuses || codexSaw !== "jack", args);
@@ -1174,7 +1174,7 @@ test("B3 P2-1 on #117 (3rd review): with the Codex home field blank, an instance
   fs.writeFileSync(file, owner, { mode: 0o640 });
   settings.providerInstances.codex.environment = [{ name: "CODEX_HOME", value: path.join(home, "first") }, { name: "OTHER", value: "x" }, { name: "CODEX_HOME", value: ownerHome }];
   const clash = "The Codex config in the Codex home T3 uses already has a server named like one of this Bot's Jack tools (for example jack), and Codex would merge the two; rename or remove that server there, then send again";
-  const field = "T3 sets the Codex home in a way Tentacles cannot read (a hidden CODEX_HOME, a HOME entry, or CODEX_HOME or HOME in T3's service.env); put the Codex home folder into the CODEX_HOME path field of T3's Codex settings, then send again";
+  const field = "T3 sets the Codex home in a way Tentacles has not proven equal to its own (for example a ~ home with HOME in T3's service.env, a hidden, blank or relative CODEX_HOME, or unreadable settings); put the absolute path of the Codex home folder into the CODEX_HOME path field of T3's Codex settings, then send again";
   await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), { message: clash });
   await assert.rejects(async () => adapter.continue({ threadId: "t1", message: "hi", ...codex, ...connectors([jack]) }), { message: clash });
   // A home Tentacles cannot read, or one T3 takes from HOME or service.env, refuses with one fixed text.
@@ -1214,30 +1214,141 @@ test("B3 P2-1 on #117 (3rd review): with the Codex home field blank, an instance
   assert.equal(fs.existsSync(path.join(home, ".codex")), false);
 });
 
-test("B3 P2-1 on #117 (3rd review): the Codex home follows T3 0.1.11, field first, then the last readable instance CODEX_HOME, never in managed mode", () => {
+test("B3 P2-1 on #117 (3rd review): doctor's Codex home follows T3 0.1.11, field first, then the last readable instance CODEX_HOME, never in managed mode", () => {
   const home = "/home/owner";
   const at = (config, environment) => codexHomeFromSettings({ providerInstances: { codex: { config, environment } } }, { home });
   assert.equal(at({ homePath: "" }), "/home/owner/.codex"); // the unchanged default
   assert.equal(at({}), "/home/owner/.codex");
   assert.equal(at({ homePath: "/field" }, [{ name: "CODEX_HOME", value: "/env" }]), "/field");
   assert.equal(at({ homePath: " " }, [{ name: "CODEX_HOME", value: "/a" }, { name: "CODEX_HOME", value: "~/b" }]), "/home/owner/b");
-  assert.equal(at({ homePath: "" }, [{ name: "CODEX_HOME", value: "/a" }, { name: "CODEX_HOME", value: " " }]), "/home/owner/.codex"); // T3: the last entry, blank, wins
   assert.equal(at({ homePath: "", setupMode: "managed" }, [{ name: "CODEX_HOME", value: "/env" }]), "/home/owner/.codex");
   assert.equal(at({ homePath: "" }, [{ name: "CODEX_HOME", valueRedacted: true }]), "/home/owner/.codex");
-  // checkCodexHome: a set field, managed mode, or no HOME at all never refuses.
-  const field = /CODEX_HOME path field/;
-  const check = (config, environment, serviceEnv) => () => checkCodexHome({ providerInstances: { codex: { config, environment } } }, serviceEnv);
-  assert.doesNotThrow(check({ homePath: "/field" }, [{ name: "HOME", value: "/x" }, { name: "CODEX_HOME", valueRedacted: true }], { HOME: "/x" }));
-  assert.doesNotThrow(check({ homePath: "", setupMode: "managed" }, [{ name: "HOME", value: "/x" }], { CODEX_HOME: "/x" }));
-  assert.doesNotThrow(check({ homePath: "" }, [{ name: "CODEX_HOME", value: "/env" }, { name: "HOME", value: "/x" }], { HOME: "/x" }));
-  assert.doesNotThrow(check({ homePath: "" }, [{ name: "OTHER", value: "x" }], { OTHER: "x" }));
-  assert.doesNotThrow(() => checkCodexHome(undefined));
-  assert.throws(check({ homePath: "" }, [{ name: "CODEX_HOME", value: "" }, { name: "HOME", value: "/x" }]), field);
+  // Doctor only: a Bot turn with a list uses codexHomeAllowed (the closed table below), which refuses
+  // a blank last CODEX_HOME such as " " (fifth review P2-2: T3 hands Codex <cwd>/" ").
+});
+
+// KRA-10891: Table 2 of the README (Local · Codex), one entry per row. "svc" is T3's
+// service.env as file text (absent when undefined, or a FIFO, folder, oversize or 0000 file).
+const OWN = "/home/owner";
+const S = (config, environment, extra = {}) => ({ providerInstances: { codex: { config, ...(environment ? { environment } : {}) } }, ...extra });
+const CH = value => ({ name: "CODEX_HOME", value });
+const REFUSE = "codex_home_field";
+const CODEX_HOME_TABLE = [
+  [1, "field absolute, direct", S({ homePath: "/field" }), undefined, "/field"],
+  [1, "field absolute, managed, HOME and hidden CODEX_HOME entries, HOME in svc", S({ homePath: "/field", setupMode: "managed" }, [{ name: "HOME", value: "/x" }, { name: "CODEX_HOME", valueRedacted: true }]), "HOME=/svc\nCODEX_HOME=/svc\n", "/field"],
+  [1, "field absolute padded (T3's schema trims it)", S({ homePath: "  /field  " }), undefined, "/field"],
+  [2, "field ~, no HOME in svc", S({ homePath: "~" }), undefined, OWN],
+  [2, "field ~/x, a HOME entry, no HOME in svc", S({ homePath: "~/x" }, [{ name: "HOME", value: "/x" }]), "OTHER=1\n", `${OWN}/x`],
+  [3, "P2-1: field ~/x, HOME in svc", S({ homePath: "~/x" }), "HOME=/svc\n", REFUSE],
+  [3, "P2-1: field ~, HOME in svc", S({ homePath: "~" }), "HOME=/svc\n", REFUSE],
+  [3, "field ~/x, managed, HOME in svc", S({ homePath: "~/x", setupMode: "managed" }), "HOME=/svc\n", REFUSE],
+  [4, "managed, field blank, no HOME in svc", S({ homePath: "", setupMode: "managed" }, [CH("/env")]), undefined, `${OWN}/.codex`],
+  [5, "P2-1: managed, field blank, HOME in svc", S({ homePath: "", setupMode: "managed" }), "HOME=/svc\n", REFUSE],
+  [6, "direct, the last of two absolute CODEX_HOME entries", S({ homePath: "" }, [CH("/a"), { name: "OTHER", value: "x" }, CH("/b")]), undefined, "/b"],
+  [6, "direct, absolute CODEX_HOME, HOME entry and HOME/CODEX_HOME in svc", S({ homePath: " " }, [{ name: "HOME", value: "/x" }, CH("/b")]), "HOME=/svc\nCODEX_HOME=/svc\n", "/b"],
+  [7, "direct, last CODEX_HOME ~/b, no HOME in svc", S({ homePath: "" }, [CH("/a"), CH("~/b")]), undefined, `${OWN}/b`],
+  [7, "direct, last CODEX_HOME ~, no HOME in svc", S({}, [CH("~")]), undefined, OWN],
+  [8, "P2-1: direct, CODEX_HOME ~/x, HOME in svc", S({ homePath: "" }, [CH("~/x")]), "HOME=/svc\n", REFUSE],
+  [8, "P2-1: direct, CODEX_HOME ~, HOME in svc", S({ homePath: "" }, [CH("~")]), "HOME=/svc\n", REFUSE],
+  [9, "a redacted CODEX_HOME before a readable one", S({ homePath: "" }, [{ name: "CODEX_HOME", valueRedacted: true }, CH("/b")]), undefined, REFUSE],
+  [9, "a sensitive CODEX_HOME", S({ homePath: "" }, [{ name: "CODEX_HOME", sensitive: true, value: "/b" }]), undefined, REFUSE],
+  [9, "a CODEX_HOME that is not a string", S({ homePath: "" }, [{ name: "CODEX_HOME", value: { secretRef: "x" } }]), undefined, REFUSE],
+  [10, "P2-2: last CODEX_HOME one space", S({ homePath: "" }, [CH("/a"), CH(" ")]), undefined, REFUSE],
+  [10, "P2-2: last CODEX_HOME tab and newline", S({ homePath: "" }, [CH("\t\n")]), undefined, REFUSE],
+  [10, "last CODEX_HOME padded", S({ homePath: "" }, [CH(" /a")]), undefined, REFUSE],
+  [10, "last CODEX_HOME relative", S({ homePath: "" }, [CH("relative/.codex")]), undefined, REFUSE],
+  [10, "last CODEX_HOME ~\\x", S({ homePath: "" }, [CH("~\\x")]), undefined, REFUSE],
+  [10, "last CODEX_HOME ~user/x", S({ homePath: "" }, [CH("~user/x")]), undefined, REFUSE],
+  [11, "last CODEX_HOME exactly empty", S({ homePath: "" }, [CH("/a"), CH("")]), undefined, REFUSE],
+  [12, "direct, no entries, service.env absent", S({ homePath: "" }), undefined, `${OWN}/.codex`],
+  [12, "direct, other entries only, other svc names", S({}, [{ name: "OTHER", value: "x" }]), "OTHER=x\nT3CODE_CODEX_LAUNCH_ARGS=\n", `${OWN}/.codex`],
+  [13, "direct, no CODEX_HOME, a HOME entry", S({ homePath: "" }, [{ name: "HOME", value: "/x" }]), undefined, REFUSE],
+  [13, "direct, no CODEX_HOME, a hidden HOME entry", S({ homePath: "" }, [{ name: "HOME", valueRedacted: true }]), undefined, REFUSE],
+  [14, "direct, no instance CODEX_HOME, CODEX_HOME in svc", S({ homePath: "" }), "CODEX_HOME=/svc\n", REFUSE],
+  [14, "direct, no instance CODEX_HOME, HOME in svc", S({ homePath: "" }), "HOME=/svc\n", REFUSE],
+  [15, "an entry codex_home", S({ homePath: "" }, [{ name: "codex_home", value: "/x" }]), undefined, REFUSE],
+  [15, "an entry Home with a ~ field", S({ homePath: "~/x" }, [{ name: "Home", value: "/x" }]), undefined, REFUSE],
+  [15, "svc home, managed", S({ homePath: "", setupMode: "managed" }), "home=/svc\n", REFUSE],
+  [16, "svc a FIFO", S({ homePath: "~/x" }), "fifo", REFUSE],
+  [16, "svc a folder", S({ homePath: "" }), "dir", REFUSE],
+  [16, "svc over 64 KiB", S({ homePath: "" }), "big", REFUSE],
+  [16, "svc unreadable (EACCES)", S({ homePath: "" }), "eacces", REFUSE],
+  [17, "settings call failed", undefined, undefined, REFUSE],
+  [17, "no providerInstances", {}, undefined, REFUSE],
+  [17, "providerInstances.codex null", { providerInstances: { codex: null } }, undefined, REFUSE],
+  [17, "providerInstances.codex an array", { providerInstances: { codex: [] } }, undefined, REFUSE],
+  [17, "config an array", { providerInstances: { codex: { config: [] } } }, undefined, REFUSE],
+  [17, "environment an object", { providerInstances: { codex: { config: {}, environment: {} } } }, undefined, REFUSE],
+  [17, "homePath a number", S({ homePath: 1 }), undefined, REFUSE],
+  [18, "field relative", S({ homePath: "x/.codex" }), undefined, REFUSE],
+  [18, "field ~user/x", S({ homePath: "~user/x" }), undefined, REFUSE],
+  [18, "field ~\\x", S({ homePath: "~\\x" }), undefined, REFUSE],
+  [19, "no instance field, a legacy providers.codex.homePath", S({}, undefined, { providers: { codex: { homePath: "/legacy" } } }), undefined, REFUSE],
+  [19, "no instance field, a legacy homePath that is not text", S({}, undefined, { providers: { codex: { homePath: 1 } } }), undefined, REFUSE],
+  [12, "no instance field, a blank legacy homePath", S({}, undefined, { providers: { codex: { homePath: "" } } }), undefined, `${OWN}/.codex`],
+];
+
+test("KRA-10891 Codex home allow-list: every row of the closed table", async () => {
+  const field = "T3 sets the Codex home in a way Tentacles has not proven equal to its own (for example a ~ home with HOME in T3's service.env, a hidden, blank or relative CODEX_HOME, or unreadable settings); put the absolute path of the Codex home folder into the CODEX_HOME path field of T3's Codex settings, then send again";
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "codex-home-table-")));
+  const rows = new Set();
+  try {
+    for (const [row, name, settings, svc, expected] of CODEX_HOME_TABLE) {
+      rows.add(row);
+      const file = path.join(root, `service-${rows.size}-${name.length}.env`);
+      fs.rmSync(file, { recursive: true, force: true });
+      if (svc === "fifo") execFileSync("mkfifo", [file]);
+      else if (svc === "dir") fs.mkdirSync(file);
+      else if (svc === "big") fs.writeFileSync(file, `OTHER=${"x".repeat(64 * 1024)}\n`);
+      else if (svc === "eacces") fs.writeFileSync(file, "OTHER=1\n", { mode: 0o000 });
+      else if (svc !== undefined) fs.writeFileSync(file, svc);
+      const run = () => codexHomeAllowed(settings, readT3ServiceEnv(file), { home: OWN });
+      if (expected === REFUSE) assert.throws(run, { message: field }, `row ${row}: ${name}`);
+      else assert.equal(run(), expected, `row ${row}: ${name}`);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  assert.deepEqual([...rows].sort((a, b) => a - b), Array.from({ length: 19 }, (_, i) => i + 1));
+  // Row 17 on a real turn: a failing settings call refuses before the stop and any write.
+  const { workspace, sent, stops, adapter } = setup();
+  adapter.client = { getSettings: async () => { throw new Error("settings unavailable"); } };
+  await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), { message: field });
+  assert.deepEqual([sent, stops], [[], []]);
+  assert.equal(fs.existsSync(path.join(workspace, ".codex", "config.toml")), false);
+});
+
+test("B3 P3-1 on #117 (fifth review): EACCES or ENOTDIR on a Codex layer refuses with that layer's fixed text", async () => {
+  const { home, workspace, sent, stops, adapter, codexFiles } = setup();
+  const system = "A system Codex config file (/etc/codex/config.toml or /etc/codex/managed_config.toml) has a server named like one of this Bot's Jack tools, or one Tentacles cannot read, and Codex would merge it into the Bot's; remove that server there, then send again";
+  const project = "A .codex/config.toml in a folder above this Bot workspace has a server named like one of this Bot's Jack tools, or one Tentacles cannot read, and Codex merges it into the Bot's when that folder's project is trusted; remove that server there, then send again";
+  // EACCES: a root-only managed_config.toml stand-in.
+  fs.mkdirSync(path.dirname(codexFiles.system[1]));
+  fs.writeFileSync(codexFiles.system[1], '[mcp_servers.other]\ncommand = "x"\n', { mode: 0o000 });
+  await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), { message: system });
+  fs.rmSync(codexFiles.system[1]);
+  // ENOTDIR: a file named .codex in a folder above the Bot workspace.
+  const above = path.join(home, ".jack-local-scratch", ".codex");
+  fs.mkdirSync(path.dirname(above), { recursive: true });
+  fs.writeFileSync(above, "not a folder\n");
+  await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), { message: project });
+  assert.deepEqual([sent, stops], [[], []]);
+  fs.rmSync(above);
+  await adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) });
+  assert.equal(sent.length, 1);
+});
+
+test("B3 P3-3 on #117 (fifth review): service.env is found under TENTACLES_T3_HOME, else T3CODE_HOME, else ~/.t3", () => {
+  const at = env => codexOuterFiles({ home: "/home/owner", env }).serviceEnv;
+  assert.equal(at({ TENTACLES_T3_HOME: "/t3-base", T3CODE_HOME: "/other" }), "/t3-base/service.env");
+  assert.equal(at({ TENTACLES_T3_HOME: " ", T3CODE_HOME: "/other" }), "/other/service.env");
+  assert.equal(at({}), "/home/owner/.t3/service.env");
 });
 
 test("B3 P3-1 on #117 (3rd review): the turn reads the owner's config.toml and Codex's system layers bounded; too large, a FIFO or a Bot-named system server refuses before the stop", async () => {
-  const { home, workspace, sent, stops, adapter, codexFiles } = setup();
-  const codexHome = path.join(home, ".codex");
+  const { home, workspace, sent, stops, adapter, settings, codexFiles } = setup();
+  // B3 P3-4 (fifth review): the Codex home is not a .codex in a folder above the Bot
+  // workspace, so only the home read itself can refuse here, with its exact text.
+  const codexHome = path.join(home, "owner-codex");
+  settings.providerInstances.codex.config.homePath = codexHome;
   fs.mkdirSync(codexHome, { mode: 0o700 });
   const file = path.join(codexHome, "config.toml");
   const form = "The Codex config in the Codex home T3 uses keeps servers in a form Tentacles does not read; write each server as its own [mcp_servers.<name>] table, then send again";

@@ -252,6 +252,66 @@ server, so that Agent Jack keeps refusing connector turns itself, as before. Peo
 in the Talk see the names of the tools the Bot used on the owner's computer, never
 their input or output.
 
+Local · Codex home (KRA-10891). On a Codex Bot turn with a server list, Tentacles
+uses a Codex home only where the table below proves it equal to the one stock T3
+0.1.11 hands Codex (each "equal" row checked with codex-cli 0.169.0). Every other
+setup refuses before the stop. The server-name check and the trust table then use
+exactly that home. Turns without a server list, and other labs, read nothing new.
+A later review judges against these two tables; a new input outside them that
+fails closed is a table row to add, not a defect.
+
+Table 2, the Codex home (closed). "svc" is T3's `service.env`; "field" is the CODEX_HOME path field, trimmed as T3's schema trims it; "env" is the Codex instance's environment list. T3's `~` is T3's own `$HOME`, which a `HOME` in svc moves. Rows 16, 17 and 19 are checked first, then row 1, then row 15, then the rest. Every refusal is `bot_connectors.codex_home_field`, with one fix: put the absolute path of the Codex home into the CODEX_HOME path field of T3's Codex settings, then send again.
+
+| # | Input | Home T3 0.1.11 uses | Tentacles |
+|---|---|---|---|
+| 1 | field absolute (any mode, any env, any svc) | the field | equal to T3: the field |
+| 2 | field `~` or `~/x`, no `HOME` in svc | T3 `$HOME` based | equal to T3: expanded with Tentacles' home |
+| 3 | field `~` or `~/x`, `HOME` in svc | svc HOME based | refuses |
+| 4 | managed mode, field blank, no `HOME` in svc | `$HOME/.codex` | equal to T3: `~/.codex` |
+| 5 | managed mode, field blank, `HOME` in svc | svc HOME `/.codex` | refuses |
+| 6 | direct, field blank, every `CODEX_HOME` entry readable, the last absolute and equal to its trim | that path | equal to T3: that path |
+| 7 | as 6, but the last is `~` or `~/x`, no `HOME` in svc | T3 `$HOME` based | equal to T3: expanded |
+| 8 | as 7, `HOME` in svc | svc HOME based | refuses |
+| 9 | direct, field blank, a hidden (sensitive, redacted or not text) `CODEX_HOME` entry | unknown | refuses |
+| 10 | direct, field blank, the last `CODEX_HOME` whitespace only, padded, relative, `~\x` or `~user/x` | `<T3 cwd>/…` or other | refuses |
+| 11 | direct, field blank, the last `CODEX_HOME` exactly `""` | `$HOME/.codex` | refuses (equal, but not needed) |
+| 12 | direct, field blank, no `CODEX_HOME` entry, no `HOME` entry, no `CODEX_HOME`/`HOME` in svc | `$HOME/.codex` | equal to T3: `~/.codex` |
+| 13 | direct, field blank, no `CODEX_HOME` entry, a `HOME` entry | env HOME `/.codex` | refuses |
+| 14 | direct, field blank, no instance `CODEX_HOME`, `CODEX_HOME` or `HOME` in svc | svc based | refuses |
+| 15 | an entry or svc name equal to `CODEX_HOME` or `HOME` only when case is ignored | ignored on macOS/Linux, used on Windows | refuses |
+| 16 | svc not a small regular file, or unreadable for any reason but "absent" | unknown | refuses |
+| 17 | the settings call fails, or `providerInstances.codex` (its `config`, `environment` or `homePath`) has another shape | unknown | refuses |
+| 18 | field relative, `~user/x` or `~\x` | `<T3 cwd>/…` or other | refuses |
+| 19 | no instance field, but a legacy `providers.codex.homePath` that is set | unknown | refuses |
+
+Table 1, every input stock T3 0.1.11 uses to build the Codex child:
+
+| # | Input | Tentacles |
+|---|---|---|
+| 1 | the CODEX_HOME path field | Table 2 rows 1-3, 18: equal to T3 or refuses |
+| 2 | instance env `CODEX_HOME`, field blank, direct | Table 2 rows 6-11: equal to T3 or refuses |
+| 3 | instance env `HOME`, field blank | Table 2 row 13: refuses |
+| 4 | shadow home | equal to T3 through row 1 (the same linked file); anything else refuses |
+| 5 | managed mode | Table 2 rows 4-5: equal to T3 or refuses |
+| 6 | the Launch arguments setting | equal to T3 when every override is a plain key outside `mcp_servers`; else refuses (`codex_launch_args`) |
+| 7 | instance env `T3CODE_CODEX_LAUNCH_ARGS` | as 6; a hidden entry refuses |
+| 8 | T3's own fixed arguments | equal to T3 (harmless by code) |
+| 9 | other instance env entries | equal to T3 (names only, harmless) |
+| 10 | `<home>/.env` | equal to T3 (harmless: it sets no server) |
+| 11 | the binary path | not seen; any program the owner chooses |
+| 12 | the working folder and the folders above it | equal to T3, or refuses a Bot-named, inline or unreadable server (`codex_project_servers`) |
+| 13 | the home trust table | equal to T3: Tentacles writes exact-folder trust only |
+| 14 | T3's `service.env` | Table 2 rows 3, 5, 8, 14-16; `T3CODE_CODEX_LAUNCH_ARGS` there as 6 |
+| 15 | the rest of T3's process environment | not seen |
+| 16 | `/etc/codex/config.toml` | equal to T3, or refuses a Bot-named or unreadable server (`codex_system_servers`) |
+| 17 | `/etc/codex/managed_config.toml` | as 16 |
+| 18 | `/etc/codex/requirements.toml` | equal to T3: not read; it can disable a Bot server, never add or change one |
+| 19 | macOS MDM managed config | not seen |
+| 20 | Codex cloud-managed config | not seen |
+| 21 | profiles | equal to T3 (Codex rejects them) |
+
+Not seen: T3's process environment outside `service.env`, Codex's macOS MDM managed config, Codex's cloud-managed config, the Codex binary, and a T3 base dir that is neither `TENTACLES_T3_HOME` nor `T3CODE_HOME` (nor the default `~/.t3`).
+
 Unproven roads (Local · Grok, Local · OpenCode 2, Local · Cursor, Local ·
 Antigravity): built, but no real Agent Jack Talk has proven them yet, so they are
 off by default. Each is admitted and advertised only when the process that runs

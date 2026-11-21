@@ -430,9 +430,11 @@ export function readSmallRegularFile(file, cap) {
   } finally { closeSync(fd); }
 }
 
-// The same bounded, regular-file-only read the doctor uses; absent is "", anything else null.
+// The same bounded, regular-file-only read the doctor uses; absent is "", anything else
+// (not a regular file, too large, EACCES, ENOTDIR, …) null, so each caller refuses with its
+// own fixed text (B3 P3-1 on #117, fifth review).
 function readCodexLayer(file, cap) {
-  try { return readSmallRegularFile(file, cap); } catch (error) { if (error.code === "ENOENT") return ""; throw error; }
+  try { return readSmallRegularFile(file, cap); } catch (error) { return error.code === "ENOENT" ? "" : null; }
 }
 
 /**
@@ -462,8 +464,9 @@ export function checkCodexAncestorLayers(workspace, names) {
 }
 
 /** Where T3 keeps its service.env, and the Codex system layers; tests pass their own. */
+// T3's base dir as src/cli and src/t3-auth find it: TENTACLES_T3_HOME, else T3CODE_HOME, else ~/.t3.
 export function codexOuterFiles({ home = os.homedir(), env = process.env } = {}) {
-  return { serviceEnv: path.join(env.T3CODE_HOME?.trim() || path.join(home, ".t3"), "service.env"), system: ["/etc/codex/config.toml", "/etc/codex/managed_config.toml"] };
+  return { serviceEnv: path.join(env.TENTACLES_T3_HOME?.trim() || env.T3CODE_HOME?.trim() || path.join(home, ".t3"), "service.env"), system: ["/etc/codex/config.toml", "/etc/codex/managed_config.toml"] };
 }
 
 // T3's service launcher adds service.env to the server's environment (serviceLauncher.ts).
@@ -473,21 +476,49 @@ export function readT3ServiceEnv(file) {
   return parseEnv(text);
 }
 
+const ENV_HOME_NAMES = ["CODEX_HOME", "HOME"];
+const plainObject = value => value !== null && typeof value === "object" && !Array.isArray(value);
+const tildeHome = value => value === "~" || value.startsWith("~/");
+
 /**
- * B3 P2-1 on #117 (3rd review): refuses a Codex Bot turn whose Codex home Tentacles
- * cannot resolve as T3 does: the field blank (direct mode) and a hidden CODEX_HOME entry,
- * or a HOME entry, or a CODEX_HOME/HOME in T3's service.env, with no readable CODEX_HOME entry.
+ * KRA-10891: the one Codex home a Codex Bot turn with a server list uses, as an
+ * allow-list. Only the "pass" rows of the closed table (README, Local · Codex) return
+ * a home; each is proven equal to the home T3 0.1.11 gives Codex. Every other input
+ * refuses with codex_home_field. `serviceEnv` is T3's parsed service.env (an unreadable
+ * one already refused in readT3ServiceEnv, row 16). Order: 17, 19, 1, 15, then the rest.
  */
-export function checkCodexHome(settings, serviceEnv = {}) {
+export function codexHomeAllowed(settings, serviceEnv, { home = os.homedir() } = {}) {
+  const refuse = () => { throw new Error(R.codexHomeField); };
   const instance = settings?.providerInstances?.codex;
-  const field = instance?.config?.homePath ?? settings?.providers?.codex?.homePath;
-  if (instance?.config?.setupMode === "managed" || (typeof field === "string" && field.trim())) return;
+  // Row 17: the settings call failed, or the instance is not in T3 0.1.11's shape.
+  if (!plainObject(instance) || (instance.config !== undefined && !plainObject(instance.config)) || (instance.environment !== undefined && !Array.isArray(instance.environment))) refuse();
+  const config = instance.config ?? {};
+  if (config.homePath !== undefined && typeof config.homePath !== "string") refuse();
+  // Row 19: no instance field, but a legacy providers.codex.homePath T3 might still read.
+  const legacy = settings.providers?.codex?.homePath;
+  if (config.homePath === undefined && legacy !== undefined && (typeof legacy !== "string" || legacy.trim())) refuse();
+  const field = (config.homePath ?? "").trim(); // T3's schema trims the field
+  if (path.isAbsolute(field)) return path.resolve(field); // row 1
+  const environment = instance.environment ?? [];
+  // Row 15: a name equal to CODEX_HOME or HOME only when case is ignored (Windows uses it).
+  const names = [...environment.map(entry => entry?.name), ...Object.keys(serviceEnv)];
+  if (names.some(name => typeof name === "string" && ENV_HOME_NAMES.includes(name.toUpperCase()) && !ENV_HOME_NAMES.includes(name))) refuse();
+  // A HOME in service.env becomes T3's own $HOME, which every `~` home follows (rows 3, 5, 8).
+  const serviceHome = Object.hasOwn(serviceEnv, "HOME");
+  const expand = value => value === "~" ? home : path.join(home, value.slice(2));
+  if (field) return tildeHome(field) && !serviceHome ? expand(field) : refuse(); // rows 2, 3, 18
+  if (config.setupMode === "managed") return serviceHome ? refuse() : path.join(home, ".codex"); // rows 4, 5
   const homes = envEntries(instance, "CODEX_HOME");
-  if (homes.some(hiddenEntry)) throw new Error(R.codexHomeField);
-  // T3 neither trims an environment CODEX_HOME nor resolves a relative one against a folder Tentacles knows.
-  const last = homes.at(-1)?.value;
-  if (last?.trim()) { if (last === last.trim() && (last === "~" || last.startsWith("~/") || path.isAbsolute(last))) return; throw new Error(R.codexHomeField); }
-  if (envEntries(instance, "HOME").length || Object.hasOwn(serviceEnv, "CODEX_HOME") || Object.hasOwn(serviceEnv, "HOME")) throw new Error(R.codexHomeField);
+  if (homes.length) {
+    if (homes.some(hiddenEntry)) refuse(); // row 9
+    // T3 neither trims an environment CODEX_HOME nor resolves a relative one against a folder Tentacles knows.
+    const last = homes.at(-1).value;
+    if (last === last.trim() && path.isAbsolute(last)) return path.resolve(last); // row 6
+    if (last === last.trim() && tildeHome(last) && !serviceHome) return expand(last); // row 7
+    refuse(); // rows 8, 10, 11
+  }
+  if (envEntries(instance, "HOME").length || Object.hasOwn(serviceEnv, "CODEX_HOME") || serviceHome) refuse(); // rows 13, 14
+  return path.join(home, ".codex"); // row 12
 }
 
 /**
