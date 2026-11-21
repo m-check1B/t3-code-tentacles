@@ -4,6 +4,31 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.5.0-jack.21] - 2026-11-21
+
+In short: this release makes Jack tools on Local · Codex safe against the owner's own Codex setup, and builds the roads for four more labs, which stay off by default. Turns without Jack tools, and Bots on Local · Claude Code, work as before.
+
+What is new:
+- Local · Codex: before a Bot turn with Jack tools, Tentacles now checks the Codex config that T3's Codex loads, wherever Tentacles can see it: the Codex home, `/etc/codex/config.toml` and `managed_config.toml`, a `.codex/config.toml` in any folder above the Bot workspace, and T3's Codex launch arguments (see "still cannot see" below). If one of them already has a server named like one of the Bot's tools (for example `jack`), the turn refuses, because Codex would mix the owner's server into the Bot's. Nothing is stopped or written first, and each refusal names the file to fix.
+- The Codex home is now a closed allow-list. Tentacles uses a Codex home only where it has proven it is the same home T3 Code 0.1.11 hands Codex. The full table is in the README, "Local · Codex home". Every other setup refuses, including a T3 shadow home (the Codex "shadow home" setting).
+- Local · Grok, Local · OpenCode 2, Local · Cursor and Local · Antigravity: the roads for Jack tools are built, but no real Agent Jack Talk has proven them yet. They stay off unless `TENTACLES_JACK_TOOLS_TRY` names them. Several review fixes on these roads are in this release.
+- Local · Antigravity: `doctor --responds` tells a spent Google quota from a working reply, and the reset time it shows is read strictly.
+- A Bot list for a lab that cannot use Jack tools on Local yet refuses with one plain line: run this Bot on Server.
+- Every refusal on this computer is logged with a typed code and its fix (`rpc.refused` in the Tentacles log).
+
+Who sees a new refusal after updating: only an owner who runs a Local · Codex Bot with Jack tools, and whose T3 Codex settings fall outside the proven rows. In plain words, that is when:
+- a shadow home is set;
+- the Codex home starts with `~` (in the CODEX_HOME path field, in a `CODEX_HOME` environment entry, or the managed default), and T3's `service.env` sets `HOME`;
+- the CODEX_HOME path field is blank, and a `CODEX_HOME` environment entry is hidden (sensitive or redacted), blank, empty, padded with spaces, relative, or `~user`;
+- the field is blank, and the home would come from a `HOME` environment entry, or from `CODEX_HOME` or `HOME` in T3's `service.env`;
+- the field holds a relative or `~user` path;
+- an environment name differs from `CODEX_HOME` or `HOME` only in case;
+- T3's settings or `service.env` cannot be read, or only the old `providers.codex.homePath` setting is set.
+
+The one step that clears all of these: in T3's Codex settings, put the absolute path of the Codex home folder into the CODEX_HOME path field, leave the shadow home field blank, then send again. Today's Agent Jack shows such a refusal as the computer being unavailable. The fix is named in the Tentacles log, and it reaches the Talk once Agent Jack and Sphere ask for refusal codes (KRA-10870). The other new Codex refusals above (a server named like a Bot's tool, a launch-argument override) name their own fix.
+
+What Tentacles still cannot see: T3's process environment outside `service.env`, Codex's macOS MDM managed config, Codex's cloud-managed config, the Codex binary, and a T3 base dir that is neither `TENTACLES_T3_HOME` nor `T3CODE_HOME` (nor the default `~/.t3`).
+
 ### Added
 
 - KRA-10869 (unproven: needs a real turn; opt-in): the road for Jack tools on Local · Antigravity. Official T3 starts one `antigravity acp` per thread, with cwd = the thread folder, and passes only its own `t3-code` server. With `TENTACLES_JACK_TOOLS_TRY=antigravity` set for Tentacles, an Antigravity Bot turn writes `.agents/plugins/jack-tools/plugin.json` and `mcp_config.json` (0600, `url` plus the `Authorization` header for Jack-hosted entries) into the Bot workspace, in real directories checked before the stop, plus a 0600 `.jack-antigravity-mcp` sha256 marker. A plugin there that Tentacles did not write (no matching marker, edited since, or a link) refuses before the stop with "This Bot workspace has a .agents/plugins/jack-tools plugin that Tentacles did not write; remove that folder, then send again" (`bot_connectors.bot_folder`). With the switch unset, or on any other lab's turn, these files are never read or written. T3's shared Antigravity profile is never written. A plugin written in an opt-in run stays in the Bot workspace after the switch is unset and across no-list turns, and later Antigravity Bot turns keep loading it: its Jack tokens have expired, but the Microsoft Learn server needs none and still works. To remove it, delete `.agents/plugins/jack-tools` and `.jack-antigravity-mcp` from the Bot workspace (or send one opt-in turn with an empty list, which empties its servers). A Bot workspace inside a git repository (a `.git` in it or any parent) refuses with "This Bot workspace is inside a git repository, where Antigravity reads the repository's own .agents plugins; run this Bot on Server to use Jack tools" (`bot_connectors.lab_not_covered`), because Antigravity also reads customizations up to the repository root. A `jack-tools` folder holding anything besides `plugin.json` and `mcp_config.json` refuses as not Tentacles', whatever the marker says. Open risk, still unproven until a signed-in turn: the runtime text says both that a plugin's MCP config is active "when the plugin is enabled", with enablement recorded in the profile `config.json`, and that "most discovered plugins are enabled by default" and "a plugin with no entry falls back to its plugin.json declaration". So the workspace plugin should load, but no real turn has shown it. Writing the profile is outside the Bot workspace and is not done.
