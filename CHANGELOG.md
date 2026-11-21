@@ -10,7 +10,8 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
-- KRA-10869: a Bot list for a lab that cannot use Jack tools on Local is refused with one plain line that names the working road: "This lab cannot use Jack tools on Local yet; run this Bot on Server to use them". It replaces "Bot connectors are not supported on this lab".
+- KRA-10870 (part 1): when a paired turn is refused on this computer, the pairer logs one `rpc.refused` event with a typed code and its plain fix, for example `bot_connectors.codex_home`: "Trust this Bot's folder in Codex first…". Codes are given only to known fixed refusal texts (every Bot connector set-up text has one, a Talk started before plugins worked gets `bot_connectors.new_talk`) and to T3 Code not running (`t3.unreachable`: "Start T3 Code (Beta) on this computer, then send again."); anything else is `unknown`, and the error's own text, paths and tokens are never logged. The relay reply is unchanged (`computer.unavailable`), because Sphere and today's Agent Jack accept only that. Sending the code to Agent Jack needs Sphere and Agent Jack changes (part 2).
+- KRA-10869: a Bot list for a lab that cannot use Jack tools on Local is refused with one plain line that names the working road: "This lab cannot use Jack tools on Local yet; run this Bot on Server to use them". It replaces "Bot connectors are not supported on this lab", and keeps that text's KRA-10870 code `bot_connectors.lab_not_covered`, whose fix now also names Local OpenCode.
 
 ## [0.5.0-jack.20] - 2026-11-21
 
