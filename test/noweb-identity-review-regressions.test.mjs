@@ -123,7 +123,7 @@ for (const protocol of [1, 2]) {
       assert.equal(row.ready, driver === "codex");
       assert.deepEqual(row.webTools, driver === "codex" ? { v: 1, state: "off", tools: ["web_search"] } : unknown);
       assert.equal(row.runtime.driver, driver ?? null);
-      assert.equal(Object.hasOwn(reply.result.capabilities, "jackMcpProviders"), false);
+      assert.equal((reply.result.capabilities.jackMcpProviders ?? []).some(id => id.endsWith("-noweb")), false);
     }
     assert.ok(paths.includes(protocol === 2 ? "/api/orchestration/shell" : "/api/orchestration/snapshot"));
     assert.ok(tags.includes("server.getConfig"));

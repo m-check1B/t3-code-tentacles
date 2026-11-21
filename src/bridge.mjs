@@ -1,7 +1,7 @@
 import { requireFreshFlags, requireFreshProviderContext, freshContextProviders } from "./fresh-provider-context.mjs";
 import { t3Support, talkMissingAction } from "./t3-support.mjs";
 import { TURN_INTERRUPT_CONTRACT } from "./turn-interrupt.mjs";
-import { inspectLeakedSessions } from "./orchestrate.mjs";
+import { inspectLeakedSessions, threadSessionStop, waitForRestartableSession } from "./orchestrate.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -718,6 +718,20 @@ export async function startThread(client, { projectId, title, message, instanceI
   return { threadId, projectId, messageId, turnCommandId };
 }
 
+// shortcut: T3 has no conditional stop, so a turn the owner starts in the T3 window
+// between this read and the stop is cut; Bot Talks are not driven from T3's UI.
+async function restartIdleSession(client, threadId, turnCommandId) {
+  const session = (await waitForThread(client, threadId)).thread.session;
+  const status = session?.status ?? null;
+  if (status === null || status === "stopped" || status === "error") return;
+  // Never cut a running turn; refused at once so the relay hears it in time.
+  if (session.activeTurnId != null || status === "running" || status === "starting") {
+    throw new Error("This Talk is still answering. Its tools change once it finishes; try again then.");
+  }
+  await client.dispatch(threadSessionStop({ threadId, commandId: `connectors:${turnCommandId}` }));
+  await waitForRestartableSession(client, threadId, { timeoutMs: 5_000 });
+}
+
 export async function continueThread(client, {
   threadId,
   message,
@@ -751,7 +765,11 @@ export async function continueThread(client, {
         workspace = project?.workspaceRoot;
       }
       if (typeof workspace !== "string") throw new Error("Thread workspace could not be resolved; continue refused before T3");
-      await prepareTalkWorkspace(workspace);
+      // KRA-10862: T3 keeps a lab process alive across turns, and that process
+      // loaded its MCP list and turn token once. The hook stops an idle session
+      // before it rewrites them, so this turn starts a fresh one (it resumes the
+      // conversation) on the new list.
+      await prepareTalkWorkspace(workspace, { restartIdleSession: () => restartIdleSession(client, threadId, turnCommandId) });
     }
     await client.dispatch({
       type: "thread.turn.start",

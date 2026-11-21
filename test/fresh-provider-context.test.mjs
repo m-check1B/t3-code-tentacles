@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { startThread, continueThread, originate } from "../src/bridge.mjs";
 import { LoopbackRuntimeAdapter } from "../src/outbound-pairer.mjs";
+import { BOT_CONNECTOR_CAPABILITIES } from "../src/bot-connectors.mjs";
 import { T3Client, T3HttpError } from "../src/t3-client.mjs";
 import { captureWire, freshCapability } from "./helpers/fresh-context-wire.mjs";
 import { translateCommand } from "../src/t3-v2.mjs";
@@ -76,7 +77,7 @@ test("doctor advertises only the exact agreed capability envelope", async () => 
   for (const caps of [{}, capability, exact]) {
     const runtime = new LoopbackRuntimeAdapter({ client: fake(caps), doctorImpl: async () => ({ ready: true }) });
     const result = await runtime.doctorStatus();
-    assert.deepEqual(result.capabilities, caps === exact ? { ...exact, turnInterrupt: "turn-interrupt-v1" } : { talkTurnResult: null, turnInterrupt: null });
+    assert.deepEqual(result.capabilities, caps === exact ? { ...exact, turnInterrupt: "turn-interrupt-v1", ...BOT_CONNECTOR_CAPABILITIES } : { talkTurnResult: null, turnInterrupt: null });
   }
 });
 test("exact result forwards only actual applied context receipt and rejects the wrong generation", async () => {

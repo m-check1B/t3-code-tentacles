@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { ensureLocalTalkWorkspace } from "./local-talk-workspace.mjs";
+import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, codexHomeFor, connectorsNeedRestart, pinnedJackOrigin, requireBotWorkspace, writeBotConnectors } from "./bot-connectors.mjs";
 import { privateModeOk } from "./platform.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { randomUUID } from "node:crypto";
@@ -31,10 +32,10 @@ const offerSecrets = new WeakMap();
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const MAX_TIMER_MS = 2_147_483_647;
 const ORIGINATE_PARAM_KEYS = new Set([
-  "workspace", "title", "message", "instanceId", "model", "options", "budget", "runtimeMode", "idempotencyKey", "freshProviderContext", "fixedTitle",
+  "workspace", "title", "message", "instanceId", "model", "options", "budget", "runtimeMode", "idempotencyKey", "freshProviderContext", "fixedTitle", ...BOT_CONNECTOR_PARAM_KEYS,
 ]);
 const CONTINUE_PARAM_KEYS = new Set([
-  "threadId", "message", "instanceId", "model", "options", "budget", "runtimeMode", "turnCommandId", "messageId", "freshProviderContext",
+  "threadId", "message", "instanceId", "model", "options", "budget", "runtimeMode", "turnCommandId", "messageId", "freshProviderContext", ...BOT_CONNECTOR_PARAM_KEYS,
 ]);
 
 function isRecord(value) {
@@ -104,9 +105,15 @@ export function readPairOffer(file, { now = Date.now() } = {}) {
     || new Date(expiresAtMs).toISOString() !== parsed.expiresAt) {
     throw new Error("Pair offer expiresAt must be a canonical ISO timestamp");
   }
+  // KRA-10862 (B3 P1-1 on #99): the owner's Agent Jack names its own origin when it
+  // writes the offer. Absent (an older Agent Jack) means no Jack tools, never "any host".
+  if (parsed.jackOrigin !== undefined && pinnedJackOrigin(parsed.jackOrigin) === null) {
+    throw new Error("Pair offer jackOrigin must be a canonical https origin");
+  }
   const offer = Object.freeze({
     version: PAIR_PROTOCOL_VERSION,
     endpoint,
+    jackOrigin: pinnedJackOrigin(parsed.jackOrigin),
     expiresAt: new Date(expiresAtMs).toISOString(),
     expired: expiresAtMs <= now,
     sourceFile: file,
@@ -258,6 +265,8 @@ export class LoopbackRuntimeAdapter {
     this.observeImpl = observeImpl;
     this.originateImpl = originateImpl;
     this.prepareTalkWorkspaceImpl = prepareTalkWorkspaceImpl;
+    // Set by the pairer from the owner's pair offer; null admits no Jack-hosted entry.
+    this.jackOrigin = null;
     this.continueImpl = continueImpl;
     this.doctorImpl = doctorImpl;
     this.pluginInventory = pluginInventory;
@@ -280,21 +289,38 @@ export class LoopbackRuntimeAdapter {
   }
 
   originate(params) {
-    const admitted = fullAccessParams(params, "originate", ORIGINATE_PARAM_KEYS);
+    const { params: admitted, servers, scope } = admitBotConnectors(fullAccessParams(params, "originate", ORIGINATE_PARAM_KEYS), { jackOrigin: this.jackOrigin });
     requireFreshFlags(admitted);
-    const dispatch = () => {
-      this.prepareTalkWorkspaceImpl(admitted.workspace);
+    const dispatch = async () => {
+      // A new thread starts a new lab session, so no restart is needed here.
+      await this.writeConnectors(admitted.workspace, { servers, scope, instanceId: admitted.instanceId });
       return this.originateImpl(this.client, admitted);
     };
     return admitted.freshProviderContext === true || admitted.fixedTitle === true
       ? requireFreshProviderContext(this.client, admitted).then(dispatch) : dispatch();
   }
 
+  // Order matters (B3 P2-1/P2-2 on #99): check the folder, then stop an idle live
+  // session, then write, then (the caller) start the turn. A refusal or a failed
+  // stop leaves the old files, so the next turn still knows to restart.
+  async writeConnectors(workspace, { servers, scope, instanceId, restartIdleSession }) {
+    if (servers !== undefined && !requireBotWorkspace(workspace, scope)) {
+      if (servers.length) throw new Error("Bot connectors need this Bot's own workspace");
+      servers = undefined; // an empty list for another folder clears nothing there
+    }
+    const codexHome = servers?.length && instanceId === "codex" ? await codexHomeFor(this.client) : undefined;
+    if (restartIdleSession && connectorsNeedRestart(workspace, servers)) await restartIdleSession();
+    const prepared = await this.prepareTalkWorkspaceImpl(workspace);
+    return writeBotConnectors(workspace, prepared, servers, { codexHome });
+  }
+
   continue(params) {
-    const input = fullAccessParams(params, "continue", CONTINUE_PARAM_KEYS);
+    const { params: input, servers, scope } = admitBotConnectors(fullAccessParams(params, "continue", CONTINUE_PARAM_KEYS), { jackOrigin: this.jackOrigin });
     requireContinueSelection({ instanceId: input.instanceId, model: input.model, options: input.options, budget: input.budget });
     requireFreshFlags(input);
-    const guarded = () => this.continueImpl(this.client, input, { prepareTalkWorkspace: this.prepareTalkWorkspaceImpl });
+    const guarded = () => this.continueImpl(this.client, input, {
+      prepareTalkWorkspace: (workspace, { restartIdleSession } = {}) => this.writeConnectors(workspace, { servers, scope, instanceId: input.instanceId, restartIdleSession }),
+    });
     const dispatch = () => input.freshProviderContext === true
       ? requireFreshProviderContext(this.client, input).then(guarded)
       : guarded();
@@ -335,7 +361,8 @@ export class LoopbackRuntimeAdapter {
     }
     const report = await this.refreshModels();
     const capabilities = report.capabilities ?? (await probeTalkCapabilities(this.client)).capabilities;
-    const result = { ...report, capabilities };
+    // Connectors need a result to report into, so they ride Local Talk support.
+    const result = { ...report, capabilities: capabilities?.talkTurnResult === "v1" ? { ...capabilities, ...BOT_CONNECTOR_CAPABILITIES } : capabilities };
     if (this.capabilityCache) {
       // KRA-7369: the connector inventory rides the lab-catalog answer, because
       // Sphere admits only the advertised v1 methods. A scan never delays this
@@ -622,6 +649,7 @@ export class OutboundPairer {
     reconnectDelayMs(0, { baseMs: reconnectBaseMs, capMs: reconnectCapMs, random: () => 0 });
     if (typeof random !== "function") throw new Error("Reconnect jitter source must be a function");
     this.shim = new RemoteRpcShim(runtime, { enableInterrupt });
+    this.runtime = runtime;
     this.WebSocketImpl = WebSocketImpl;
     this.pairStateFile = pairStateFile;
     this.handshakeTimeoutMs = handshakeTimeoutMs;
@@ -644,6 +672,8 @@ export class OutboundPairer {
   async run({ pairFile, machineId, signal } = {}) {
     const offer = readPairOffer(pairFile, { now: this.now() });
     machineId = requireMachineId(machineId);
+    // The offer is one-shot and this process is the pairing: the pin lives exactly as long.
+    if (this.runtime) this.runtime.jackOrigin = offer.jackOrigin;
     const releasePairState = acquirePairStateLock(this.pairStateFile);
     if (!releasePairState) throw new Error("Another outbound pairer already owns this pair state");
     let pairStateReleased = false;

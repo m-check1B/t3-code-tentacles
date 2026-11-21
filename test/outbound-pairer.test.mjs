@@ -20,6 +20,7 @@ import {
   writePairPresence,
 } from "../src/pair-state.mjs";
 import { FAILURE_MESSAGES } from "../src/failure-codes.mjs";
+import { BOT_CONNECTOR_CAPABILITIES } from "../src/bot-connectors.mjs";
 
 const PAIR_TOKEN = "pair-secret-never-print-123456";
 
@@ -909,7 +910,7 @@ test("turn-result validates exact correlation, terminal text, bounds and negotia
     assert.deepEqual(options.body, params);
     return result;
   } }, doctorImpl: async () => ({ ready: true }) });
-  assert.deepEqual((await adapter.doctorStatus()).capabilities, { talkTurnResult: "v1", turnInterrupt: "turn-interrupt-v1" });
+  assert.deepEqual((await adapter.doctorStatus()).capabilities, { talkTurnResult: "v1", turnInterrupt: "turn-interrupt-v1", ...BOT_CONNECTOR_CAPABILITIES });
   assert.equal((await adapter.turnResult(params)).outputText, "actual reply");
   assert.equal((await adapter.turnResult(params)).assistantMessageId, "assistant-message");
   assert.equal("internal" in await adapter.turnResult(params), false);
