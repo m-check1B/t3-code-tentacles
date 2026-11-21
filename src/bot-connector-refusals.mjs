@@ -1,6 +1,7 @@
 // Fixed refusal texts for Bot connector set-up, in one place so a later change
 // (KRA-10870) can attach a code to each. Never interpolate paths or values here.
 export const BOT_CONNECTOR_REFUSALS = Object.freeze({
+  labWithoutJackTools: "This lab cannot use Jack tools on Local yet; run this Bot on Server to use them",
   oldTalk: "This Talk started before plugins worked on Local; start a new Talk to use plugins on Local",
   notOwnWorkspace: "Bot connectors need this Bot's own workspace",
   notBotWorkspace: "Bot connectors need a Bot workspace",
@@ -17,6 +18,7 @@ export const BOT_CONNECTOR_REFUSALS = Object.freeze({
   grokGitRepo: "This Bot workspace is inside a git repository, where Grok decides trust for the whole repository; run this Bot on Server to use Jack tools",
   grokChanged: "Grok trusted_folders.toml changed while trusting this Bot workspace; try again",
   grokTrustForm: "Grok trusted_folders.toml holds a form Tentacles does not edit; trust this Bot workspace in Grok first",
-  codexServerClash: "The Codex config in the Codex home T3 uses already defines a server with a name this Bot uses, and Codex would merge the two; rename or remove that server there, then send again",
+  codexServerClash: "The Codex config in the Codex home T3 uses already has a server named like one of this Bot's Jack tools (for example jack), and Codex would merge the two; rename or remove that server there, then send again",
+  codexServersForm: "The Codex config in the Codex home T3 uses keeps servers in a form Tentacles does not read; write each server as its own [mcp_servers.<name>] table, then send again",
   codexChanged: "Codex home config changed while trusting this Bot workspace; try again",
 });

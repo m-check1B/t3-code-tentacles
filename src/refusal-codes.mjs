@@ -11,6 +11,7 @@ export const REFUSALS = Object.freeze({
   "bot_connectors.new_talk": "This Talk can't take tools on this computer; start a new Talk for this Bot.",
   "bot_connectors.bot_folder": "A folder or file in this Bot's workspace on this computer is a link or the wrong type; make it a plain folder or file, then send again.",
   "bot_connectors.codex_home": "Trust this Bot's folder in Codex first, or check config.toml in the Codex home T3 uses, then send again.",
+  "bot_connectors.codex_servers": "In config.toml in the Codex home T3 uses, rename or remove the server named like one of this Bot's Jack tools, and write each server as its own [mcp_servers.<name>] table, then send again.",
   "bot_connectors.grok_home": "Trust this Bot's folder in Grok first, or check trusted_folders.toml and GROK_HOME in the Grok home T3 uses, then send again.",
   "bot_connectors.clock": "Check that this computer's clock is right, then send again.",
   "bot_connectors.admission": "Agent Jack and this computer disagree about the Bot's tools; update both, then send again.",
@@ -24,6 +25,7 @@ export const REFUSALS = Object.freeze({
 
 // Every BOT_CONNECTOR_REFUSALS key needs a code here; a test fails on a new key without one.
 export const BOT_CONNECTOR_CODES = Object.freeze({
+  labWithoutJackTools: "bot_connectors.lab_not_covered",
   oldTalk: "bot_connectors.new_talk",
   notOwnWorkspace: "bot_connectors.new_talk",
   notBotWorkspace: "bot_connectors.new_talk",
@@ -33,7 +35,8 @@ export const BOT_CONNECTOR_CODES = Object.freeze({
   codexHomeNotDirectory: "bot_connectors.codex_home",
   codexLinkMissing: "bot_connectors.codex_home",
   codexProjectsForm: "bot_connectors.codex_home",
-  codexServerClash: "bot_connectors.codex_home",
+  codexServerClash: "bot_connectors.codex_servers",
+  codexServersForm: "bot_connectors.codex_servers",
   codexChanged: "try_again",
   grokHomeNotDirectory: "bot_connectors.grok_home",
   grokHomeForm: "bot_connectors.grok_home",
@@ -47,7 +50,6 @@ export const BOT_CONNECTOR_CODES = Object.freeze({
 const BY_TEXT = new Map([
   ...Object.entries(BOT_CONNECTOR_CODES).map(([key, code]) => [BOT_CONNECTOR_REFUSALS[key], code]),
   ["Jack tools need this computer paired again from an updated Agent Jack (Settings > Local labs > pair this computer)", "bot_connectors.pair_again"],
-  ["Bot connectors are not supported on this lab", "bot_connectors.lab_not_covered"],
   ["Bot connector metadata requires mcpServers", "bot_connectors.admission"],
   ["Bot connectors are not an admitted list", "bot_connectors.admission"],
   ["Bot connectors require exact ownership", "bot_connectors.admission"],

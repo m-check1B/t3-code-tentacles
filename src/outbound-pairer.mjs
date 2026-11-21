@@ -7,7 +7,7 @@ import { privateModeOk } from "./platform.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { refusalOf } from "./refusal-codes.mjs";
 import { randomUUID } from "node:crypto";
-import { continueThread, doctor, originate, probeTalkCapabilities } from "./bridge.mjs";
+import { continueThread, doctor, labVersion, originate, probeTalkCapabilities } from "./bridge.mjs";
 import { requireFreshFlags, requireFreshProviderContext } from "./fresh-provider-context.mjs";
 import { observe, REPORT_MODEL_LABEL, threadReportFailure, threadReportStatus } from "./orchestrate.mjs";
 import { classifyFailure } from "./failure-codes.mjs";
@@ -329,20 +329,28 @@ export class LoopbackRuntimeAdapter {
         return planCodexTrust(codexHome, workspace);
       })()
         : instanceId === "grok" ? planGrokTrust(await grokHomeFor(this.client), workspace) : undefined;
-    if (servers !== undefined && prepared === true) checkBotConnectorPaths(workspace);
+    const opencode = instanceId === "opencode" && botConnectorProviders().includes("opencode");
+    if (servers !== undefined && prepared === true) checkBotConnectorPaths(workspace, { opencode });
     if (restartIdleSession && connectorsNeedRestart(workspace, servers)) await restartIdleSession();
-    const written = writeBotConnectors(workspace, prepared, servers, { codexTrust });
+    const written = writeBotConnectors(workspace, prepared, servers, { codexTrust, opencode });
     const marker = path.join(workspace, GROK_TRUST_MARKER);
     // The marker records the table Tentacles itself added, so only that one is ever removed.
-    if (instanceId === "grok" && codexTrust && servers?.length) writePrivate(marker, `${codexTrust.decidedAt}\n`);
+    // It also names the Grok home written to, so a later GROK_HOME change cannot strand the table.
+    if (instanceId === "grok" && codexTrust && servers?.length) writePrivate(marker, `${codexTrust.decidedAt}\n${path.dirname(codexTrust.file)}\n`);
     // B3 P3-5 on #110: a Grok Bot turn without tools drops that table again. With no
     // marker nothing outside the workspace is read. Best effort: never fails the turn.
     if (instanceId === "grok" && prepared === true && !servers?.length) {
-      let decidedAt = null;
-      try { if (fs.lstatSync(marker).isFile()) decidedAt = /^(\d{1,15})\n?$/.exec(fs.readFileSync(marker, "utf8"))?.[1] ?? null; } catch { /* no marker */ }
-      if (decidedAt) {
-        try { commitCodexTrust(planGrokUntrust(await grokHomeFor(this.client), workspace, decidedAt)); } catch { /* left as it is */ }
-        fs.rmSync(marker, { force: true });
+      let found = null;
+      try { if (fs.lstatSync(marker).isFile()) found = /^(\d{1,15})\n?(?:(\/[^\n]+)\n)?$/.exec(fs.readFileSync(marker, "utf8")); } catch { /* no marker */ }
+      if (found) {
+        const [, decidedAt, recorded] = found;
+        // B3 P3-2 on #110: the marker goes only once the table is gone or no longer
+        // Tentacles' own (plan null); on any throw it stays so the next turn tries again.
+        try {
+          const grokHome = recorded && path.isAbsolute(recorded) ? recorded : await grokHomeFor(this.client);
+          commitCodexTrust(planGrokUntrust(grokHome, workspace, decidedAt));
+          fs.rmSync(marker, { force: true });
+        } catch { /* kept for the next turn */ }
       }
     }
     return written;
@@ -401,6 +409,12 @@ export class LoopbackRuntimeAdapter {
     // then refuses its own connector turns as it did on jack.19. Learn still rides.
     const { jackMcpProxy, jackMcpSelf, ...unpinned } = BOT_CONNECTOR_CAPABILITIES;
     const advert = { ...(this.jackOrigin ? BOT_CONNECTOR_CAPABILITIES : unpinned), jackMcpProviders: botConnectorProviders() };
+    // Only T3's OpenCode 2 road (one shared server, per-request folder) is built;
+    // T3 runs OpenCode below 2 through another adapter.
+    const opencode = report.labs?.find(lab => lab.instanceId === "opencode");
+    if (!/^v?([2-9]|[1-9][0-9]+)\./.test(labVersion(opencode) ?? "")) {
+      advert.jackMcpProviders = Object.freeze(advert.jackMcpProviders.filter(id => id !== "opencode"));
+    }
     const result = { ...report, capabilities: capabilities?.talkTurnResult === "v1" ? { ...capabilities, ...advert } : capabilities };
     if (this.capabilityCache) {
       // KRA-7369: the connector inventory rides the lab-catalog answer, because

@@ -22,7 +22,9 @@ import {
 import { FAILURE_MESSAGES } from "../src/failure-codes.mjs";
 import { BOT_CONNECTOR_CAPABILITIES } from "../src/bot-connectors.mjs";
 
-const { jackMcpProxy: _proxy, jackMcpSelf: _self, ...UNPINNED_CAPABILITIES } = BOT_CONNECTOR_CAPABILITIES;
+const { jackMcpProxy: _proxy, jackMcpSelf: _self, ...UNPINNED_ALL } = BOT_CONNECTOR_CAPABILITIES;
+// These doctors report no OpenCode version, so opencode is not advertised.
+const UNPINNED_CAPABILITIES = { ...UNPINNED_ALL, jackMcpProviders: UNPINNED_ALL.jackMcpProviders.filter(id => id !== "opencode") };
 
 const PAIR_TOKEN = "pair-secret-never-print-123456";
 

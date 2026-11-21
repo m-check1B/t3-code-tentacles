@@ -28,8 +28,8 @@ export const JACK_SERVER_NAME = "jack";
 export const BOT_CONNECTOR_PROVIDERS = Object.freeze(["claudeAgent", "codex"]);
 // Labs whose road is built but not yet proven by a real turn (KRA-10869). They are
 // admitted and advertised only when the owner names them for a proof run:
-// TENTACLES_JACK_TOOLS_TRY=grok. A proven lab moves into BOT_CONNECTOR_PROVIDERS.
-export const UNPROVEN_BOT_CONNECTOR_PROVIDERS = Object.freeze(["grok"]);
+// TENTACLES_JACK_TOOLS_TRY=grok,opencode. A proven lab moves into BOT_CONNECTOR_PROVIDERS.
+export const UNPROVEN_BOT_CONNECTOR_PROVIDERS = Object.freeze(["grok", "opencode"]);
 export function botConnectorProviders(env = process.env) {
   const tried = String(env.TENTACLES_JACK_TOOLS_TRY ?? "").split(",").map(value => value.trim());
   return Object.freeze([...BOT_CONNECTOR_PROVIDERS, ...UNPROVEN_BOT_CONNECTOR_PROVIDERS.filter(id => tried.includes(id))]);
@@ -46,12 +46,16 @@ export const BOT_CONNECTOR_PARAM_KEYS = Object.freeze(["mcpServers", "mcpScope",
 export const MCP_FILE = ".mcp.json";
 export const CODEX_DIR = ".codex";
 export const CODEX_FILE = path.join(CODEX_DIR, "config.toml");
+// OpenCode loads `<directory>/opencode.json` for the folder T3 passes per request,
+// also on the one server T3 shares across threads, and re-reads it on the next turn.
+export const OPENCODE_FILE = "opencode.json";
 
 const NAME = /^[A-Za-z0-9_-]{1,100}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const MAX_LIFETIME_MS = 120_000;
 const MAX_SERVERS = 16;
-const BEARER = /^Bearer [\x21-\x7e]{1,16384}$/;
+// token68 only: OpenCode expands {env:...} and {file:...} inside config strings.
+const BEARER = /^Bearer [A-Za-z0-9._~+/-]{1,16384}=*$/;
 
 function exactKeys(value, keys) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -116,7 +120,7 @@ export function admitBotConnectors(params, { now = Date.now, jackOrigin = null, 
     throw new Error("Bot connector admission expired");
   }
   if (mcpServers.length && !botConnectorProviders(env).includes(rest.instanceId)) {
-    throw new Error("Bot connectors are not supported on this lab");
+    throw new Error(R.labWithoutJackTools);
   }
   // B3 P1-1 on #99: a token and a full-access lab go only to the Jack this
   // computer was paired with. The origin comes from the one-shot pair offer the
@@ -173,20 +177,20 @@ function realDirectory(directory) {
 /**
  * Read-only: refuses, before any session stop, every workspace shape the writer
  * would refuse later. `.claude` and `.codex` must be real directories (or
- * absent) and the three files must not be directories. The Bot can plant either.
+ * absent) and the four files must not be directories. The Bot can plant either.
  */
-export function checkBotConnectorPaths(workspace) {
+export function checkBotConnectorPaths(workspace, { opencode = false } = {}) {
   const kind = file => { try { return lstatSync(file); } catch (error) { if (error.code === "ENOENT") return null; throw error; } };
   for (const directory of [path.dirname(GUARD_FILE), CODEX_DIR]) {
     const info = kind(path.join(workspace, directory));
     if (info && (!info.isDirectory() || info.isSymbolicLink())) throw new Error(R.realDirectory);
   }
-  for (const file of [MCP_FILE, CODEX_FILE, GUARD_FILE, GROK_TRUST_MARKER]) {
+  for (const file of [MCP_FILE, CODEX_FILE, GUARD_FILE, GROK_TRUST_MARKER, ...(opencode ? [OPENCODE_FILE] : [])]) {
     if (kind(path.join(workspace, file))?.isDirectory()) throw new Error(R.fileIsDirectory);
   }
 }
 
-// Names match NAME and values are printable ASCII (URL.href, BEARER), so a JSON
+// Names match NAME and values are printable ASCII (URL.href, token68 BEARER), so a JSON
 // string is a valid TOML basic string.
 function codexToml(servers) {
   return servers.map(server => [
@@ -214,29 +218,47 @@ export function codexHomeFromSettings(settings, { home = os.homedir(), instanceI
 // KRA-10891: the server names the Codex home config defines. Codex deep-merges a
 // project `[mcp_servers.<name>]` into the home's table of the same name, so an
 // owner's keys (`command`, `bearer_token_env_var`, headers, `enabled`) would join a
-// Bot's entry. `inline` is set for `mcp_servers = {…}`, whose names are not parsed.
+// Bot's entry. `inline` is a top-level `mcp_servers = {…}` (names not parsed); `form`
+// is a quoted `mcp_servers` root or an escaped name, which Codex reads but this does not.
+// shortcut: a header inside a multi-line string still counts; Codex's own writer never emits one.
 export function codexServerNames(text) {
   const names = new Set();
-  let inline = false;
-  const key = String.raw`\s*("(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+)\s*`;
-  const header = new RegExp(`^\\[\\[?\\s*mcp_servers\\s*\\.${key}[\\].]`);
-  const dotted = new RegExp(`^mcp_servers\\s*\\.${key}[.=]`);
-  let table = null;
-  for (const line of String(text).split(/\r?\n/).map(value => value.trim())) {
-    if (/^\[\s*mcp_servers\s*\]/.test(line)) { table = "mcp_servers"; continue; }
-    if (line.startsWith("[")) table = null;
-    if (/^mcp_servers\s*=/.test(line)) inline = true;
-    const match = header.exec(line) ?? dotted.exec(line) ?? (table === "mcp_servers" ? new RegExp(`^${key}[.=]`).exec(line) : null);
-    if (match) names.add(match[1].replace(/^"(.*)"$|^'(.*)'$/, "$1$2"));
+  let inline = false, form = false, table = false, headerSeen = false;
+  const key = String.raw`("(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+)`;
+  const header = new RegExp(String.raw`^\[\s*${key}\s*(?:\.\s*${key}\s*)?[\].]`);
+  const keyLine = new RegExp(String.raw`^${key}\s*(?:\.\s*${key}\s*)?[.=]`);
+  const bare = value => value.replace(/^"(.*)"$|^'(.*)'$/s, "$1$2");
+  const add = name => { if (name.startsWith('"') && name.includes("\\")) form = true; else names.add(bare(name)); };
+  const isRoot = name => {
+    if (bare(name) !== "mcp_servers") return false;
+    if (name !== "mcp_servers") form = true; // a quoted root key
+    return true;
+  };
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line.startsWith("[")) {
+      headerSeen = true;
+      table = false;
+      if (line.startsWith("[[")) continue; // an array of tables is not a server
+      const match = header.exec(line);
+      if (match && isRoot(match[1])) { if (match[2]) add(match[2]); else table = true; }
+      continue;
+    }
+    const match = keyLine.exec(line);
+    if (!match) continue;
+    if (table) add(match[1]);
+    // Dotted and inline keys name a server only at the top level, before any header.
+    else if (!headerSeen && isRoot(match[1])) { if (match[2]) add(match[2]); else inline = true; }
   }
-  return { names, inline };
+  return { names, inline, form };
 }
 
 export function checkCodexServerNames(codexHome, names) {
   let text = "";
   try { text = readFileSync(path.join(codexHome, "config.toml"), "utf8"); } catch (error) { if (error.code !== "ENOENT") throw error; }
   const owner = codexServerNames(text);
-  if (owner.inline || names.some(name => owner.names.has(name))) throw new Error(R.codexServerClash);
+  if (names.some(name => owner.names.has(name))) throw new Error(R.codexServerClash);
+  if (owner.inline || owner.form) throw new Error(R.codexServersForm);
 }
 
 /**
@@ -365,11 +387,13 @@ export function planGrokTrust(grokHome, workspace, { now = Date.now } = {}) {
  */
 export const GROK_TRUST_MARKER = ".jack-grok-trust";
 export function planGrokUntrust(grokHome, workspace, decidedAt) {
-  const { file, text, mode } = readGrokTrust(grokHome, { create: false });
+  const { file, text, mode, tables } = readGrokTrust(grokHome, { create: false });
   if (file === undefined) return null;
   const lines = text.split("\n");
-  const at = lines.findIndex(line => line.trim() === `[folders.${JSON.stringify(workspace)}]`);
-  if (at < 0) return null;
+  const header = `[folders.${JSON.stringify(workspace)}]`;
+  const at = lines.findIndex(line => line.trim() === header);
+  // Exactly one such table with exactly two keys, or the file stays as it is.
+  if (at < 0 || lines.filter(line => line.trim() === header).length !== 1 || tables.get(header)?.keys !== 2) return null;
   const pair = lines.slice(at + 1, at + 3).map(line => line.trim()).sort();
   if (pair[0] !== `decided_at = ${decidedAt}` || pair[1] !== "trusted = true") return null;
   lines.splice(at, 3);
@@ -424,7 +448,7 @@ function listedServers(workspace) {
  * `codexTrust` is a planCodexTrust plan made before the restart; it wins over `codexHome`.
  * The caller restarts a live session first (connectorsNeedRestart), then writes.
  */
-export function writeBotConnectors(workspace, prepared, servers, { codexHome, codexTrust } = {}) {
+export function writeBotConnectors(workspace, prepared, servers, { codexHome, codexTrust, opencode = false } = {}) {
   if (servers === undefined) return false;
   if (prepared !== true) {
     if (servers.length) throw new Error(R.notBotWorkspace);
@@ -439,6 +463,11 @@ export function writeBotConnectors(workspace, prepared, servers, { codexHome, co
   writePrivate(path.join(workspace, MCP_FILE), `${JSON.stringify({ mcpServers }, null, 2)}\n`);
   realDirectory(path.join(workspace, CODEX_DIR));
   writePrivate(path.join(workspace, CODEX_FILE), `# Written by Tentacles before every Jack Bot turn.\n${codexToml(servers)}`);
+  // Unproven: only an admitted OpenCode turn reads or writes opencode.json.
+  if (opencode) writePrivate(path.join(workspace, OPENCODE_FILE), `${JSON.stringify({ $schema: "https://opencode.ai/config.json", mcp: Object.fromEntries(servers.map(server => [server.name, {
+    type: "remote", url: server.url, oauth: false,
+    ...(server.headers.length ? { headers: Object.fromEntries(server.headers.map(header => [header.name, header.value])) } : {}),
+  }])) }, null, 2)}\n`);
   // Claude Code asks before it loads a project `.mcp.json`; a Bot turn has
   // nobody to ask. Only this file, which is rewritten every turn, is approved.
   const settings = path.join(workspace, GUARD_FILE);
