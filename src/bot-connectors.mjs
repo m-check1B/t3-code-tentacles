@@ -11,7 +11,7 @@
  * workspace is trusted there once. T3 keeps a lab process alive across turns,
  * so the caller stops an idle live session before the files change.
  */
-import { closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, constants, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash, randomBytes } from "node:crypto";
@@ -192,27 +192,47 @@ export async function codexHomeFor(client, { home = os.homedir() } = {}) {
  * breaking the owner's file. The new file replaces the old one atomically, and
  * a concurrent writer between read and rename makes this refuse, not merge.
  */
-export function trustCodexWorkspace(codexHome, workspace) {
+export function planCodexTrust(codexHome, workspace) {
   mkdirSync(codexHome, { recursive: true, mode: 0o700 });
   if (!statSync(codexHome).isDirectory()) throw new Error("Codex home is not a directory");
   let file = path.join(codexHome, "config.toml");
   let text = "";
   let mode = 0o600;
+  let link = false;
+  try { link = lstatSync(file).isSymbolicLink(); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  if (link) {
+    // A dotfiles symlink keeps pointing at the owner's real file; a dangling one
+    // would be replaced by a plain file, so it refuses.
+    try { file = realpathSync(file); } catch (error) {
+      if (error.code === "ENOENT") throw new Error("Codex home config.toml links to a missing file; fix the link first");
+      throw error;
+    }
+  }
   try {
-    file = realpathSync(file); // a dotfiles symlink keeps pointing at the owner's real file
     text = readFileSync(file, "utf8");
     mode = statSync(file).mode & 0o777;
   } catch (error) { if (error.code !== "ENOENT") throw error; }
   const key = JSON.stringify(workspace);
-  const single = `'${workspace}'`;
+  const headers = [`[projects.${key}]`, `[projects.'${workspace}']`];
   const lines = text.split(/\r?\n/).map(line => line.trim());
-  if (lines.some(line => [`[projects.${key}]`, `[projects.${single}]`].includes(line)
-      || line.startsWith(`projects.${key}`) || line.startsWith(`projects.${single}`))) return false;
-  if (/^\s*projects\s*[=.]/m.test(text)) throw new Error("Codex home config keeps projects inline; trust this Bot workspace in Codex first");
+  if (lines.some(line => headers.some(header => line === header || (line.startsWith(header) && /^\s*#/.test(line.slice(header.length))))
+      || line.startsWith(`projects.${key}`) || line.startsWith(`projects.'${workspace}'`))) return null;
+  // A bare [projects] table, inline projects or dotted projects keys cannot take
+  // a second definition of this folder without breaking the owner's file.
+  if (/^\s*projects\s*[=.]/m.test(text) || /^\s*\[\s*projects\s*\]\s*(#.*)?$/m.test(text)) {
+    throw new Error("Codex home config keeps projects in a form Tentacles does not edit; trust this Bot workspace in Codex first");
+  }
   const next = `${text}${text && !text.endsWith("\n") ? "\n" : ""}\n# Agent Jack Bot workspace (Tentacles, KRA-10862)\n[projects.${key}]\ntrust_level = "trusted"\n`;
+  return { file, text, mode, next };
+}
+
+/** Writes a planCodexTrust plan; a concurrent change since the plan refuses. */
+export function commitCodexTrust(plan) {
+  if (!plan) return false;
+  const { file, text, mode, next } = plan;
   const temporary = `${file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
   const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW || 0), mode);
-  try { writeSync(fd, next); } catch (error) { closeSync(fd); unlinkSync(temporary); throw error; }
+  try { fchmodSync(fd, mode); writeSync(fd, next); } catch (error) { closeSync(fd); unlinkSync(temporary); throw error; }
   closeSync(fd);
   try {
     let now = "";
@@ -221,6 +241,10 @@ export function trustCodexWorkspace(codexHome, workspace) {
     renameSync(temporary, file);
   } catch (error) { unlinkSync(temporary); throw error; }
   return true;
+}
+
+export function trustCodexWorkspace(codexHome, workspace) {
+  return commitCodexTrust(planCodexTrust(codexHome, workspace));
 }
 
 function listedServers(workspace) {
@@ -233,15 +257,17 @@ function listedServers(workspace) {
  * private workspace, where the guard has already made `.claude` a real
  * directory. Anywhere else a non-empty list is refused and nothing is written.
  * `codexHome` is set for a Codex turn with a list; that home then trusts this workspace.
+ * `codexTrust` is a planCodexTrust plan made before the restart; it wins over `codexHome`.
  * The caller restarts a live session first (connectorsNeedRestart), then writes.
  */
-export function writeBotConnectors(workspace, prepared, servers, { codexHome } = {}) {
+export function writeBotConnectors(workspace, prepared, servers, { codexHome, codexTrust } = {}) {
   if (servers === undefined) return false;
   if (prepared !== true) {
     if (servers.length) throw new Error("Bot connectors need a Bot workspace");
     return false;
   }
-  if (codexHome && servers.length) trustCodexWorkspace(codexHome, workspace);
+  if (codexTrust !== undefined && servers.length) commitCodexTrust(codexTrust);
+  else if (codexHome && servers.length) trustCodexWorkspace(codexHome, workspace);
   const mcpServers = Object.fromEntries(servers.map(server => [server.name, {
     type: "http", url: server.url,
     ...(server.headers.length ? { headers: Object.fromEntries(server.headers.map(header => [header.name, header.value])) } : {}),

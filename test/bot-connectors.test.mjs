@@ -8,7 +8,7 @@ import { BOT_CONNECTOR_CAPABILITIES, PUBLIC_MCP_URL, codexHomeFor, trustCodexWor
 import { continueThread } from "../src/bridge.mjs";
 import { freshCapability } from "./helpers/fresh-context-wire.mjs";
 import { ensureLocalTalkWorkspace } from "../src/local-talk-workspace.mjs";
-import { LoopbackRuntimeAdapter, readPairOffer } from "../src/outbound-pairer.mjs";
+import { LoopbackRuntimeAdapter, OutboundPairer, readPairOffer } from "../src/outbound-pairer.mjs";
 
 const ORIGIN = "https://jack.example";
 const scope = { businessId: "11111111-1111-4111-8111-111111111111", seatId: "22222222-2222-4222-8222-222222222222", agentId: "33333333-3333-4333-8333-333333333333" };
@@ -232,9 +232,9 @@ test("the Codex trust entry respects the owner's file", async () => {
   // B3 P3-3: a dotted-key entry for the same folder is the owner's, other dotted or inline projects refuse.
   fs.writeFileSync(file, 'projects."/w".trust_level = "trusted"\n');
   assert.equal(trustCodexWorkspace(home, "/w"), false);
-  assert.throws(() => trustCodexWorkspace(home, "/v"), /projects inline/);
+  assert.throws(() => trustCodexWorkspace(home, "/v"), /projects in a form/);
   fs.writeFileSync(file, 'projects = { "/w" = { trust_level = "trusted" } }\n');
-  assert.throws(() => trustCodexWorkspace(home, "/v"), /projects inline/);
+  assert.throws(() => trustCodexWorkspace(home, "/v"), /projects in a form/);
   assert.equal(fs.readFileSync(file, "utf8"), 'projects = { "/w" = { trust_level = "trusted" } }\n');
   // A dotfiles symlink keeps pointing at the owner's real file.
   const real = path.join(home, "real.toml");
@@ -285,4 +285,62 @@ test("continue restarts an idle live session before a turn with tools, never a r
   await assert.rejects(continueThread(running.client, input, restart), /still answering/);
   assert.deepEqual(running.commands, []);
   assert.deepEqual(order, []); // nothing written for a refused turn
+});
+
+test("B3 P3-A/P3-B on #99: owner Codex files Tentacles cannot edit safely refuse, the owner's mode stays", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "codex-home-"));
+  const file = path.join(home, "config.toml");
+  // A bare [projects] table holding this folder as a sub-key: a second definition would break the file.
+  const bare = '[projects]\n"/w" = { trust_level = "untrusted" }\n';
+  fs.writeFileSync(file, bare);
+  assert.throws(() => trustCodexWorkspace(home, "/w"), /projects in a form/);
+  assert.equal(fs.readFileSync(file, "utf8"), bare);
+  // The owner's own header with a trailing comment is the owner's entry.
+  fs.writeFileSync(file, '[projects."/w"]  # mine\ntrust_level = "untrusted"\n');
+  assert.equal(trustCodexWorkspace(home, "/w"), false);
+  // A dangling dotfiles link refuses instead of being replaced by a plain file.
+  fs.rmSync(file);
+  fs.symlinkSync(path.join(home, "missing.toml"), file);
+  assert.throws(() => trustCodexWorkspace(home, "/w"), /links to a missing file/);
+  assert.equal(fs.lstatSync(file).isSymbolicLink(), true);
+  // A group-writable owner file keeps 0664 although the umask would drop it.
+  fs.rmSync(file);
+  fs.writeFileSync(file, 'model = "x"\n');
+  fs.chmodSync(file, 0o664);
+  const umask = process.umask(0o022);
+  try { assert.equal(trustCodexWorkspace(home, "/w"), true); } finally { process.umask(umask); }
+  assert.equal(fs.statSync(file).mode & 0o777, 0o664);
+});
+
+test("B3 P3-C on #99: run() pins the origin from the offer, and an offer without one resets it", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pair-run-"));
+  const runtime = { jackOrigin: "https://stale.example" };
+  const pairer = new OutboundPairer({ runtime, WebSocketImpl: class {}, pairStateFile: path.join(dir, "state.json") });
+  const run = async (extra) => {
+    const file = path.join(dir, `offer-${Math.random().toString(16).slice(2)}.json`);
+    // Already expired, so run() stops right after it reads the offer and pins.
+    fs.writeFileSync(file, JSON.stringify({ version: 1, endpoint: "wss://sphere.example/api/v1/jack/pairs/relay", pairToken: "p".repeat(40), expiresAt: new Date(Date.now() - 1000).toISOString(), ...extra }), { mode: 0o600 });
+    await assert.rejects(pairer.run({ pairFile: file, machineId: "11111111-2222-4333-8444-555555555555" }), /expired/);
+  };
+  await run({ jackOrigin: ORIGIN });
+  assert.equal(runtime.jackOrigin, ORIGIN);
+  await run({});
+  assert.equal(runtime.jackOrigin, null);
+});
+
+test("B3 P3-D on #99: a custody or Codex-home refusal comes before the stop", async () => {
+  const { home, workspace, stops, adapter } = setup();
+  await adapter.originate({ workspace, message: "hi", ...codex, ...connectors([learn]) });
+  const threadId = "11111111-2222-4333-8444-555555555555";
+  // The owner's Codex home config takes a form Tentacles refuses to edit.
+  fs.writeFileSync(path.join(home, ".codex", "config.toml"), 'projects = { "/x" = {} }\n');
+  fs.rmSync(path.join(workspace, ".codex"), { recursive: true });
+  await assert.rejects(adapter.continue({ threadId, message: "again", runtimeMode: "full-access", ...codex, ...connectors([learn]) }), /projects in a form/);
+  assert.deepEqual(stops, []);
+  // Workspace custody: a group-writable home refuses before any stop as well.
+  fs.chmodSync(home, 0o770);
+  try {
+    await assert.rejects(adapter.continue({ threadId, message: "again", runtimeMode: "full-access", ...claude, ...connectors([learn]) }), /custody/);
+  } finally { fs.chmodSync(home, 0o700); }
+  assert.deepEqual(stops, []);
 });
