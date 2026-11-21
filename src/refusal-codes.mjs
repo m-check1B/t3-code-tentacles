@@ -7,10 +7,11 @@ import { BOT_CONNECTOR_REFUSALS } from "./bot-connector-refusals.mjs";
 
 export const REFUSALS = Object.freeze({
   "bot_connectors.pair_again": "Pair this computer again from the Agent Jack you use, on its latest release (Settings > Local labs > pair this computer).",
-  "bot_connectors.lab_not_covered": "This Local lab can't use Agent Jack's tools yet; run this Bot on Local Claude Code, Local Codex, Local OpenCode or Server.",
+  "bot_connectors.lab_not_covered": "This Local lab can't use Agent Jack's tools yet; run this Bot on Local Claude Code, Local Codex or Server.",
   "bot_connectors.new_talk": "This Talk can't take tools on this computer; start a new Talk for this Bot.",
   "bot_connectors.bot_folder": "A folder or file in this Bot's workspace on this computer is a link or the wrong type; make it a plain folder or file, then send again.",
   "bot_connectors.codex_home": "Trust this Bot's folder in Codex first, or check config.toml in the Codex home T3 uses, then send again.",
+  "bot_connectors.grok_home": "Trust this Bot's folder in Grok first, or check trusted_folders.toml and GROK_HOME in the Grok home T3 uses, then send again.",
   "bot_connectors.clock": "Check that this computer's clock is right, then send again.",
   "bot_connectors.admission": "Agent Jack and this computer disagree about the Bot's tools; update both, then send again.",
   "talk.still_answering": "This Talk is still answering; send again once it finishes.",
@@ -34,6 +35,13 @@ export const BOT_CONNECTOR_CODES = Object.freeze({
   codexLinkMissing: "bot_connectors.codex_home",
   codexProjectsForm: "bot_connectors.codex_home",
   codexChanged: "try_again",
+  grokHomeNotDirectory: "bot_connectors.grok_home",
+  grokHomeForm: "bot_connectors.grok_home",
+  grokTrustLink: "bot_connectors.grok_home",
+  grokTrustForm: "bot_connectors.grok_home",
+  grokNotTrusted: "bot_connectors.grok_home",
+  grokGitRepo: "bot_connectors.lab_not_covered",
+  grokChanged: "try_again",
 });
 
 const BY_TEXT = new Map([

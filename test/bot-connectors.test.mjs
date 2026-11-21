@@ -4,7 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { BOT_CONNECTOR_CAPABILITIES, PUBLIC_MCP_URL, codexHomeFor, trustCodexWorkspace } from "../src/bot-connectors.mjs";
+import { spawnSync } from "node:child_process";
+import { BOT_CONNECTOR_CAPABILITIES, GROK_TRUST_MARKER, PUBLIC_MCP_URL, codexHomeFor, commitCodexTrust, grokHomeFor, planGrokTrust, planGrokUntrust, trustCodexWorkspace } from "../src/bot-connectors.mjs";
 import { continueThread, doctor } from "../src/bridge.mjs";
 import { freshCapability } from "./helpers/fresh-context-wire.mjs";
 import { ensureLocalTalkWorkspace } from "../src/local-talk-workspace.mjs";
@@ -20,6 +21,7 @@ const connectors = (servers, extra = {}) => ({ mcpServers: servers, mcpScope: sc
 const claude = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
 const codex = { instanceId: "codex", model: "gpt-6-astra" };
 const opencode = { instanceId: "opencode", model: "opencode-go/glm-5.3-flash" };
+const grok = { instanceId: "grok", model: "grok-4.7" };
 // Jack's paired_mcp_workspace for this scope.
 const seatDigest = (value = scope) => createHash("sha256").update(`${value.businessId}:${value.seatId}`).digest("hex");
 
@@ -87,7 +89,8 @@ test("a signed-in connector reaches the lab as Jack's proxy with the turn token,
   assert.deepEqual(fs.readdirSync(workspace).filter(name => name.endsWith(".tmp")), []);
 });
 
-test("B3 P3-1 on #109: a token with OpenCode substitution braces refuses before the stop, on every lab", async () => {
+test("B3 P3-1 on #109: a token with OpenCode substitution braces refuses before the stop, on every lab", async (t) => {
+  tryLab(t, "opencode");
   for (const lab of [claude, codex, opencode]) {
     for (const value of ["Bearer {env:OPENCODE_PASSWORD}", "Bearer X{file:~/.ssh/id_ed25519}Y", "Bearer a:b"]) {
       const { workspace, sent, stops, adapter } = setup();
@@ -222,6 +225,7 @@ test("doctor-status advertises exactly what Jack's gate reads, only with Local T
 });
 
 test("B3 P3-2 on #109: opencode is advertised only when T3 reports OpenCode 2 or newer", async (t) => {
+  tryLab(t, "opencode");
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bot-connectors-doctor-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const providersFor = async version => {
@@ -438,7 +442,6 @@ test("B3 P3-2 on #101: a planted .codex or .claude link, or a directory file tar
     [".claude", () => { fs.rmSync(path.join(workspace, ".claude"), { recursive: true }); fs.symlinkSync(elsewhere, path.join(workspace, ".claude")); }, /real directory|director/],
     // B3 P3-3 on #105: the custody guard refuses with a fixed text and leaves no temp file.
     [".claude/settings.local.json", () => { fs.mkdirSync(path.join(workspace, ".claude"), { recursive: true, mode: 0o700 }); fs.rmSync(path.join(workspace, ".claude/settings.local.json"), { force: true }); fs.mkdirSync(path.join(workspace, ".claude/settings.local.json")); }, { message: "Talk instruction guard file must not be a directory" }],
-    ["opencode.json", () => { fs.rmSync(path.join(workspace, "opencode.json"), { force: true }); fs.mkdirSync(path.join(workspace, "opencode.json")); }, /must not be a directory/],
     [".mcp.json", () => { fs.rmSync(path.join(workspace, ".mcp.json")); fs.mkdirSync(path.join(workspace, ".mcp.json")); }, /must not be a directory/],
   ];
   for (const [name, plant, message] of plants) {
@@ -500,7 +503,8 @@ test("B3 P2-1 on #102: an older Agent Jack's Bot with no plugins gives T3 the sa
   assert.equal(fs.existsSync(path.join(old, ".mcp.json")), false);
 });
 
-test("KRA-10869: Jack's own tools, a connector and the docs server reach Local OpenCode through the folder's opencode.json", async () => {
+test("KRA-10869: Jack's own tools, a connector and the docs server reach Local OpenCode through the folder's opencode.json", async (t) => {
+  tryLab(t, "opencode");
   const { home, workspace, sent, stops, adapter } = setup();
   const reply = await adapter.originate({ workspace, message: "weather?", ...opencode, ...connectors([jack, linear, learn]) });
   const file = path.join(workspace, "opencode.json");
@@ -521,6 +525,228 @@ test("KRA-10869: Jack's own tools, a connector and the docs server reach Local O
   // An empty list removes the tools.
   await adapter.continue({ threadId: "t1", message: "again", ...opencode, ...connectors([]) });
   assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")).mcp, {});
+  // A directory planted at opencode.json refuses before the stop.
+  const stopped = stops.length;
+  fs.rmSync(file);
+  fs.mkdirSync(file);
+  await assert.rejects(async () => adapter.continue({ threadId: "t1", message: "again", ...opencode, ...connectors([jack]) }), /must not be a directory/);
+  assert.equal(stops.length, stopped);
   assert.equal(JSON.stringify(sent).includes("synthetic-turn-token"), false);
   assert.equal(sent.some(params => Object.keys(params).some(key => key.startsWith("mcp"))), false);
+});
+
+test("KRA-10869: with the switch unset, OpenCode is main: no advert, a list refuses, and opencode.json is never read or written", async (t) => {
+  const before = process.env.TENTACLES_JACK_TOOLS_TRY;
+  delete process.env.TENTACLES_JACK_TOOLS_TRY;
+  t.after(() => { if (before !== undefined) process.env.TENTACLES_JACK_TOOLS_TRY = before; });
+  const { workspace, sent, stops, adapter } = setup();
+  let reads = 0;
+  const inner = adapter.client;
+  adapter.client = { getSettings: async () => { reads += 1; return inner.getSettings(); } };
+  await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...opencode, ...connectors([learn]) }), /cannot use Jack tools on Local/);
+  assert.deepEqual([sent, stops, reads], [[], [], 0]);
+  assert.equal(fs.existsSync(path.join(workspace, "opencode.json")), false);
+  // No list and an empty list: no opencode.json appears, and an existing one keeps its bytes and mode.
+  await adapter.originate({ workspace, message: "plain", ...opencode });
+  await adapter.continue({ threadId: "t1", message: "clear", ...opencode, ...connectors([]) });
+  assert.equal(fs.existsSync(path.join(workspace, "opencode.json")), false);
+  const file = path.join(workspace, "opencode.json");
+  const owner = '{"mcp":{"mine":{"type":"local","command":["x"]}}}\n';
+  fs.writeFileSync(file, owner, { mode: 0o644 });
+  await adapter.continue({ threadId: "t1", message: "clear", ...opencode, ...connectors([]) });
+  await adapter.continue({ threadId: "t1", message: "docs", ...claude, ...connectors([learn]) });
+  assert.equal(fs.readFileSync(file, "utf8"), owner);
+  assert.equal(fs.statSync(file).mode & 0o777, 0o644);
+  // A directory there is not even checked: main does not look at opencode.json.
+  fs.rmSync(file);
+  fs.mkdirSync(file);
+  await adapter.continue({ threadId: "t1", message: "docs", ...claude, ...connectors([learn]) });
+  assert.equal(reads, 0);
+  const report = { capabilities: { talkTurnResult: "v1" }, labs: [] };
+  const status = await new LoopbackRuntimeAdapter({ client: {}, doctorImpl: async () => report }).doctorStatus();
+  assert.deepEqual([...status.capabilities.jackMcpProviders], ["claudeAgent", "codex"]);
+});
+
+// Grok's road is unproven (no signed-in Grok on dev-workers): the owner opts in for a proof run.
+function tryGrok(t) { tryLab(t, "grok"); }
+function tryLab(t, lab) {
+  const before = process.env.TENTACLES_JACK_TOOLS_TRY;
+  process.env.TENTACLES_JACK_TOOLS_TRY = lab;
+  t.after(() => { if (before === undefined) delete process.env.TENTACLES_JACK_TOOLS_TRY; else process.env.TENTACLES_JACK_TOOLS_TRY = before; });
+}
+
+test("KRA-10869: Grok is unproven, so it is refused and not advertised unless the owner opts in for a proof", async (t) => {
+  const { workspace, sent, adapter } = setup();
+  const before = process.env.TENTACLES_JACK_TOOLS_TRY;
+  delete process.env.TENTACLES_JACK_TOOLS_TRY;
+  t.after(() => { if (before === undefined) delete process.env.TENTACLES_JACK_TOOLS_TRY; else process.env.TENTACLES_JACK_TOOLS_TRY = before; });
+  await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...grok, ...connectors([learn]) }), /cannot use Jack tools on Local/);
+  assert.deepEqual(sent, []);
+  assert.equal(fs.existsSync(path.join(workspace, ".mcp.json")), false);
+  const doctor = new LoopbackRuntimeAdapter({ client: {}, doctorImpl: async () => ({ capabilities: { talkTurnResult: "v1" } }) });
+  assert.deepEqual([...(await doctor.doctorStatus()).capabilities.jackMcpProviders], ["claudeAgent", "codex"]);
+  process.env.TENTACLES_JACK_TOOLS_TRY = "grok, cursor";
+  assert.deepEqual([...(await doctor.doctorStatus()).capabilities.jackMcpProviders], ["claudeAgent", "codex", "grok"]);
+});
+
+test("KRA-10869: Jack's tools reach Local Grok through the folder's .mcp.json once Grok trusts the Bot workspace", async (t) => {
+  tryGrok(t);
+  const { home, workspace, sent, stops, adapter, read } = setup();
+  const grokHome = path.join(home, "grok-home");
+  // T3's grok instance can move Grok's home through its environment list.
+  const settings = await adapter.client.getSettings();
+  settings.providerInstances.grok = { environment: [{ name: "GROK_HOME", value: grokHome }] };
+  const reply = await adapter.originate({ workspace, message: "weather?", ...grok, ...connectors([jack, linear, learn]) });
+  assert.deepEqual(Object.keys(read(".mcp.json").mcpServers), ["jack", "linear", "microsoft-learn"]);
+  const trustFile = path.join(grokHome, "trusted_folders.toml");
+  const trust = fs.readFileSync(trustFile, "utf8");
+  assert.match(trust, new RegExp(`^\\[folders\\.${JSON.stringify(workspace).replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}\\]\ntrusted = true\ndecided_at = \\d+\n$`));
+  assert.equal(fs.statSync(trustFile).mode & 0o777, 0o600);
+  assert.equal(trust.includes("synthetic-turn-token"), false);
+  assert.equal(fs.existsSync(path.join(home, ".grok")), false); // GROK_HOME wins over ~/.grok
+  assert.equal(JSON.stringify([reply, sent]).includes("synthetic-turn-token"), false);
+  // Once is enough; the next turn stops the idle session and keeps the trust file as it is.
+  await adapter.continue({ threadId: "t1", message: "again", ...grok, ...connectors([jack]) });
+  assert.equal(fs.readFileSync(trustFile, "utf8"), trust);
+  assert.deepEqual(stops, ["t1"]);
+  // A trust file Tentacles will not edit refuses before the stop, on a fresh workspace trust.
+  const kept = fs.readFileSync(trustFile, "utf8");
+  fs.writeFileSync(trustFile, "version = 2\n");
+  settings.providerInstances.grok.environment[0].value = path.join(home, "grok-home-2");
+  fs.mkdirSync(path.join(home, "grok-home-2"), { mode: 0o700 });
+  fs.writeFileSync(path.join(home, "grok-home-2", "trusted_folders.toml"), "version = 2\n");
+  await assert.rejects(adapter.continue({ threadId: "t1", message: "again", ...grok, ...connectors([jack]) }), /does not edit/);
+  assert.deepEqual(stops, ["t1"]);
+  fs.writeFileSync(trustFile, kept);
+  settings.providerInstances.grok.environment[0].value = grokHome;
+  await adapter.continue({ threadId: "t1", message: "again", ...grok, ...connectors([]) });
+  assert.deepEqual(read(".mcp.json").mcpServers, {});
+  // B3 P3-5 on #110: the empty list also drops the trust Tentacles added.
+  assert.equal(fs.readFileSync(trustFile, "utf8").includes(JSON.stringify(workspace)), false);
+  assert.equal(await grokHomeFor({ getSettings: async () => ({}) }, { home: "/h" }), "/h/.grok");
+});
+
+test("B3 P3-2/P3-5 on #110: an untrusted or git-repo Grok workspace refuses before the stop; a turn without tools drops the trust", async (t) => {
+  tryGrok(t);
+  const { home, workspace, stops, sent, adapter } = setup();
+  const grokHome = path.join(home, "grok-home");
+  const settings = await adapter.client.getSettings();
+  settings.providerInstances.grok = { environment: [{ name: "GROK_HOME", value: grokHome }] };
+  await adapter.originate({ workspace, message: "hi", ...grok, ...connectors([learn]) });
+  const trustFile = path.join(grokHome, "trusted_folders.toml");
+  const ours = fs.readFileSync(trustFile, "utf8");
+  // The owner's own table for another folder, and a turn with no fields at all.
+  const owner = '[folders."/owner"]\ntrusted = true\ndecided_at = 7\n';
+  fs.writeFileSync(trustFile, owner + ours);
+  await adapter.continue({ threadId: "t1", message: "plain", ...grok });
+  assert.equal(fs.readFileSync(trustFile, "utf8"), owner);
+  assert.equal(sent.length, 2);
+  // An owner's explicit "no" for this folder refuses with the fix, before any stop.
+  fs.writeFileSync(trustFile, `${owner}[folders.${JSON.stringify(workspace)}]\ntrusted = false\ndecided_at = 9\n`);
+  const refused = fs.readFileSync(trustFile, "utf8");
+  await assert.rejects(async () => adapter.continue({ threadId: "t1", message: "again", ...grok, ...connectors([learn]) }), /Grok does not trust this Bot workspace/);
+  assert.deepEqual(stops, []);
+  // A turn without tools leaves the owner's "no" as it is.
+  await adapter.continue({ threadId: "t1", message: "plain", ...grok });
+  assert.equal(fs.readFileSync(trustFile, "utf8"), refused);
+  // A Talk root inside a git repository: Grok decides at the repository root, so refuse.
+  fs.writeFileSync(trustFile, owner);
+  fs.mkdirSync(path.join(home, ".git"));
+  await assert.rejects(async () => adapter.continue({ threadId: "t1", message: "again", ...grok, ...connectors([learn]) }), /inside a git repository/);
+  assert.deepEqual(stops, []);
+  assert.equal(fs.readFileSync(trustFile, "utf8"), owner);
+});
+
+test("delta P2-1 on #110: switched off and with no marker, a Grok turn reads nothing outside the Bot workspace", async (t) => {
+  const before = process.env.TENTACLES_JACK_TOOLS_TRY;
+  delete process.env.TENTACLES_JACK_TOOLS_TRY;
+  t.after(() => { if (before !== undefined) process.env.TENTACLES_JACK_TOOLS_TRY = before; });
+  const { home, workspace, adapter } = setup();
+  const grokHome = path.join(home, "grok-home");
+  fs.mkdirSync(grokHome, { mode: 0o700 });
+  const trustFile = path.join(grokHome, "trusted_folders.toml");
+  // The owner trusted this folder in Grok itself: the same three lines Tentacles would write.
+  const owner = `[folders.${JSON.stringify(workspace)}]\ntrusted = true\ndecided_at = 1795247300\n`;
+  fs.writeFileSync(trustFile, owner, { mode: 0o600 });
+  let reads = 0;
+  const settings = { providerInstances: { grok: { environment: [{ name: "GROK_HOME", value: grokHome }] } } };
+  adapter.client = { getSettings: async () => { reads += 1; return settings; } };
+  await adapter.originate({ workspace, message: "plain", ...grok });
+  await adapter.continue({ threadId: "t1", message: "plain", ...grok });
+  await adapter.continue({ threadId: "t1", message: "clear", ...grok, ...connectors([]) });
+  assert.equal(reads, 0);
+  assert.equal(fs.readFileSync(trustFile, "utf8"), owner);
+  // A marker whose decided_at is not the table's removes nothing either.
+  fs.writeFileSync(path.join(workspace, GROK_TRUST_MARKER), "5\n", { mode: 0o600 });
+  await adapter.continue({ threadId: "t1", message: "plain", ...grok });
+  assert.equal(fs.readFileSync(trustFile, "utf8"), owner);
+  assert.equal(fs.existsSync(path.join(workspace, GROK_TRUST_MARKER)), false); // a stale marker is dropped
+});
+
+test("delta P2-2 on #110: the untrust removes only the header plus exactly its two keys, and the file stays valid TOML", (t) => {
+  const python = spawnSync("python3", ["-c", "import tomllib"]);
+  if (python.status !== 0) { t.skip("python3 with tomllib is not available to parse the result"); return; }
+  const parse = text => spawnSync("python3", ["-c", "import sys, tomllib; tomllib.loads(sys.stdin.read())"], { input: text }).status === 0;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "grok-untrust-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const file = path.join(home, "trusted_folders.toml");
+  const above = '[folders."/a"]\ntrusted = false\ndecided_at = 1\n';
+  for (const [middle, removed] of [["", true], ["\n", false], ["# note\n", false]]) {
+    for (const keys of ["trusted = true\ndecided_at = 5\n", "decided_at = 5\ntrusted = true\n"]) {
+      const text = `${above}[folders."/w"]\n${middle}${keys}`;
+      fs.writeFileSync(file, text);
+      const plan = planGrokUntrust(home, "/w", "5");
+      if (!removed) { assert.equal(plan, null, JSON.stringify(middle)); continue; }
+      assert.equal(commitCodexTrust(plan), true);
+      const after = fs.readFileSync(file, "utf8");
+      assert.equal(after, above);
+      assert.ok(parse(after));
+    }
+  }
+  fs.writeFileSync(file, `${above}[folders."/w"]\ntrusted = true\ndecided_at = 6\n`);
+  assert.equal(planGrokUntrust(home, "/w", "5"), null); // not the decided_at Tentacles wrote
+  assert.equal(planGrokUntrust(path.join(home, "missing"), "/w", "5"), null);
+});
+
+test("B3 P3-1/P3-3 on #110: the Grok home is T3's last GROK_HOME, absolute only, and a bad one refuses with a fixed text", async () => {
+  const client = values => ({ getSettings: async () => ({ providerInstances: { grok: { environment: values.map(value => ({ name: "GROK_HOME", value })) } } }) });
+  assert.equal(await grokHomeFor(client(["/first", "/last"]), { home: "/h" }), "/last");
+  assert.equal(await grokHomeFor(client(["~/g"]), { home: "/h" }), "/h/g");
+  assert.equal(await grokHomeFor(client([""]), { home: "/h" }), "/h/.grok");
+  for (const bad of ["relative/g", " /padded", "/padded ", 42, null]) {
+    await assert.rejects(grokHomeFor(client([bad]), { home: "/h" }), /^Error: Grok home in T3's grok settings is not an absolute path/, String(bad));
+  }
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "grok-home-bad-"));
+  fs.writeFileSync(path.join(home, "file"), "");
+  fs.symlinkSync(path.join(home, "missing"), path.join(home, "dangling"));
+  for (const name of ["file", "dangling"]) {
+    assert.throws(() => planGrokTrust(path.join(home, name), "/w"), /^Error: Grok home is not a directory$/, name);
+  }
+  // A concurrent change names Grok, not Codex.
+  const grokHome = path.join(home, "g");
+  const plan = planGrokTrust(grokHome, "/w");
+  fs.writeFileSync(path.join(grokHome, "trusted_folders.toml"), "# changed\n");
+  assert.throws(() => commitCodexTrust(plan), /^Error: Grok trusted_folders\.toml changed while trusting this Bot workspace; try again$/);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test("KRA-10869: the Grok trust entry respects the owner's file and refuses forms Grok does not write", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "grok-home-"));
+  const file = path.join(home, "trusted_folders.toml");
+  const own = '[folders."/a"]\ntrusted = true\ndecided_at = 1795247300\n\n[folders."/w"]\ntrusted = false\ndecided_at = 1\n';
+  fs.writeFileSync(file, own, { mode: 0o640 });
+  // B3 P3-2 on #110: the owner's "no" for this folder refuses rather than running without tools.
+  assert.throws(() => planGrokTrust(home, "/w"), /^Error: Grok does not trust this Bot workspace; trust it in Grok first, or run this Bot on Server$/);
+  assert.equal(planGrokTrust(home, "/a"), null); // the owner's trust for this folder stays as it is
+  assert.equal(commitCodexTrust(planGrokTrust(home, "/v", { now: () => 5000 })), true);
+  assert.equal(fs.readFileSync(file, "utf8"), `${own}[folders."/v"]\ntrusted = true\ndecided_at = 5\n`);
+  assert.equal(fs.statSync(file).mode & 0o777, 0o640);
+  for (const text of ['version = 1\n', '[ folders."/w" ]\ntrusted = true\n', '[folders."\\u002fw"]\ntrusted = true\n', '[[folders]]\npath = "/w"\n', '[folders."/a"]\ntrusted = "yes"\n', '[other]\nx = 1\n']) {
+    fs.writeFileSync(file, text);
+    assert.throws(() => planGrokTrust(home, "/w"), /Grok trusted_folders\.toml holds a form Tentacles does not edit/, text);
+    assert.equal(fs.readFileSync(file, "utf8"), text);
+  }
+  fs.rmSync(file);
+  fs.symlinkSync(path.join(home, "elsewhere.toml"), file);
+  assert.throws(() => planGrokTrust(home, "/w"), /is a link/);
 });

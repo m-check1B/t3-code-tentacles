@@ -1,7 +1,8 @@
 import fs from "node:fs";
+import path from "node:path";
 import { ensureLocalTalkWorkspace } from "./local-talk-workspace.mjs";
 import { BOT_CONNECTOR_REFUSALS } from "./bot-connector-refusals.mjs";
-import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, checkBotConnectorPaths, codexHomeFor, connectorsNeedRestart, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors } from "./bot-connectors.mjs";
+import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, botConnectorProviders, checkBotConnectorPaths, codexHomeFor, commitCodexTrust, connectorsNeedRestart, GROK_TRUST_MARKER, grokHomeFor, planGrokTrust, planGrokUntrust, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors, writePrivate } from "./bot-connectors.mjs";
 import { privateModeOk } from "./platform.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { refusalOf } from "./refusal-codes.mjs";
@@ -320,11 +321,28 @@ export class LoopbackRuntimeAdapter {
     // Idempotent and leaves .mcp.json alone, so it cannot change the restart decision.
     const prepared = await this.prepareTalkWorkspaceImpl(workspace);
     if (servers?.length && prepared !== true) throw new Error(BOT_CONNECTOR_REFUSALS.notBotWorkspace);
-    const codexTrust = servers?.length && instanceId === "codex"
-      ? planCodexTrust(await codexHomeFor(this.client), workspace) : undefined;
-    if (servers !== undefined && prepared === true) checkBotConnectorPaths(workspace);
+    // The lab's own folder-trust table (Codex or Grok), planned before the stop.
+    const codexTrust = !servers?.length ? undefined
+      : instanceId === "codex" ? planCodexTrust(await codexHomeFor(this.client), workspace)
+        : instanceId === "grok" ? planGrokTrust(await grokHomeFor(this.client), workspace) : undefined;
+    const opencode = instanceId === "opencode" && botConnectorProviders().includes("opencode");
+    if (servers !== undefined && prepared === true) checkBotConnectorPaths(workspace, { opencode });
     if (restartIdleSession && connectorsNeedRestart(workspace, servers)) await restartIdleSession();
-    return writeBotConnectors(workspace, prepared, servers, { codexTrust });
+    const written = writeBotConnectors(workspace, prepared, servers, { codexTrust, opencode });
+    const marker = path.join(workspace, GROK_TRUST_MARKER);
+    // The marker records the table Tentacles itself added, so only that one is ever removed.
+    if (instanceId === "grok" && codexTrust && servers?.length) writePrivate(marker, `${codexTrust.decidedAt}\n`);
+    // B3 P3-5 on #110: a Grok Bot turn without tools drops that table again. With no
+    // marker nothing outside the workspace is read. Best effort: never fails the turn.
+    if (instanceId === "grok" && prepared === true && !servers?.length) {
+      let decidedAt = null;
+      try { if (fs.lstatSync(marker).isFile()) decidedAt = /^(\d{1,15})\n?$/.exec(fs.readFileSync(marker, "utf8"))?.[1] ?? null; } catch { /* no marker */ }
+      if (decidedAt) {
+        try { commitCodexTrust(planGrokUntrust(await grokHomeFor(this.client), workspace, decidedAt)); } catch { /* left as it is */ }
+        fs.rmSync(marker, { force: true });
+      }
+    }
+    return written;
   }
 
   continue(params) {
@@ -379,8 +397,8 @@ export class LoopbackRuntimeAdapter {
     // pairing without one (an older Agent Jack) does not invite them: that Agent Jack
     // then refuses its own connector turns as it did on jack.19. Learn still rides.
     const { jackMcpProxy, jackMcpSelf, ...unpinned } = BOT_CONNECTOR_CAPABILITIES;
-    const advert = { ...(this.jackOrigin ? BOT_CONNECTOR_CAPABILITIES : unpinned) };
-    // Only T3's OpenCode 2 road (one shared server, per-request folder) is proven;
+    const advert = { ...(this.jackOrigin ? BOT_CONNECTOR_CAPABILITIES : unpinned), jackMcpProviders: botConnectorProviders() };
+    // Only T3's OpenCode 2 road (one shared server, per-request folder) is built;
     // T3 runs OpenCode below 2 through another adapter.
     const opencode = report.labs?.find(lab => lab.instanceId === "opencode");
     if (!/^v?([2-9]|[1-9][0-9]+)\./.test(labVersion(opencode) ?? "")) {
