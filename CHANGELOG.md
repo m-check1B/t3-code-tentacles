@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- KRA-10870 (part 1): when a paired turn is refused on this computer, the pairer logs one `rpc.refused` event with a typed code and its plain fix, for example `bot_connectors.codex_home`: "Trust this Bot's folder in Codex first…". Codes are given only to known fixed refusal texts (every Bot connector set-up text has one, a Talk started before plugins worked gets `bot_connectors.new_talk`) and to T3 Code not running (`t3.unreachable`: "Start T3 Code (Beta) on this computer, then send again."); anything else is `unknown`, and the error's own text, paths and tokens are never logged. The relay reply is unchanged (`computer.unavailable`), because Sphere and today's Agent Jack accept only that. Sending the code to Agent Jack needs Sphere and Agent Jack changes (part 2).
+
 ## [0.5.0-jack.20] - 2026-11-21
 
 In short: with the Agent Jack released today, an Agent Jack Bot on Local · Claude Code or Local · Codex can use the public Microsoft Learn docs server in a new Talk (a Talk you started before updating refuses a turn that uses the docs server, which today's Agent Jack shows as the computer being unavailable, so start a new Talk) on the official, unmodified T3 Code (Beta), and turns without tools work as before. Agent Jack's own tools (such as web search) and the connectors you granted a Bot need the coming Agent Jack release, which pins its address when it pairs; after updating Agent Jack, pair this computer again. Until then, Agent Jack itself refuses a Local Claude Code or Local Codex turn of a Bot with a granted connector, as it did before, and says to run it on Server or turn the plugin off for Local. Tentacles reports each tool-server call and web search the Bot makes to Agent Jack by name only (for example "Used tool: web.search (jack)"), never its input or output; the lab's built-in tools, such as reading or editing files, are not reported. Local · Antigravity does not get Jack's tools yet, but `doctor` now names the fix for the Antigravity runtime repairs T3 reports.
