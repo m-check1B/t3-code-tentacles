@@ -335,11 +335,13 @@ export function planGrokTrust(grokHome, workspace, { now = Date.now } = {}) {
  */
 export const GROK_TRUST_MARKER = ".jack-grok-trust";
 export function planGrokUntrust(grokHome, workspace, decidedAt) {
-  const { file, text, mode } = readGrokTrust(grokHome, { create: false });
+  const { file, text, mode, tables } = readGrokTrust(grokHome, { create: false });
   if (file === undefined) return null;
   const lines = text.split("\n");
-  const at = lines.findIndex(line => line.trim() === `[folders.${JSON.stringify(workspace)}]`);
-  if (at < 0) return null;
+  const header = `[folders.${JSON.stringify(workspace)}]`;
+  const at = lines.findIndex(line => line.trim() === header);
+  // Exactly one such table with exactly two keys, or the file stays as it is.
+  if (at < 0 || lines.filter(line => line.trim() === header).length !== 1 || tables.get(header)?.keys !== 2) return null;
   const pair = lines.slice(at + 1, at + 3).map(line => line.trim()).sort();
   if (pair[0] !== `decided_at = ${decidedAt}` || pair[1] !== "trusted = true") return null;
   lines.splice(at, 3);
