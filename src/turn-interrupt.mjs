@@ -6,6 +6,7 @@
 // active on the thread right now. The caller serializes interrupt with continue
 // per thread, so a newer turn B cannot start between the check and dispatch.
 import { threadTurnInterrupt } from "./orchestrate.mjs";
+import { REMOTE_WORKSPACE_REFUSAL } from "./local-talk-workspace.mjs";
 import { T3HttpError } from "./t3-client.mjs";
 
 export const TURN_INTERRUPT_CONTRACT = "turn-interrupt-v1";
@@ -81,6 +82,7 @@ export class TurnInterrupter {
     readThread,
     dispatch,
     withThreadLock,
+    assertThreadInScope = null,
     startWaitMs = 4_000,
     terminalWaitMs = 14_000,
     // Whole-request bound, including the per-thread lock wait. It must stay
@@ -93,6 +95,7 @@ export class TurnInterrupter {
     this.readThread = readThread;
     this.dispatch = dispatch;
     this.withThreadLock = withThreadLock;
+    this.assertThreadInScope = assertThreadInScope;
     this.startWaitMs = startWaitMs;
     this.terminalWaitMs = terminalWaitMs;
     this.totalBudgetMs = totalBudgetMs;
@@ -115,7 +118,13 @@ export class TurnInterrupter {
     const entry = { tuple: tupleKey(input), promise: null, result: null };
     const deadlineMs = Date.now() + this.totalBudgetMs;
     entry.promise = this.withThreadLock(input.threadId, () => this.interruptExact(input, deadlineMs))
-      .catch(() => interruptEnvelope(input, "unavailable"))
+      .catch((error) => {
+        if (error?.message === REMOTE_WORKSPACE_REFUSAL) {
+          this.requests.delete(input.requestId);
+          throw error;
+        }
+        return interruptEnvelope(input, "unavailable");
+      })
       .then((result) => {
         entry.promise = null;
         if (result.status === "unavailable") this.requests.delete(input.requestId);
@@ -156,6 +165,7 @@ export class TurnInterrupter {
   async interruptExact(input, deadlineMs = Date.now() + this.totalBudgetMs) {
     const until = (ms) => Math.min(deadlineMs, Date.now() + ms);
     if (Date.now() >= deadlineMs) return interruptEnvelope(input, "unavailable");
+    if (this.assertThreadInScope) await withinBudget(deadlineMs, () => this.assertThreadInScope(input.threadId));
     let result = await this.pollUntil(input, until(this.startWaitMs),
       (current) => TERMINAL_STATES.has(current.state) || current.turnId !== null, deadlineMs);
     if (!result) return interruptEnvelope(input, "target_mismatch");

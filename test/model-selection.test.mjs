@@ -979,13 +979,13 @@ test("act thread.continue/thread.restart apply the same retained-seat contract",
 
 test("the pair relay continue inherits retained-seat pinning through continueThread", async () => {
   const client = retainedThreadClient({ instanceId: "grok", model: "grok-4.7" });
-  const runtime = new LoopbackRuntimeAdapter({ client });
+  const runtime = new LoopbackRuntimeAdapter({ client, allowedWorkspaces: ["/synthetic-hire"] });
   await runtime.continue({ threadId: "retained", message: "go", messageId: "m1" });
   assert.deepEqual(client.commands[0].modelSelection, { instanceId: "grok", model: "grok-4.7", options: [{ id: "reasoningEffort", value: "high" }] });
 
   const prohibited = retainedThreadClient({ instanceId: "grok", model: "grok-4.7", options: [{ id: "reasoningEffort", value: "xhigh" }] });
   await assert.rejects(
-    new LoopbackRuntimeAdapter({ client: prohibited }).continue({ threadId: "retained", message: "go", messageId: "m1" }),
+    new LoopbackRuntimeAdapter({ client: prohibited, allowedWorkspaces: ["/synthetic-hire"] }).continue({ threadId: "retained", message: "go", messageId: "m1" }),
     /above high is Founder-manual only/,
   );
   assert.equal(prohibited.commands.length, 0);
@@ -1063,14 +1063,14 @@ test("library and relay continue refuse partial selections with zero dispatch", 
 
 test("relay continue keeps explicit and all-omitted selections working", async () => {
   const explicit = retainedThreadClient(structuredClone(RETAINED_GROK));
-  await new LoopbackRuntimeAdapter({ client: explicit }).continue({
+  await new LoopbackRuntimeAdapter({ client: explicit, allowedWorkspaces: ["/synthetic-hire"] }).continue({
     threadId: "retained", message: "go", messageId: "m1", instanceId: "codex", model: "gpt-6-astra", budget: "low",
   });
   assert.deepEqual(explicit.commands[0].modelSelection, { instanceId: "codex", model: "gpt-6-astra", options: [{ id: "reasoningEffort", value: "low" }] });
   assert.equal(explicit.commands[0].runtimeMode, "full-access");
 
   const retained = retainedThreadClient(structuredClone(RETAINED_GROK));
-  const runtime = new LoopbackRuntimeAdapter({ client: retained });
+  const runtime = new LoopbackRuntimeAdapter({ client: retained, allowedWorkspaces: ["/synthetic-hire"] });
   await runtime.continue({ threadId: "retained", message: "go", messageId: "m1" });
   await runtime.continue({ threadId: "retained", message: "go", messageId: "m1" });
   assert.equal(retained.commands.length, 1);

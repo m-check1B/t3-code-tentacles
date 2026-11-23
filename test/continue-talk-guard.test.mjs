@@ -46,7 +46,7 @@ function fakeT3(workspaceRoot, onDispatch, { snapshot, thread = {}, messages = [
 }
 
 function adapter(client, home) {
-  return new LoopbackRuntimeAdapter({ client, continueImpl: continueThread,
+  return new LoopbackRuntimeAdapter({ client, workspaceHome: home, continueImpl: continueThread,
     prepareTalkWorkspaceImpl: (workspace) => ensureLocalTalkWorkspace(workspace, { home }) });
 }
 
@@ -90,22 +90,30 @@ test("a symlinked .claude aborts the continue before T3 and writes nothing outsi
 test("a malformed path under the private root is refused before T3", async (t) => {
   const { home, talk } = fixture(t);
   const client = fakeT3(path.join(path.dirname(talk), "not-an-agent"));
-  await assert.rejects(adapter(client, home).continue(input), /custody or scope refused/);
+  await assert.rejects(adapter(client, home).continue(input), /outside the Bot workspace root|custody or scope refused/);
   assert.equal(client.commands.length, 0);
 });
 
-test("a hire workspace gets no guard on continue", async (t) => {
+test("an allowlisted hire workspace gets no guard on continue; unallowlisted is refused", async (t) => {
   const { home } = fixture(t);
   const hire = path.join(home, "github", "current", "products", "repo");
   fs.mkdirSync(hire, { recursive: true });
   const client = fakeT3(hire);
-  await adapter(client, home).continue(input);
+  await assert.rejects(adapter(client, home).continue(input), /outside the Bot workspace root/);
+  assert.equal(client.commands.length, 0);
+  const allowlisted = new LoopbackRuntimeAdapter({
+    client,
+    continueImpl: continueThread,
+    prepareTalkWorkspaceImpl: (workspace) => ensureLocalTalkWorkspace(workspace, { home }),
+    allowedWorkspaces: [hire],
+  });
+  await allowlisted.continue(input);
   assert.equal(client.commands.length, 1);
   assert.equal(fs.existsSync(path.join(hire, ".claude")), false);
 });
 
-// PR 45 B3: every path that cannot resolve the thread's workspace fails closed before T3.
-const unresolved = /could not be resolved/;
+// PR 45 B3 / KRA-10939: every path that cannot resolve the thread's workspace fails closed before T3.
+const unresolved = /could not be resolved|outside the Bot workspace root/;
 for (const [name, snapshot, refusal] of [
   // The read's own error surfaces, so a swallowed read is visible.
   ["a failed snapshot read", async () => { throw new Error("synthetic snapshot failure"); }, /synthetic snapshot failure/],
@@ -207,11 +215,11 @@ test("a rejecting async workspace hook rejects the continue and dispatches nothi
   assert.equal(client.commands.length, 0);
 });
 
-test("an idempotent replay reads no snapshot, writes no guard and dispatches nothing", async (t) => {
+test("an idempotent replay checks scope, writes no guard and dispatches nothing", async (t) => {
   const { home, talk } = fixture(t);
   const client = fakeT3(talk, undefined, { messages: [{ id: "replayed", text: "again" }] });
   await adapter(client, home).continue({ ...input, messageId: "replayed" });
-  assert.deepEqual(client.reads, []);
+  assert.deepEqual(client.reads, ["snapshot"]);
   assert.equal(client.commands.length, 0);
   assert.equal(fs.existsSync(guardOf(talk)), false);
 });

@@ -17,9 +17,9 @@ const blockedReport = (session, extra = {}) =>
 
 test("paired failure keeps the typed code and redacted session detail together", async () => {
   const input = { threadId: "thread", messageId: "message", turnCommandId: "command" };
-  const adapter = new LoopbackRuntimeAdapter({ client: {
+  const adapter = new LoopbackRuntimeAdapter({ allowedWorkspaces: ["/synthetic/bot-workspace"], client: {
     request: async () => ({ ...input, state: "failed", turnId: "turn", assistantMessageId: null, instanceId: "codex", model: "fixture", effort: "high", outputText: null, error: "usage limit reached" }),
-    thread: async () => ({ thread: { id: "thread", session: { lastError: "usage limit reached token=FAKE_SECRET_123" } } }),
+    thread: async () => ({ thread: { id: "thread", worktreePath: "/synthetic/bot-workspace", session: { lastError: "usage limit reached token=FAKE_SECRET_123" } } }),
   } });
   const result = await adapter.turnResult(input);
   assert.equal(result.code, "usage_limit");
@@ -29,8 +29,10 @@ test("paired failure keeps the typed code and redacted session detail together",
 
 function turnResultAdapter(upstream) {
   const input = { threadId: "thread", messageId: "message", turnCommandId: "command" };
-  const adapter = new LoopbackRuntimeAdapter({ client: { request: async () => ({ ...input, turnId: "turn", assistantMessageId: null,
-    instanceId: "codex", model: "gpt-5.6-sol", effort: "high", outputText: null, ...upstream }) } });
+  const adapter = new LoopbackRuntimeAdapter({ allowedWorkspaces: ["/synthetic/bot-workspace"], client: {
+    thread: async (id) => ({ thread: { id, worktreePath: "/synthetic/bot-workspace" } }),
+    request: async () => ({ ...input, turnId: "turn", assistantMessageId: null,
+      instanceId: "codex", model: "gpt-5.6-sol", effort: "high", outputText: null, ...upstream }) } });
   return () => adapter.turnResult(input);
 }
 
@@ -78,7 +80,8 @@ test("report maps each code from existing state, status and error signals", () =
 test("the relay seats report carries the same code for blocked threads", async () => {
   const adapter = new LoopbackRuntimeAdapter({
     client: {},
-    observeImpl: async () => ({ activeTurns: [], projects: [], threads: [
+    allowedWorkspaces: ["/synthetic/bot-workspace"],
+    observeImpl: async () => ({ activeTurns: [], projects: [{ id: "p1", workspaceRoot: "/synthetic/bot-workspace" }], threads: [
       { id: "t1", projectId: "p1", session: { status: "error", lastError: providerBody("usage limit reached") } },
       { id: "t2", projectId: "p1", session: { status: "ready", lastError: null } },
     ] }),

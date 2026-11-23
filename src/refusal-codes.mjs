@@ -21,6 +21,7 @@ export const REFUSALS = Object.freeze({
   "bot_connectors.admission": "Agent Jack and this computer disagree about the Bot's tools; update both, then send again.",
   "talk.still_answering": "This Talk is still answering; send again once it finishes.",
   "talk.workspace_custody": "This computer refused the Talk's folder; check the Tentacles log on this computer.",
+  "talk.workspace_outside_bot_root": "This computer allows paired turns only inside a Bot workspace; start a new Talk or add this folder to this computer's allowlist.",
   "model.thinking_level_twice": "This Antigravity model already sets a thinking level; drop the old -low/-medium/-high from the model or the thinking-level option.",
   "model.fast_mode_twice": "This Cursor model already sets fast mode; use composer-2.5 with the fast-mode option, or composer-2.5-fast without it.",
   "tentacles.update": "Update Tentacles on this computer, then send again.",
@@ -72,6 +73,7 @@ const BY_TEXT = new Map([
   ["Bot connectors name a host this computer is not paired with", "bot_connectors.pair_again"],
   ["This Talk is still answering. Its tools change once it finishes; try again then.", "talk.still_answering"],
   ["Local Talk workspace custody or scope refused", "talk.workspace_custody"],
+  ["Remote turn refused: workspace is outside the Bot workspace root", "talk.workspace_outside_bot_root"],
   ["Thread workspace could not be resolved; continue refused before T3", "bot_connectors.new_talk"],
   ["Bridge state is busy; retry originate after the active watcher operation completes", "try_again"],
 ]);

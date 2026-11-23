@@ -129,9 +129,9 @@ export function parseArgs(argv) {
     }
     const value = rest[index + 1];
     if (value === undefined || value.startsWith("--")) throw new Error(`Missing value for --${key}`);
-    if (key === "option") {
-      if (!Array.isArray(options.option)) options.option = [];
-      options.option.push(value);
+    if (key === "option" || key === "allow-workspace") {
+      if (!Array.isArray(options[key])) options[key] = [];
+      options[key].push(value);
     } else {
       options[key] = value;
     }
@@ -144,6 +144,47 @@ function required(options, key) {
   const value = options[key];
   if (!value) throw new Error(`Missing required option --${key}`);
   return value;
+}
+
+/**
+ * Parse owner-local workspace allowlist entries from repeatable `--allow-workspace`
+ * flags and `TENTACLES_ALLOWED_WORKSPACES` (path-delimiter separated). Never read
+ * from remote RPC parameters. Existing entries are validated as real non-symlink
+ * directories and canonicalized with realpath.
+ */
+export function parseAllowedWorkspaces({ flagValues = [], envValue = process.env.TENTACLES_ALLOWED_WORKSPACES } = {}) {
+  const rawEntries = [];
+  if (Array.isArray(flagValues)) {
+    for (const value of flagValues) rawEntries.push(value);
+  } else if (flagValues !== undefined && flagValues !== null) {
+    rawEntries.push(flagValues);
+  }
+  if (typeof envValue === "string" && envValue.length > 0) {
+    for (const part of envValue.split(path.delimiter)) {
+      if (part.length > 0) rawEntries.push(part);
+    }
+  }
+  const canonical = new Set();
+  for (const raw of rawEntries) {
+    if (typeof raw !== "string" || raw.length === 0 || raw.length > 1024 || /[\u0000-\u001f\u007f]/.test(raw) || !path.isAbsolute(raw)) {
+      throw new Error("--allow-workspace / TENTACLES_ALLOWED_WORKSPACES entries must be absolute directory paths");
+    }
+    const resolved = path.resolve(raw);
+    try {
+      const stat = fs.lstatSync(resolved);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) {
+        throw new Error("--allow-workspace / TENTACLES_ALLOWED_WORKSPACES entries must be real non-symlink directories");
+      }
+      canonical.add(fs.realpathSync(resolved));
+    } catch (error) {
+      if (error.code === "ENOENT") {
+        canonical.add(resolved);
+      } else {
+        throw error;
+      }
+    }
+  }
+  return [...canonical];
 }
 
 export function parseIntentOption(options) {
@@ -215,7 +256,7 @@ Usage:
   tentacles reauth --computer NAME [--t3-bin /remote/t3] [--t3-home /remote/.t3]
   tentacles doctor [--json] [--models summary|full] [--responds all|LAB,LAB] [--responds-timeout SECONDS]
   tentacles capabilities scan [--json] [--no-labs]
-  tentacles pair --pair-file OWNER_ONLY_JSON --machine-id SPHERE_MACHINE_ID [--pair-state-file PATH] [--enable-interrupt]
+  tentacles pair --pair-file OWNER_ONLY_JSON --machine-id SPHERE_MACHINE_ID [--pair-state-file PATH] [--enable-interrupt] [--allow-workspace DIR]
   tentacles install-provider [--instance hermes] [--profile default] [--model MODEL]
   tentacles remove-provider [--instance hermes]
   tentacles install-codex-app-provider [--instance codex-app] [--codex-app-bin PATH]
@@ -299,6 +340,7 @@ Environment:
   TENTACLES_T3_BIN          T3 CLI for that reauth (default: t3 on PATH, else newest <T3 home>/runtime/versions/*/t3, else <T3 home>/bin/t3)
   TENTACLES_T3_HOME         T3 home for that reauth (default ~/.t3)
   TENTACLES_STALL_IDLE_MINUTES  default 10: idle window before report/observe call a disconnected turn stalled
+  TENTACLES_ALLOWED_WORKSPACES  optional colon-separated (semicolon on Windows) absolute folders admitted by tentacles pair
   T3_HERMES_TOKEN_FILE      default ~/.local/state/t3-hermes-bridge/t3.token
   T3_HERMES_MODEL           default deepseek:deepseek-v4-flash
   CODEX_APP_BIN             optional absolute <App>.app/Contents/Resources/codex path
@@ -460,9 +502,13 @@ async function main() {
   }
   if (command === "pair") {
     const pairStateFile = options["pair-state-file"] || DEFAULT_PAIR_STATE_FILE;
+    const allowedWorkspaces = parseAllowedWorkspaces({
+      flagValues: options["allow-workspace"],
+      envValue: process.env.TENTACLES_ALLOWED_WORKSPACES,
+    });
     const capabilityCache = new CapabilityCache({ scan: () => scanCapabilities({ version: PACKAGE_VERSION }) });
     void capabilityCache.refresh().catch(() => {});
-    const runtime = new LoopbackRuntimeAdapter({ client, pairStateFile, capabilityCache });
+    const runtime = new LoopbackRuntimeAdapter({ client, pairStateFile, capabilityCache, allowedWorkspaces });
     const pairer = new OutboundPairer({
       runtime,
       pairStateFile,

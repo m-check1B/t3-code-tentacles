@@ -179,6 +179,7 @@ export async function runParityScenario({ log = (line) => process.stdout.write(`
   const t3 = new SyntheticT3({ labs: { "lab-one": analysisLab, "lab-two": builderLab } });
   const chair = new LoopbackRuntimeAdapter({
     client: t3,
+    allowedWorkspaces: [workspace, builderWorkspace],
     // The real originate, pinned to a temporary ledger instead of ~/.t3 state.
     originateImpl: (client, params) => originate(client, { ...params, stateFile }),
     threadEventsDirectory: directory,
@@ -225,7 +226,7 @@ export async function runParityScenario({ log = (line) => process.stdout.write(`
       const artifacts = events.events.filter((event) => event.kind === "artifact");
       check(artifacts.length === 1 && artifacts[0].payload.name === "index.html", `artifacts ${artifacts.map((event) => event.payload.name).join(",")}`);
       const read = () => chair.threadArtifact({ threadId: builder.threadId, eventId: artifacts[0].eventId });
-      const first = read(); const second = read();
+      const first = await read(); const second = await read();
       const bytes = Buffer.from(first.contentBase64, "base64");
       check(first.nextOffset === first.totalBytes, "artifact not read whole");
       check(first.sha256 === second.sha256 && first.sha256 === sha256(bytes) && first.sha256 === artifacts[0].payload.sha256, "artifact sha256 unstable");

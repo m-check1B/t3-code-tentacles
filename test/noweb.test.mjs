@@ -238,9 +238,10 @@ test("originate, continue, legacy/V2 commands and exact turn-result keep every t
       assert.equal(turn.modelSelection.instanceId, id);
       assert.equal((await translateCommand(turn)).at(-1).payload.modelSelection.instanceId, id);
     }
+    client.snapshot = async () => ({ projects });
     client.request = async () => ({ ...second, turnId: "turn", assistantMessageId: "assistant", instanceId: id, model: selection.model, effort: null, state: "succeeded", outputText: "Synthetic reply" });
     const { threadId, messageId, turnCommandId } = second;
-    const result = await new LoopbackRuntimeAdapter({ client }).turnResult({ threadId, messageId, turnCommandId });
+    const result = await new LoopbackRuntimeAdapter({ client, allowedWorkspaces: [f.root] }).turnResult({ threadId, messageId, turnCommandId });
     assert.equal(result.instanceId, id);
   }
 });

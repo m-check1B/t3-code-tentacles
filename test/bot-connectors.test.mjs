@@ -40,7 +40,11 @@ function setup({ jackOrigin = ORIGIN, running = () => false } = {}) {
   // T3's service.env and Codex's system layers, inside the throwaway home.
   const codexFiles = { serviceEnv: path.join(home, ".t3", "service.env"), system: ["config.toml", "managed_config.toml"].map(name => path.join(home, "etc-codex", name)) };
   const adapter = new LoopbackRuntimeAdapter({
-    client: { getSettings: async () => settings },
+    client: {
+      getSettings: async () => settings,
+      thread: async (id) => ({ thread: { id, worktreePath: at.workspace ?? workspace } }),
+    },
+    workspaceHome: home,
     codexFiles,
     prepareTalkWorkspaceImpl: value => ensureLocalTalkWorkspace(value, { home }),
     originateImpl: (_client, params) => { sent.push(params); return { ok: true }; },
@@ -404,7 +408,7 @@ test("B3 P3-D on #99: a custody or Codex-home refusal comes before the stop", as
   // Workspace custody: a group-writable home refuses before any stop as well.
   fs.chmodSync(home, 0o770);
   try {
-    await assert.rejects(adapter.continue({ threadId, message: "again", runtimeMode: "full-access", ...claude, ...connectors([learn]) }), /custody/);
+    await assert.rejects(adapter.continue({ threadId, message: "again", runtimeMode: "full-access", ...claude, ...connectors([learn]) }), /custody|outside the Bot workspace root/);
   } finally { fs.chmodSync(home, 0o700); }
   assert.deepEqual(stops, []);
 });
@@ -549,7 +553,7 @@ test("KRA-10869: with the switch unset, OpenCode is main: no advert, a list refu
   const { workspace, sent, stops, adapter } = setup();
   let reads = 0;
   const inner = adapter.client;
-  adapter.client = { getSettings: async () => { reads += 1; return inner.getSettings(); } };
+  adapter.client = { ...inner, getSettings: async () => { reads += 1; return inner.getSettings(); } };
   await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...opencode, ...connectors([learn]) }), /cannot use Jack tools on Local/);
   assert.deepEqual([sent, stops, reads], [[], [], 0]);
   assert.equal(fs.existsSync(path.join(workspace, "opencode.json")), false);
@@ -733,7 +737,7 @@ test("B3 P3-1 on #115: an old one-line marker is removed through T3's settings, 
     fs.mkdirSync(path.join(home, ".grok"), { mode: 0o700 });
     const fallback = path.join(home, ".grok", "trusted_folders.toml");
     fs.writeFileSync(fallback, ours);
-    if (fail) adapter.client = { getSettings: async () => { throw new Error("T3 settings unavailable"); } };
+    if (fail) adapter.client = { ...adapter.client, getSettings: async () => { throw new Error("T3 settings unavailable"); } };
     await adapter.continue({ threadId: "t1", message: "plain", ...grok });
     assert.equal(fs.readFileSync(fallback, "utf8"), ours, String(fail));
     assert.equal(fs.readFileSync(trustFile, "utf8"), fail ? ours : "", String(fail));
@@ -844,7 +848,7 @@ test("delta P2-1 on #110: switched off and with no marker, a Grok turn reads not
   fs.writeFileSync(trustFile, owner, { mode: 0o600 });
   let reads = 0;
   const settings = { providerInstances: { grok: { environment: [{ name: "GROK_HOME", value: grokHome }] } } };
-  adapter.client = { getSettings: async () => { reads += 1; return settings; } };
+  adapter.client = { ...adapter.client, getSettings: async () => { reads += 1; return settings; } };
   await adapter.originate({ workspace, message: "plain", ...grok });
   await adapter.continue({ threadId: "t1", message: "plain", ...grok });
   await adapter.continue({ threadId: "t1", message: "clear", ...grok, ...connectors([]) });
@@ -1471,7 +1475,7 @@ test("Pro rule on #111: Cursor, switched off or on, reads and writes nothing out
   fs.writeFileSync(path.join(home, ".grok", "trusted_folders.toml"), `[folders.${JSON.stringify(workspace)}]\ntrusted = true\ndecided_at = 1\n`);
   let calls = 0;
   const settings = await adapter.client.getSettings();
-  adapter.client = { getSettings: async () => { calls += 1; return settings; } };
+  adapter.client = { ...adapter.client, getSettings: async () => { calls += 1; return settings; } };
   const owner = outside(home, path.join(home, ".jack-local-scratch"));
   delete process.env.TENTACLES_JACK_TOOLS_TRY;
   await adapter.originate({ workspace, message: "plain", ...cursor });

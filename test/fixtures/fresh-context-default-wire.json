@@ -1,5 +1,4 @@
 {
-  "base": "5807e5ca91664a4fc0f1da85ff8aa4390b8d76ce",
   "protocols": {
     "1": {
       "wire": [
@@ -112,6 +111,14 @@
         },
         {
           "pathname": "/api/orchestration/turn-result",
+          "method": "GET"
+        },
+        {
+          "pathname": "/api/orchestration/threads/12345678-1111-4111-8111-111111111111",
+          "method": "GET"
+        },
+        {
+          "pathname": "/api/orchestration/snapshot",
           "method": "GET"
         },
         {
@@ -290,6 +297,14 @@
         },
         {
           "pathname": "/api/orchestration/turn-result",
+          "method": "GET"
+        },
+        {
+          "pathname": "/api/orchestration/threads/12345678-1111-4111-8111-111111111111",
+          "method": "GET"
+        },
+        {
+          "pathname": "/api/orchestration/shell",
           "method": "GET"
         },
         {

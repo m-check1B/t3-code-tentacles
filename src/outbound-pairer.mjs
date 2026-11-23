@@ -1,6 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
-import { ensureLocalTalkWorkspace } from "./local-talk-workspace.mjs";
+import {
+  ensureLocalTalkWorkspace,
+  isAllowedRemoteWorkspace,
+  REMOTE_WORKSPACE_REFUSAL,
+} from "./local-talk-workspace.mjs";
 import { BOT_CONNECTOR_REFUSALS } from "./bot-connector-refusals.mjs";
 import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, botConnectorProviders, checkBotConnectorPaths, checkCodexAncestorLayers, codexHomeAllowed, checkCodexLaunchArgs, checkCodexServerNames, codexOuterFiles, commitCodexTrust, readT3ServiceEnv, connectorsNeedRestart, GROK_TRUST_MARKER, grokHomeFor, planGrokTrust, planGrokUntrust, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors, writePrivate } from "./bot-connectors.mjs";
 import { privateModeOk } from "./platform.mjs";
@@ -13,7 +17,7 @@ import { observe, REPORT_MODEL_LABEL, threadReportFailure, threadReportStatus } 
 import { classifyFailure } from "./failure-codes.mjs";
 import { PluginInventoryCache } from "./plugin-inventory.mjs";
 import { requireContinueSelection } from "./model-selection.mjs";
-import { readBoundedWebSocketData } from "./t3-client.mjs";
+import { readBoundedWebSocketData, readOrchestrationSnapshot } from "./t3-client.mjs";
 import {
   acquirePairStateLock,
   DEFAULT_PAIR_STATE_FILE,
@@ -254,6 +258,39 @@ function remoteSeatsProjection(observed) {
   return { activeTurns, threads };
 }
 
+/**
+ * Shared KRA-10940 helper: resolves a thread's workspace folder (worktreePath
+ * when set, else the owning project's workspaceRoot). Returns null when
+ * unresolvable so callers fail closed.
+ */
+export async function resolveThreadWorkspace(client, thread, projectsById = null) {
+  if (!isRecord(thread)) return null;
+  if (typeof thread.worktreePath === "string" && thread.worktreePath !== "") {
+    return thread.worktreePath;
+  }
+  if (typeof thread.projectId !== "string" || thread.projectId === "") return null;
+  if (projectsById instanceof Map) {
+    const root = projectsById.get(thread.projectId);
+    return typeof root === "string" && root !== "" ? root : null;
+  }
+  if (!client || (typeof client.snapshot !== "function" && typeof client.shell !== "function")) return null;
+  const snapshot = await readOrchestrationSnapshot(client);
+  const project = (Array.isArray(snapshot?.projects) ? snapshot.projects : [])
+    .find((entry) => isRecord(entry) && entry.id === thread.projectId);
+  return typeof project?.workspaceRoot === "string" && project.workspaceRoot !== "" ? project.workspaceRoot : null;
+}
+
+function projectRootsMap(projects) {
+  const map = new Map();
+  if (!Array.isArray(projects)) return map;
+  for (const project of projects) {
+    if (isRecord(project) && typeof project.id === "string" && typeof project.workspaceRoot === "string" && project.workspaceRoot !== "") {
+      map.set(project.id, project.workspaceRoot);
+    }
+  }
+  return map;
+}
+
 export class LoopbackRuntimeAdapter {
   constructor({
     client,
@@ -261,6 +298,9 @@ export class LoopbackRuntimeAdapter {
     observeImpl = observe,
     originateImpl = originate,
     prepareTalkWorkspaceImpl = ensureLocalTalkWorkspace,
+    allowedWorkspaces = [],
+    workspaceHome,
+    workspacePlatform,
     continueImpl = continueThread,
     doctorImpl = doctor,
     pluginInventory = new PluginInventoryCache(),
@@ -277,6 +317,10 @@ export class LoopbackRuntimeAdapter {
     this.observeImpl = observeImpl;
     this.originateImpl = originateImpl;
     this.prepareTalkWorkspaceImpl = prepareTalkWorkspaceImpl;
+    // Owner-configured local allowlist (empty by default; never read from RPC params).
+    this.allowedWorkspaces = Object.freeze(Array.isArray(allowedWorkspaces) ? [...allowedWorkspaces] : []);
+    this.workspaceHome = workspaceHome;
+    this.workspacePlatform = workspacePlatform;
     // Set by the pairer from the owner's pair offer; null admits no Jack-hosted entry.
     this.jackOrigin = null;
     this.continueImpl = continueImpl;
@@ -293,12 +337,60 @@ export class LoopbackRuntimeAdapter {
       readThread: (threadId) => this.client.thread(threadId),
       dispatch: (command) => this.client.dispatch(command),
       withThreadLock: this.withThreadLock,
+      assertThreadInScope: (threadId) => this.requireThreadInScope(threadId),
       ...interruptOptions,
     });
   }
 
+  isWorkspaceAllowed(workspace) {
+    return isAllowedRemoteWorkspace(workspace, {
+      ...(this.workspaceHome !== undefined ? { home: this.workspaceHome } : {}),
+      ...(this.workspacePlatform !== undefined ? { platform: this.workspacePlatform } : {}),
+      allowedWorkspaces: this.allowedWorkspaces,
+    });
+  }
+
+  async requireThreadInScope(threadId) {
+    if (typeof threadId !== "string" || !SAFE_ID.test(threadId)) {
+      throw new Error(REMOTE_WORKSPACE_REFUSAL);
+    }
+    if (typeof this.client.thread !== "function") {
+      throw new Error(REMOTE_WORKSPACE_REFUSAL);
+    }
+    const response = await this.client.thread(threadId);
+    const thread = response?.thread ?? response;
+    if (!isRecord(thread) || thread.id !== threadId) {
+      throw new Error(REMOTE_WORKSPACE_REFUSAL);
+    }
+    const workspace = await resolveThreadWorkspace(this.client, thread);
+    if (!this.isWorkspaceAllowed(workspace)) {
+      throw new Error(REMOTE_WORKSPACE_REFUSAL);
+    }
+    return { workspace, thread };
+  }
+
   async seats() {
-    return remoteSeatsProjection(await this.observeImpl(this.client));
+    const observed = await this.observeImpl(this.client);
+    requireRecord(observed, "Observed Tentacles state");
+    const rawThreads = Array.isArray(observed.threads) ? observed.threads.filter(isRecord) : [];
+    const needsProjects = rawThreads.some((thread) => !(typeof thread.worktreePath === "string" && thread.worktreePath !== ""));
+    let projectsById = Array.isArray(observed.projects) ? projectRootsMap(observed.projects) : null;
+    if (needsProjects && projectsById === null && (typeof this.client.snapshot === "function" || typeof this.client.shell === "function")) {
+      const snapshot = await readOrchestrationSnapshot(this.client);
+      projectsById = projectRootsMap(snapshot?.projects);
+    }
+    const allowedThreads = [];
+    const allowedThreadIds = new Set();
+    for (const thread of rawThreads) {
+      const workspace = await resolveThreadWorkspace(this.client, thread, projectsById ?? new Map());
+      if (!this.isWorkspaceAllowed(workspace)) continue;
+      allowedThreads.push(thread);
+      if (typeof thread.id === "string") allowedThreadIds.add(thread.id);
+    }
+    const allowedActiveTurns = Array.isArray(observed.activeTurns)
+      ? observed.activeTurns.filter((turn) => isRecord(turn) && typeof turn.threadId === "string" && allowedThreadIds.has(turn.threadId))
+      : [];
+    return remoteSeatsProjection({ ...observed, threads: allowedThreads, activeTurns: allowedActiveTurns });
   }
 
   originate(params) {
@@ -329,8 +421,14 @@ export class LoopbackRuntimeAdapter {
       servers = undefined; // an empty list for another folder clears nothing there
     }
     // Idempotent and leaves .mcp.json alone, so it cannot change the restart decision.
+    if (typeof workspace !== "string" || workspace === "") throw new Error(REMOTE_WORKSPACE_REFUSAL);
     const prepared = await this.prepareTalkWorkspaceImpl(workspace);
     if (servers?.length && prepared !== true) throw new Error(BOT_CONNECTOR_REFUSALS.notBotWorkspace);
+    // KRA-10939: a remote full-access turn must stay inside a prepared Bot workspace
+    // or an owner-configured local allowlist; never arbitrary folders.
+    if (prepared !== true && !this.isWorkspaceAllowed(workspace)) {
+      throw new Error(REMOTE_WORKSPACE_REFUSAL);
+    }
     const marker = path.join(workspace, GROK_TRUST_MARKER);
     const grokHome = instanceId === "grok" && servers?.length ? await grokHomeFor(this.client) : undefined;
     // B3 P3-2 on #115: a table left in another Grok home (GROK_HOME moved) is removed
@@ -385,9 +483,18 @@ export class LoopbackRuntimeAdapter {
     const { params: input, servers, scope } = admitBotConnectors(fullAccessParams(params, "continue", CONTINUE_PARAM_KEYS), { jackOrigin: this.jackOrigin });
     requireContinueSelection({ instanceId: input.instanceId, model: input.model, options: input.options, budget: input.budget });
     requireFreshFlags(input);
-    const guarded = () => this.continueImpl(this.client, input, {
-      prepareTalkWorkspace: (workspace, { restartIdleSession } = {}) => this.writeConnectors(workspace, { servers, scope, instanceId: input.instanceId, restartIdleSession }),
-    });
+    const guarded = async () => {
+      // KRA-10939/KRA-10940 (B3 P2-1): enforce workspace scope before continueImpl
+      // (before idempotent existingMessage check and retainedSelectionPin) so
+      // private non-Bot threads never leak projectId or model-selection errors,
+      // while valid in-scope idempotent replays still skip prepareTalkWorkspace.
+      const scoped = await this.requireThreadInScope(input.threadId);
+      return this.continueImpl(this.client, input, {
+        prepareTalkWorkspace: (workspace, { restartIdleSession } = {}) => this.writeConnectors(workspace, { servers, scope, instanceId: input.instanceId, restartIdleSession }),
+        prefetchedThread: scoped.thread,
+        prefetchedWorkspace: scoped.workspace,
+      });
+    };
     const dispatch = () => input.freshProviderContext === true
       ? requireFreshProviderContext(this.client, input).then(guarded)
       : guarded();
@@ -397,12 +504,16 @@ export class LoopbackRuntimeAdapter {
       : dispatch();
   }
 
-  threadArtifact(params) {
-    return threadArtifact(params, { directory: this.threadEventsDirectory });
+  async threadArtifact(params) {
+    const input = requireRecord(params, "thread-artifact params");
+    await this.requireThreadInScope(input.threadId);
+    return threadArtifact(input, { directory: this.threadEventsDirectory });
   }
 
-  threadEvents(params) {
-    return this.threadEventsImpl(this.client, params, { directory: this.threadEventsDirectory });
+  async threadEvents(params) {
+    const input = requireRecord(params, "thread-events params");
+    await this.requireThreadInScope(input.threadId);
+    return this.threadEventsImpl(this.client, input, { directory: this.threadEventsDirectory });
   }
 
   refreshModels() {
@@ -464,6 +575,7 @@ export class LoopbackRuntimeAdapter {
       throw new Error("turn-result requires exactly threadId, messageId and turnCommandId");
     }
     for (const key of keys) requireSafeId(input[key], key);
+    const { thread: scopedThread } = await this.requireThreadInScope(input.threadId);
     const result = typeof this.client.turnResult === "function"
       ? await this.client.turnResult(input)
       : await this.client.request("/api/orchestration/turn-result", { method: "POST", body: input });
@@ -490,10 +602,16 @@ export class LoopbackRuntimeAdapter {
     const typed = result.state === "failed" || result.state === "cancelled"
       ? classifyFailure({ state: result.state, error: typeof result.error === "string" || isRecord(result.error) ? result.error : null })
       : null;
-    const failureDetail = result.state === "failed" ? redactFailureLine(await this.sessionFailureDetail(input.threadId)) : null;
+    const prefetchedFailed = typeof scopedThread?.session?.lastError === "string" && scopedThread.session.lastError.trim().length > 0
+      ? scopedThread : null;
+    const failureDetail = result.state === "failed" ? redactFailureLine(await this.sessionFailureDetail(input.threadId, prefetchedFailed)) : null;
     return { ...Object.fromEntries([...keys, "turnId", "assistantMessageId", "instanceId", "model", "effort", "state", "outputText"].map((key) => [key, result[key]])), ...(fresh ? { freshProviderContext: true, nativeContextGeneration: result.nativeContextGeneration } : {}), ...(typed ?? {}), ...(failureDetail ? { failureDetail } : {}) };
   }
-  async sessionFailureDetail(threadId) {
+  async sessionFailureDetail(threadId, prefetched = null) {
+    if (prefetched && typeof prefetched === "object" && prefetched.id === threadId
+      && typeof prefetched.session?.lastError === "string" && prefetched.session.lastError.trim().length > 0) {
+      return redactFailureLine(prefetched.session.lastError);
+    }
     if (typeof this.client.thread !== "function") return null;
     try {
       const response = await this.client.thread(threadId);

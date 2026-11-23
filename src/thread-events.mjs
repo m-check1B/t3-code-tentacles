@@ -8,7 +8,11 @@ import { classifyFailure } from "./failure-codes.mjs";
 
 export const DEFAULT_THREAD_EVENTS_DIRECTORY = path.join(DEFAULT_STATE_DIR, "thread-events");
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SHA256_HEX = /^[a-f0-9]{64}$/;
 const MAX_JOURNAL_BYTES = 128 * 1024 * 1024;
+const MAX_MIGRATION_BYTES = 512 * 1024 * 1024;
+const MAX_ARTIFACT_BYTES = 25 * 1024 * 1024;
+const ARTIFACTS_SUBDIR = "artifacts";
 const PAGE_BYTES = 750_000; // Preserve existing 1 MiB relay frame limit.
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const hash = (value) => createHash("sha256").update(value).digest("hex");
@@ -21,22 +25,203 @@ function privateDirectory(directory) {
     || (process.getuid && stat.uid !== process.getuid())) throw new Error("Invalid thread journal directory");
 }
 
-function readJournal(file) {
+function artifactsDirectory(directory) {
+  const dir = path.join(directory, ARTIFACTS_SUBDIR);
+  privateDirectory(dir);
+  return dir;
+}
+
+function artifactBlobPath(directory, sha256) {
+  if (typeof sha256 !== "string" || !SHA256_HEX.test(sha256)) throw new Error("Invalid artifact digest");
+  return path.join(directory, ARTIFACTS_SUBDIR, `${sha256}.bin`);
+}
+
+function writeArtifactBlob(directory, content, sha256) {
+  if (!Buffer.isBuffer(content) || content.length > MAX_ARTIFACT_BYTES) throw new Error("Thread artifact exceeds bound");
+  if (typeof sha256 !== "string" || !SHA256_HEX.test(sha256) || hash(content) !== sha256) {
+    throw new Error("Invalid artifact content");
+  }
+  const dir = artifactsDirectory(directory);
+  const blobPath = artifactBlobPath(directory, sha256);
+  let existingFd;
+  try { existingFd = fs.openSync(blobPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0)); }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
+  if (existingFd !== undefined) {
+    try {
+      const stat = fs.fstatSync(existingFd);
+      if (!stat.isFile() || stat.nlink !== 1 || !privateModeOk(stat.mode)
+        || (process.getuid && stat.uid !== process.getuid()) || stat.size !== content.length) {
+        throw new Error("Invalid thread artifact file");
+      }
+      const existing = fs.readFileSync(existingFd);
+      if (hash(existing) !== sha256) throw new Error("Invalid thread artifact file");
+      return;
+    } finally { fs.closeSync(existingFd); }
+  }
+  const temporary = `${blobPath}.${process.pid}.${randomUUID()}.tmp`;
   let fd;
-  try { fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0)); }
-  catch (error) { if (error.code === "ENOENT") return []; throw error; }
+  try {
+    fd = fs.openSync(temporary, "wx", 0o600);
+    fs.writeFileSync(fd, content);
+    fs.fsyncSync(fd);
+    fs.closeSync(fd); fd = undefined;
+    fs.renameSync(temporary, blobPath);
+    const dirFd = fs.openSync(dir, fs.constants.O_RDONLY);
+    try { fs.fsyncSync(dirFd); } finally { fs.closeSync(dirFd); }
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+    try { fs.unlinkSync(temporary); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
+}
+
+function readArtifactBlob(directory, sha256, expectedSize) {
+  const blobPath = artifactBlobPath(directory, sha256);
+  let fd;
+  try { fd = fs.openSync(blobPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0)); }
+  catch (error) { if (error.code === "ENOENT") throw new Error("Artifact content missing"); throw error; }
   try {
     const stat = fs.fstatSync(fd);
     if (!stat.isFile() || stat.nlink !== 1 || !privateModeOk(stat.mode)
-      || (process.getuid && stat.uid !== process.getuid()) || stat.size > MAX_JOURNAL_BYTES) {
+      || (process.getuid && stat.uid !== process.getuid()) || stat.size > MAX_ARTIFACT_BYTES) {
+      throw new Error("Invalid thread artifact file");
+    }
+    if (expectedSize !== undefined && stat.size !== expectedSize) throw new Error("Invalid artifact content");
+    const content = fs.readFileSync(fd);
+    if (hash(content) !== sha256) throw new Error("Invalid artifact content");
+    return content;
+  } finally { fs.closeSync(fd); }
+}
+
+function normalizeArtifactPayload(directory, payload) {
+  if (!record(payload) || typeof payload.contentBase64 !== "string") {
+    return { migrated: false, payload };
+  }
+  const content = Buffer.from(payload.contentBase64, "base64");
+  const digest = typeof payload.sha256 === "string" && SHA256_HEX.test(payload.sha256)
+    ? payload.sha256 : hash(content);
+  if (hash(content) !== digest) throw new Error("Invalid artifact content");
+  writeArtifactBlob(directory, content, digest);
+  return {
+    migrated: true,
+    payload: {
+      name: payload.name,
+      mediaType: payload.mediaType,
+      sizeBytes: content.length,
+      sha256: digest,
+    },
+  };
+}
+
+function hasLegacyInlineArtifacts(data) {
+  return data.some((event) => event?.kind === "artifact" && record(event.payload) && typeof event.payload.contentBase64 === "string");
+}
+
+function migrateJournalEntries(data, directory) {
+  let migrated = false;
+  const result = data.map((event) => {
+    if (event?.kind === "artifact" && record(event.payload) && typeof event.payload.contentBase64 === "string") {
+      const normalized = normalizeArtifactPayload(directory, event.payload);
+      migrated = true;
+      return { ...event, payload: normalized.payload };
+    }
+    return event;
+  });
+  return { journal: result, migrated };
+}
+
+function writeJournalAtomic(file, directory, journal, maxJournalBytes) {
+  const encoded = JSON.stringify(journal);
+  if (Buffer.byteLength(encoded) > maxJournalBytes) throw new Error("Thread journal storage bound exceeded");
+  const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  let fd;
+  try {
+    fd = fs.openSync(temporary, "wx", 0o600);
+    fs.writeFileSync(fd, encoded);
+    fs.fsyncSync(fd);
+    fs.closeSync(fd); fd = undefined;
+    fs.renameSync(temporary, file);
+    const dirFd = fs.openSync(directory, fs.constants.O_RDONLY);
+    try { fs.fsyncSync(dirFd); } finally { fs.closeSync(dirFd); }
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+    try { fs.unlinkSync(temporary); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
+}
+
+/**
+ * Pure read-only check: never writes artifact blobs or rewrites the journal.
+ * Signals `needsMigration: true` for oversized or legacy-inline journals so the
+ * caller acquires `acquirePairStateLock(file)` before migrating and persisting.
+ */
+function readJournalSnapshot(file, { maxJournalBytes = MAX_JOURNAL_BYTES } = {}) {
+  let fd;
+  try { fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0)); }
+  catch (error) { if (error.code === "ENOENT") return { journal: [], needsMigration: false }; throw error; }
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1 || !privateModeOk(stat.mode)
+      || (process.getuid && stat.uid !== process.getuid())) {
       throw new Error("Invalid thread journal file");
+    }
+    if (stat.size > maxJournalBytes) return { journal: null, needsMigration: true };
+    const data = JSON.parse(fs.readFileSync(fd, "utf8"));
+    if (!Array.isArray(data) || data.some((event, index) => event.sequence !== index + 1)) {
+      throw new Error("Invalid thread journal sequence");
+    }
+    if (hasLegacyInlineArtifacts(data)) return { journal: null, needsMigration: true };
+    return { journal: data, needsMigration: false };
+  } finally { fs.closeSync(fd); }
+}
+
+/** Must be called strictly while `acquirePairStateLock(file)` is held. */
+function readJournalUnderLock(file, { directory = path.dirname(file), maxJournalBytes = MAX_JOURNAL_BYTES, allowOversizedRecovery = false } = {}) {
+  let fd;
+  try { fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0)); }
+  catch (error) { if (error.code === "ENOENT") return { journal: [], migrated: false }; throw error; }
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1 || !privateModeOk(stat.mode)
+      || (process.getuid && stat.uid !== process.getuid())) {
+      throw new Error("Invalid thread journal file");
+    }
+    if (stat.size > maxJournalBytes) {
+      if (!allowOversizedRecovery) throw new Error("Invalid thread journal file");
+      if (stat.size > MAX_MIGRATION_BYTES) return { journal: [], migrated: true };
+      try {
+        const data = JSON.parse(fs.readFileSync(fd, "utf8"));
+        if (!Array.isArray(data) || data.some((event, index) => event.sequence !== index + 1)) {
+          return { journal: [], migrated: true };
+        }
+        const { journal } = migrateJournalEntries(data, directory);
+        return { journal, migrated: true };
+      } catch {
+        return { journal: [], migrated: true };
+      }
     }
     const data = JSON.parse(fs.readFileSync(fd, "utf8"));
     if (!Array.isArray(data) || data.some((event, index) => event.sequence !== index + 1)) {
       throw new Error("Invalid thread journal sequence");
     }
-    return data;
+    return migrateJournalEntries(data, directory);
   } finally { fs.closeSync(fd); }
+}
+
+/**
+ * Read a journal; if oversized or containing legacy inline artifacts, migrate
+ * and atomically persist the compacted journal strictly under the file lock.
+ */
+function loadJournal(file, { directory = path.dirname(file), maxJournalBytes = MAX_JOURNAL_BYTES } = {}) {
+  const snapshot = readJournalSnapshot(file, { maxJournalBytes });
+  if (!snapshot.needsMigration) return snapshot.journal;
+  const release = acquirePairStateLock(file);
+  if (!release) throw new Error("Thread journal is busy");
+  try {
+    const loaded = readJournalUnderLock(file, { directory, maxJournalBytes, allowOversizedRecovery: true });
+    if (loaded.migrated) writeJournalAtomic(file, directory, loaded.journal, maxJournalBytes);
+    return loaded.journal;
+  } finally {
+    release();
+  }
 }
 
 function iso(value) {
@@ -185,7 +370,7 @@ export function findSequenceGap(page, afterSequence = page?.afterSequence ?? 0) 
 }
 
 /** Append-only durable source journal. No secrets/payloads are logged. */
-export function recordThreadEvents(threadId, candidates, { directory = DEFAULT_THREAD_EVENTS_DIRECTORY, state } = {}) {
+export function recordThreadEvents(threadId, candidates, { directory = DEFAULT_THREAD_EVENTS_DIRECTORY, state, maxJournalBytes = MAX_JOURNAL_BYTES } = {}) {
   if (!UUID.test(threadId)) throw new Error("Invalid thread identity");
   privateDirectory(directory);
   const file = path.join(directory, `${threadId}.json`);
@@ -193,12 +378,17 @@ export function recordThreadEvents(threadId, candidates, { directory = DEFAULT_T
   const release = acquirePairStateLock(file);
   if (!release) throw new Error("Thread journal is busy");
   try {
-    const journal = readJournal(file);
+    const loaded = readJournalUnderLock(file, { directory, maxJournalBytes, allowOversizedRecovery: true });
+    const journal = loaded.journal;
+    let dirty = loaded.migrated;
     const existing = new Map(journal.map((event) => [event.eventId, event]));
     for (const candidate of candidates) {
       if (!record(candidate) || !safeText(candidate.eventId, 200)
         || !["message", "tool_summary", "artifact", "state", "memory", "turn_end"].includes(candidate.kind)
         || !record(candidate.payload)) throw new Error("Invalid journal candidate");
+      const payload = candidate.kind === "artifact" && typeof candidate.payload.contentBase64 === "string"
+        ? normalizeArtifactPayload(directory, candidate.payload).payload
+        : candidate.payload;
       const old = existing.get(candidate.eventId);
       // A turn ends once. Checked under the lock, so a concurrent poller that
       // saw the same turn differently drops its later observation.
@@ -207,45 +397,33 @@ export function recordThreadEvents(threadId, candidates, { directory = DEFAULT_T
       // wording for the same call keeps the stored line instead of stopping the sync.
       if (old?.kind === "tool_summary" && candidate.kind === "tool_summary") continue;
       if (old) {
-        if (old.kind !== candidate.kind || JSON.stringify(old.payload) !== JSON.stringify(candidate.payload)) {
+        if (old.kind !== candidate.kind || JSON.stringify(old.payload) !== JSON.stringify(payload)) {
           throw new Error("Source event changed after journaling");
         }
         continue;
       }
       const event = { threadId, eventId: candidate.eventId, sequence: journal.length + 1,
-        occurredAt: iso(candidate.occurredAt), kind: candidate.kind, payload: candidate.payload };
+        occurredAt: iso(candidate.occurredAt), kind: candidate.kind, payload };
       if (Buffer.byteLength(JSON.stringify(event)) > 36 * 1024 * 1024) throw new Error("Event exceeds relay frame bound");
       journal.push(event);
       existing.set(event.eventId, event);
+      dirty = true;
     }
     if (state && journal.findLast((event) => event.kind === "state")?.payload.status !== state) {
       const sequence = journal.length + 1;
       journal.push({ threadId, eventId: `state:${sequence}`, sequence,
         occurredAt: new Date().toISOString(), kind: "state", payload: { status: state } });
+      dirty = true;
     }
-    const encoded = JSON.stringify(journal);
-    if (Buffer.byteLength(encoded) > MAX_JOURNAL_BYTES) throw new Error("Thread journal storage bound exceeded");
-    const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
-    let fd;
-    try {
-      fd = fs.openSync(temporary, "wx", 0o600);
-      fs.writeFileSync(fd, encoded);
-      fs.fsyncSync(fd);
-      fs.closeSync(fd); fd = undefined;
-      fs.renameSync(temporary, file);
-      const dirFd = fs.openSync(directory, fs.constants.O_RDONLY);
-      try { fs.fsyncSync(dirFd); } finally { fs.closeSync(dirFd); }
-    } finally {
-      if (fd !== undefined) fs.closeSync(fd);
-      try { fs.unlinkSync(temporary); } catch (error) { if (error.code !== "ENOENT") throw error; }
-    }
+    if (!dirty) return journal;
+    writeJournalAtomic(file, directory, journal, maxJournalBytes);
     return journal;
   } finally {
     release();
   }
 }
 
-export async function threadEvents(client, params, { directory = DEFAULT_THREAD_EVENTS_DIRECTORY } = {}) {
+export async function threadEvents(client, params, { directory = DEFAULT_THREAD_EVENTS_DIRECTORY, maxJournalBytes = MAX_JOURNAL_BYTES } = {}) {
   if (!record(params) || Object.keys(params).some((key) => !["threadId", "afterSequence", "limit", "includeTurnEnd"].includes(key))) {
     throw new Error("Invalid thread-events params");
   }
@@ -260,21 +438,24 @@ export async function threadEvents(client, params, { directory = DEFAULT_THREAD_
   if (response.hasMore || response.nextCursor || response.pagination?.hasMore || response.page?.hasMore || response.page?.beforeCursor) throw new Error("Incomplete T3 history");
   const projected = projectThreadEvents(response.thread);
   privateDirectory(directory);
-  const previous = readJournal(path.join(directory, `${threadId}.json`));
-  projected.events.push(...await attachmentEvents(client, response.thread, previous));
+  const previous = loadJournal(path.join(directory, `${threadId}.json`), { directory, maxJournalBytes });
+  projected.events.push(...await attachmentEvents(client, response.thread, previous, directory));
   projected.events.sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
-  const journal = recordThreadEvents(threadId, projected.events, { directory, state: projected.state });
+  const journal = recordThreadEvents(threadId, projected.events, { directory, state: projected.state, maxJournalBytes });
   const view = includeTurnEnd ? journal : baseView(journal);
   if (afterSequence > view.length) throw new Error("Thread journal cursor is ahead of source");
   const events = [];
   let bytes = 0; let artifactBytes = 0;
   for (const stored of view.slice(afterSequence, afterSequence + limit)) {
+    const sizeBytes = stored.kind === "artifact"
+      ? (Number.isSafeInteger(stored.payload.sizeBytes) ? stored.payload.sizeBytes : Buffer.from(stored.payload.contentBase64, "base64").length)
+      : 0;
     const event = stored.kind === "artifact" ? { ...stored, payload: {
       name: stored.payload.name, mediaType: stored.payload.mediaType, sha256: stored.payload.sha256,
-      artifactId: stored.eventId, sizeBytes: Buffer.from(stored.payload.contentBase64, "base64").length,
+      artifactId: stored.eventId, sizeBytes,
     } } : stored;
     const artifactSize = event.kind === "artifact" ? event.payload.sizeBytes : 0;
-    if (artifactBytes + artifactSize > 25 * 1024 * 1024) break;
+    if (artifactBytes + artifactSize > MAX_ARTIFACT_BYTES) break;
     artifactBytes += artifactSize;
     const size = Buffer.byteLength(JSON.stringify(event));
     if (bytes + size > PAGE_BYTES) break;
@@ -336,7 +517,7 @@ const sensitivePath = (name) => name.split(/[\\/]/).some((part) =>
 // KRA-6577: one bad or unreadable item is skipped for this poll, never the
 // whole journal. Invalid names and paths are still never read; an unreadable
 // asset is retried on the next poll because it is not journaled yet.
-async function attachmentEvents(client, thread, previous) {
+async function attachmentEvents(client, thread, previous, directory) {
   const result = [];
   const existing = new Map(previous.map((event) => [event.eventId, event]));
   for (const message of thread.messages ?? []) {
@@ -347,14 +528,16 @@ async function attachmentEvents(client, thread, previous) {
         if (!safeText(attachment.id, 256) || !safeText(attachment.name, 255)
           || attachment.name === "." || attachment.name === ".." || /[/\\\x00]/.test(attachment.name)
           || !safeText(attachment.mimeType, 100) || !Number.isSafeInteger(attachment.sizeBytes)
-          || attachment.sizeBytes < 0 || attachment.sizeBytes > 25 * 1024 * 1024) throw new Error("Invalid thread attachment");
+          || attachment.sizeBytes < 0 || attachment.sizeBytes > MAX_ARTIFACT_BYTES) throw new Error("Invalid thread attachment");
         const eventId = `artifact:${hash(`${message.id}:${attachment.id}`)}`;
         if (existing.has(eventId)) { result.push(existing.get(eventId)); continue; }
         const content = await readAsset(client, { _tag: "attachment", attachmentId: attachment.id,
           fileName: attachment.name, mimeType: attachment.mimeType }, attachment.sizeBytes);
+        const digest = hash(content);
+        writeArtifactBlob(directory, content, digest);
         result.push({ eventId, kind: "artifact",
           occurredAt: iso(message.createdAt), payload: { name: attachment.name, mediaType: attachment.mimeType,
-            contentBase64: content.toString("base64"), sha256: hash(content) } });
+            sizeBytes: content.length, sha256: digest } });
       } catch { continue; }
     }
   }
@@ -375,15 +558,16 @@ async function attachmentEvents(client, thread, previous) {
       if (existing.has(eventId)) { result.push(existing.get(eventId)); continue; }
       const content = await readAsset(client, { _tag: "workspace-file", threadId: thread.id, path: relativePath });
       const digest = hash(content);
+      writeArtifactBlob(directory, content, digest);
       result.push({ eventId, kind: "artifact",
         occurredAt: iso(checkpoint.completedAt), payload: { name: path.posix.basename(relativePath),
-          mediaType: "application/octet-stream", contentBase64: content.toString("base64"), sha256: digest } });
+          mediaType: "application/octet-stream", sizeBytes: content.length, sha256: digest } });
     } catch { continue; }
   }
   return result;
 }
 
-export function threadArtifact(params, { directory = DEFAULT_THREAD_EVENTS_DIRECTORY } = {}) {
+export function threadArtifact(params, { directory = DEFAULT_THREAD_EVENTS_DIRECTORY, maxJournalBytes = MAX_JOURNAL_BYTES } = {}) {
   if (!record(params) || Object.keys(params).some((key) => !["threadId", "eventId", "offset", "limit"].includes(key))) {
     throw new Error("Invalid thread-artifact params");
   }
@@ -391,10 +575,12 @@ export function threadArtifact(params, { directory = DEFAULT_THREAD_EVENTS_DIREC
   if (!UUID.test(threadId) || !safeText(eventId, 200) || !Number.isSafeInteger(offset) || offset < 0
     || !Number.isSafeInteger(limit) || limit < 1 || limit > 393216) throw new Error("Invalid artifact range");
   privateDirectory(directory);
-  const journal = readJournal(path.join(directory, `${threadId}.json`));
+  const journal = loadJournal(path.join(directory, `${threadId}.json`), { directory, maxJournalBytes });
   const event = journal.find((entry) => entry.eventId === eventId && entry.kind === "artifact");
   if (!event) throw new Error("Artifact not journaled for this thread");
-  const content = Buffer.from(event.payload.contentBase64, "base64");
+  const content = typeof event.payload.contentBase64 === "string"
+    ? Buffer.from(event.payload.contentBase64, "base64")
+    : readArtifactBlob(directory, event.payload.sha256, event.payload.sizeBytes);
   if (offset > content.length || hash(content) !== event.payload.sha256) throw new Error("Invalid artifact content");
   const chunk = content.subarray(offset, offset + limit);
   return { threadId, eventId, offset, totalBytes: content.length,

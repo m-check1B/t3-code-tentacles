@@ -88,8 +88,9 @@ test("real T3 attachment and checkpoint producers yield bounded manifest/chunk t
 });
 
 test("RPC advertises and routes thread events while sanitizing errors", async (t) => {
-  const { directory, client } = setup(t);
-  const shim = new RemoteRpcShim(new LoopbackRuntimeAdapter({ client, threadEventsDirectory: directory }));
+  const { directory, thread, client } = setup(t);
+  thread.worktreePath = "/synthetic/bot-workspace";
+  const shim = new RemoteRpcShim(new LoopbackRuntimeAdapter({ client, threadEventsDirectory: directory, allowedWorkspaces: ["/synthetic/bot-workspace"] }));
   const response = await shim.handle({ version: 1, type: "rpc.request", id: "r1", method: "thread-events", params: { threadId: THREAD } });
   assert.equal(response.type, "rpc.result");
   assert.equal(response.result.events[0].eventId, "message:m1");

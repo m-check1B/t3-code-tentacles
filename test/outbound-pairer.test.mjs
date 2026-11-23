@@ -186,8 +186,10 @@ test("pair state refuses broad custom directories and serializes pairer ownershi
 
 test("loopback adapter keeps the relay surface honest about full-access", async () => {
   const calls = [];
+  const allowedWorkspace = "/synthetic/bot-workspace";
   const adapter = new LoopbackRuntimeAdapter({
-    client: { isLoopback: true },
+    client: { isLoopback: true, thread: async (id) => ({ thread: { id, worktreePath: allowedWorkspace } }) },
+    allowedWorkspaces: [allowedWorkspace],
     observeImpl: async (client) => ({
       activeTurns: [{ threadId: "t1", providerInstanceId: client.isLoopback ? "codex" : "other", prompt: "private" }],
       threads: [
@@ -196,7 +198,7 @@ test("loopback adapter keeps the relay surface honest about full-access", async 
         { id: "t3", projectId: "p1", hasPendingUserInput: true, session: { status: "ready", lastError: null } },
         { id: "t4", projectId: "p1", settledAt: "2026-09-09T12:00:00.000Z", session: { status: "ready", lastError: null } },
       ],
-      projects: [{ id: "p1", workspaceRoot: "/private/workspace" }],
+      projects: [{ id: "p1", workspaceRoot: allowedWorkspace }],
     }),
     originateImpl: async (client, params) => { calls.push(["originate", client, params]); return { threadId: "t1" }; },
     continueImpl: async (client, params) => { calls.push(["continue", client, params]); return { threadId: params.threadId }; },
@@ -253,7 +255,9 @@ test("loopback adapter keeps the relay surface honest about full-access", async 
   const projected = JSON.stringify(await adapter.seats());
   assert.equal(projected.includes("private"), false);
   assert.equal(projected.includes("stale private error"), false);
-  assert.deepEqual(await adapter.originate({ workspace: "/tmp/work", title: "T", message: "M" }), { threadId: "t1" });
+  // KRA-10939: an arbitrary non-Bot folder like /tmp/work is refused before T3.
+  await assert.rejects(adapter.originate({ workspace: "/tmp/work", title: "T", message: "M" }), /outside the Bot workspace root/);
+  assert.deepEqual(await adapter.originate({ workspace: allowedWorkspace, title: "T", message: "M" }), { threadId: "t1" });
   assert.deepEqual(await adapter.continue({ threadId: "t1", message: "again", runtimeMode: "full-access" }), { threadId: "t1" });
   assert.deepEqual(await adapter.doctorStatus(), { pairing: "/tmp/synthetic-pair-presence.json", capabilities: { talkTurnResult: null, turnInterrupt: null } });
   assert.deepEqual(calls.map((entry) => entry[2].runtimeMode), ["full-access", "full-access"]);
@@ -267,8 +271,10 @@ test("seats projection keeps a compact report and drops transcript text", async 
   const token = "pair-token-must-not-project";
   const adapter = new LoopbackRuntimeAdapter({
     client: { isLoopback: true },
+    allowedWorkspaces: ["/synthetic/bot-workspace"],
     observeImpl: async () => ({
       activeTurns: [{ threadId: "t1", providerInstanceId: "grok", prompt: secret }],
+      projects: [{ id: "p1", workspaceRoot: "/synthetic/bot-workspace" }],
       threads: [{
         id: "t1",
         projectId: "p1",
@@ -310,9 +316,11 @@ test("seats projection keeps a compact report and drops transcript text", async 
 test("real observe carries a sanitized timestamp and an id-only thread stays unreported", async () => {
   const secret = "activity-payload-must-not-project";
   const adapter = new LoopbackRuntimeAdapter({
+    allowedWorkspaces: ["/synthetic/bot-workspace"],
     client: {
       isLoopback: true,
       snapshot: async () => ({
+        projects: [{ id: "p1", workspaceRoot: "/synthetic/bot-workspace" }],
         threads: [
           {
             id: "t1",
@@ -370,9 +378,11 @@ test("real observe omits the report when raw effort is prohibited or malformed",
   ];
   for (const entry of cases) {
     const adapter = new LoopbackRuntimeAdapter({
+      allowedWorkspaces: ["/synthetic/bot-workspace"],
       client: {
         isLoopback: true,
         snapshot: async () => ({
+          projects: [{ id: "p1", workspaceRoot: "/synthetic/bot-workspace" }],
           threads: [{
             id: "t1",
             projectId: "p1",
@@ -395,9 +405,11 @@ test("real observe omits the report when raw effort is prohibited or malformed",
 test("KRA-11030: seats projects Antigravity thought_level effort accurately", async () => {
   for (const level of ["low", "medium", "high"]) {
     const adapter = new LoopbackRuntimeAdapter({
+      allowedWorkspaces: ["/synthetic/bot-workspace"],
       client: {
         isLoopback: true,
         snapshot: async () => ({
+          projects: [{ id: "p1", workspaceRoot: "/synthetic/bot-workspace" }],
           threads: [{
             id: "t-ag",
             projectId: "p1",
@@ -943,12 +955,14 @@ test("expired pair offers fail closed without exposing pair tokens", async () =>
 test("turn-result validates exact correlation, terminal text, bounds and negotiated support", async () => {
   const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
   let result = { ...params, turnId: "turn", assistantMessageId: "assistant-message", instanceId: "codex", model: "model", effort: "high", state: "succeeded", outputText: "actual reply", internal: "must not escape" };
-  const adapter = new LoopbackRuntimeAdapter({ client: { request: async (url, options) => {
-    assert.equal(url, "/api/orchestration/turn-result");
-    if (!options || options.method !== "POST") return { talkTurnResult: "v1" };
-    assert.deepEqual(options.body, params);
-    return result;
-  } }, doctorImpl: async () => ({ ready: true }) });
+  const adapter = new LoopbackRuntimeAdapter({ allowedWorkspaces: ["/synthetic/bot-workspace"], client: {
+    thread: async (id) => ({ thread: { id, worktreePath: "/synthetic/bot-workspace" } }),
+    request: async (url, options) => {
+      assert.equal(url, "/api/orchestration/turn-result");
+      if (!options || options.method !== "POST") return { talkTurnResult: "v1" };
+      assert.deepEqual(options.body, params);
+      return result;
+    } }, doctorImpl: async () => ({ ready: true }) });
   assert.deepEqual((await adapter.doctorStatus()).capabilities, { talkTurnResult: "v1", turnInterrupt: "turn-interrupt-v1", ...UNPINNED_CAPABILITIES });
   assert.equal((await adapter.turnResult(params)).outputText, "actual reply");
   assert.equal((await adapter.turnResult(params)).assistantMessageId, "assistant-message");
@@ -1052,9 +1066,9 @@ test("failed turn-result carries the session's last error, redacted, first line 
   let state = "failed";
   let lastError = "Claude usage limit reached. Send the message again once the limit resets.\nstack: /Users/someone/x";
   let threadReads = 0;
-  const adapter = new LoopbackRuntimeAdapter({ client: {
+  const adapter = new LoopbackRuntimeAdapter({ allowedWorkspaces: ["/synthetic/bot-workspace"], client: {
     request: async () => ({ ...base, state }),
-    thread: async (id) => { threadReads += 1; assert.equal(id, "thread"); return { thread: { id, session: { status: "error", lastError } } }; }
+    thread: async (id) => { threadReads += 1; assert.equal(id, "thread"); return { thread: { id, worktreePath: "/synthetic/bot-workspace", session: { status: "error", lastError } } }; }
   }, doctorImpl: async () => ({ ready: true }) });
   assert.equal((await adapter.turnResult(params)).failureDetail, "Claude usage limit reached. Send the message again once the limit resets.");
   lastError = "Codex failed: Authorization: Bearer sk-SECRETSECRETSECRET for a@b.example at /Users/someone/project token=abc";
@@ -1065,14 +1079,12 @@ test("failed turn-result carries the session's last error, redacted, first line 
   lastError = null;
   assert.equal("failureDetail" in await adapter.turnResult(params), false);
   state = "succeeded";
-  const before = threadReads;
   await assert.rejects(adapter.turnResult(params), /Invalid correlated/); // succeeded still needs output
-  assert.equal(threadReads, before, "only a failed turn reads the session");
+  assert.equal(threadReads, 6, "reuses non-empty prefetched lastError; re-reads when lastError is empty");
   state = "failed";
-  const broken = new LoopbackRuntimeAdapter({ client: { request: async () => ({ ...base, state: "failed" }), thread: async () => { throw new Error("T3 down"); } }, doctorImpl: async () => ({ ready: true }) });
-  const result = await broken.turnResult(params);
-  assert.equal(result.state, "failed");
-  assert.equal("failureDetail" in result, false);
+  // KRA-10940: when T3 thread lookup fails, turn-result fails closed rather than returning an unverified thread.
+  const broken = new LoopbackRuntimeAdapter({ allowedWorkspaces: ["/synthetic/bot-workspace"], client: { request: async () => ({ ...base, state: "failed" }), thread: async () => { throw new Error("T3 down"); } }, doctorImpl: async () => ({ ready: true }) });
+  await assert.rejects(broken.turnResult(params), /T3 down/);
 });
 
 // Review P1 (17 Oct): one shared vector set with Jack (api/tests/fixtures/redaction_vectors.json).
@@ -1108,9 +1120,9 @@ test("failed turn-result never exports any shared credential shape", async (t) =
   const vectors = JSON.parse(fs.readFileSync(new URL("./fixtures/redaction_vectors.json", import.meta.url), "utf8"));
   for (const [index, lastError] of vectors.secrets.entries()) {
     await t.test(`shared credential vector ${index + 1}`, async () => {
-      const adapter = new LoopbackRuntimeAdapter({ client: {
+      const adapter = new LoopbackRuntimeAdapter({ allowedWorkspaces: ["/synthetic/bot-workspace"], client: {
         request: async () => base,
-        thread: async () => ({ thread: { id: "thread", session: { lastError } } })
+        thread: async () => ({ thread: { id: "thread", worktreePath: "/synthetic/bot-workspace", session: { lastError } } })
       } });
       const result = await adapter.turnResult(params);
       assert.equal(JSON.stringify(result).includes("SECRET"), false, lastError);
@@ -1123,10 +1135,10 @@ test("failed turn-result selects the first nonempty line across all line boundar
   const params = { threadId: "thread", messageId: "message", turnCommandId: "command" };
   const vectors = JSON.parse(fs.readFileSync(new URL("./fixtures/redaction_vectors.json", import.meta.url), "utf8"));
   for (const { input: lastError, expected } of vectors.lines) {
-    const adapter = new LoopbackRuntimeAdapter({ client: {
+    const adapter = new LoopbackRuntimeAdapter({ allowedWorkspaces: ["/synthetic/bot-workspace"], client: {
       request: async () => ({ ...params, state: "failed", turnId: "turn", assistantMessageId: null,
         instanceId: "claudeAgent", model: "fixture", effort: "high", outputText: null }),
-      thread: async () => ({ thread: { id: "thread", session: { lastError } } })
+      thread: async () => ({ thread: { id: "thread", worktreePath: "/synthetic/bot-workspace", session: { lastError } } })
     } });
     assert.equal((await adapter.turnResult(params)).failureDetail, expected, JSON.stringify(lastError));
   }
@@ -1140,11 +1152,11 @@ test("key-interior TAB credentials never cross helper or RPC publication", async
   for (const key of ["coo\tkie", "authori\tzation", "pass\tword", "client_secre\tt"]) {
     const raw = `Error: {"${key}":"${marker}"}`;
     assert.equal(redactFailureLine(raw), null);
-    const adapter = new LoopbackRuntimeAdapter({ client: {
+    const adapter = new LoopbackRuntimeAdapter({ allowedWorkspaces: ["/synthetic/bot-workspace"], client: {
       request: async () => ({ ...params, state: "failed", turnId: "b3-turn",
         assistantMessageId: null, instanceId: "fixture", model: "fixture", effort: "high",
         outputText: null, failureDetail: marker, internalDiagnostic: marker }),
-      thread: async () => ({ thread: { id: params.threadId, session: { lastError: raw } } })
+      thread: async () => ({ thread: { id: params.threadId, worktreePath: "/synthetic/bot-workspace", session: { lastError: raw } } })
     } });
     const out = await new RemoteRpcShim(adapter).handle({ version: 1, type: "rpc.request",
       id: "b3-probe", method: "turn-result", params });
@@ -1180,10 +1192,10 @@ test("ordinary TAB word and delimiter whitespace stays supported", async () => {
     ["Claude usage limit reached.", "Claude usage limit reached."],
   ]) {
     assert.equal(redactFailureLine(raw), expected);
-    const adapter = new LoopbackRuntimeAdapter({ client: {
+    const adapter = new LoopbackRuntimeAdapter({ allowedWorkspaces: ["/synthetic/bot-workspace"], client: {
       request: async () => ({ ...params, state: "failed", turnId: "turn", assistantMessageId: null,
         instanceId: "fixture", model: "fixture", effort: "high", outputText: null }),
-      thread: async () => ({ thread: { id: params.threadId, session: { lastError: raw } } })
+      thread: async () => ({ thread: { id: params.threadId, worktreePath: "/synthetic/bot-workspace", session: { lastError: raw } } })
     } });
     const out = await new RemoteRpcShim(adapter).handle({ version: 1, type: "rpc.request",
       id: "tab-control", method: "turn-result", params });
@@ -1202,9 +1214,10 @@ test("escaped diagnostics fail closed even at final RPC publication", async () =
     .map((spelling) => `Error: {"${spelling}":"FAKE_B3_SECRET_314"}`));
   for (const raw of [...vectors.unsupportedEncodings, ...splitDiagnostics]) {
     assert.equal(redactFailureLine(raw), null);
-    const adapter = new LoopbackRuntimeAdapter({ client: {
+    const adapter = new LoopbackRuntimeAdapter({ allowedWorkspaces: ["/synthetic/bot-workspace"], client: {
       request: async () => ({ ...params, state: "failed", turnId: "turn", assistantMessageId: null,
-        instanceId: "claudeAgent", model: "fixture", effort: "high", outputText: null })
+        instanceId: "claudeAgent", model: "fixture", effort: "high", outputText: null }),
+      thread: async () => ({ thread: { id: "thread", worktreePath: "/synthetic/bot-workspace" } })
     } });
     // A helper regression must not bypass the final turn-result publication guard.
     adapter.sessionFailureDetail = async () => raw;
@@ -1229,8 +1242,8 @@ test("shared whitespace/quote key matrix never crosses helper or RPC publication
   for (const raw of vectors) {
     if (redactFailureLine(raw) !== null) disclosures.push(["helper", raw]);
     for (const final of [false, true]) {
-      const adapter = new LoopbackRuntimeAdapter({ client: { request: async () => failed,
-        thread: async () => ({ thread: { id: "thread", session: { lastError: raw } } }) } });
+      const adapter = new LoopbackRuntimeAdapter({ allowedWorkspaces: ["/synthetic/bot-workspace"], client: { request: async () => failed,
+        thread: async () => ({ thread: { id: "thread", worktreePath: "/synthetic/bot-workspace", session: { lastError: raw } } }) } });
       if (final) adapter.sessionFailureDetail = async () => raw;
       const out = await new RemoteRpcShim(adapter).handle({ version: 1, type: "rpc.request", id: "matrix", method: "turn-result", params });
       assert.equal(out.type, "rpc.result");
@@ -1281,9 +1294,9 @@ test("shared prose controls (contractions, possessives, quoted values) keep fail
   for (const raw of controls) {
     const expected = raw.split(/[\s\u0085]+/).join(" ");
     assert.equal(redactFailureLine(raw), expected, JSON.stringify(raw));
-    const adapter = new LoopbackRuntimeAdapter({ client: { request: async () => ({ ...params, state: "failed", turnId: "turn",
+    const adapter = new LoopbackRuntimeAdapter({ allowedWorkspaces: ["/synthetic/bot-workspace"], client: { request: async () => ({ ...params, state: "failed", turnId: "turn",
       assistantMessageId: null, instanceId: "claudeAgent", model: "fixture", effort: "high", outputText: null }),
-      thread: async () => ({ thread: { id: "thread", session: { lastError: raw } } }) } });
+      thread: async () => ({ thread: { id: "thread", worktreePath: "/synthetic/bot-workspace", session: { lastError: raw } } }) } });
     const out = await new RemoteRpcShim(adapter).handle({ version: 1, type: "rpc.request", id: "control", method: "turn-result", params });
     assert.equal(out.result.failureDetail, expected, JSON.stringify(raw));
   }

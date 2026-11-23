@@ -744,13 +744,15 @@ export async function continueThread(client, {
   freshProviderContext,
   turnCommandId = randomUUID(),
   messageId = randomUUID(),
-}, { prepareTalkWorkspace } = {}) {
+}, { prepareTalkWorkspace, prefetchedThread, prefetchedWorkspace } = {}) {
   // Partial selection input is refused before any read or dispatch.
   const retained = !requireContinueSelection({ instanceId, model, options, budget });
   let modelSelection = retained ? undefined : await liveModelSelection(client, resolveModelSelection({ instanceId, model, options, budget }));
   runtimeMode = requireExplicitRuntimeMode(runtimeMode);
   await requireFreshProviderContext(client, { freshProviderContext, instanceId });
-  const detail = await waitForThread(client, threadId);
+  const detail = prefetchedThread && prefetchedThread.id === threadId
+    ? { thread: prefetchedThread }
+    : await waitForThread(client, threadId);
   const existingMessage = (detail.thread.messages || []).find((entry) => entry.id === messageId);
   if (existingMessage && existingMessage.text !== undefined && existingMessage.text !== message) throw new Error("messageId was already used with different input");
   if (!existingMessage) {
@@ -759,7 +761,9 @@ export async function continueThread(client, {
     if (prepareTalkWorkspace) {
       // KRA-9781: workspaces from 0.5.0-jack.1..5 predate the guard. A throw aborts before T3.
       // T3 runs a thread in its worktreePath when set, else in the project root; unresolvable fails closed.
-      let workspace = detail.thread.worktreePath;
+      let workspace = typeof prefetchedWorkspace === "string" && prefetchedWorkspace !== ""
+        ? prefetchedWorkspace
+        : detail.thread.worktreePath;
       if (typeof workspace !== "string" || workspace === "") {
         const snapshot = await readOrchestrationSnapshot(client);
         const project = (Array.isArray(snapshot?.projects) ? snapshot.projects : []).find((entry) => entry?.id === detail.thread.projectId);

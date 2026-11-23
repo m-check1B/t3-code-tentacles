@@ -441,6 +441,7 @@ function projectThreadSummary(thread) {
   return {
     id: thread.id ?? null,
     projectId: thread.projectId ?? null,
+    worktreePath: typeof thread.worktreePath === "string" && thread.worktreePath !== "" ? thread.worktreePath : null,
     title: thread.title ?? null,
     modelSelection: thread.modelSelection ?? null,
     runtimeMode: thread.runtimeMode ?? null,
