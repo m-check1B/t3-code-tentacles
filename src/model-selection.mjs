@@ -1,3 +1,4 @@
+import { antigravityModelAlias } from "./antigravity.mjs";
 import { BUILT_IN_KIMI_MODEL, BUILT_IN_PI_MODEL, DEFAULT_DEEPSEEK_MODEL } from "./config.mjs";
 
 export const NOWEB_LAB_DRIVERS = Object.freeze({
@@ -205,6 +206,7 @@ export function budgetOptionId(instanceId, model) {
   if (instanceId === "hermes" && typeof model === "string" && model.startsWith("openai-codex:")) {
     return "reasoningEffort";
   }
+  if (instanceId === "antigravity" && !antigravityModelAlias(model)) return "thought_level";
   return null;
 }
 

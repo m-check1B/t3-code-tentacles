@@ -361,6 +361,10 @@ test("real observe omits the report when raw effort is prohibited or malformed",
     { label: "xhigh option", selection: { model: "grok-4.7", options: [{ id: "reasoningEffort", value: "xhigh" }] } },
     { label: "xhigh space", selection: { model: "grok-4.7", options: [{ id: "reasoningEffort", value: "xhigh " }] } },
     { label: "XHIGH", selection: { model: "grok-4.7", options: [{ id: "effort", value: "XHIGH" }] } },
+    { label: "thought_level xhigh", selection: { model: "gemini-4-hydrogen", options: [{ id: "thought_level", value: "xhigh" }] } },
+    { label: "thought_level XHIGH", selection: { model: "gemini-4-hydrogen", options: [{ id: "thought_level", value: "XHIGH" }] } },
+    { label: "thought_level empty", selection: { model: "gemini-4-hydrogen", options: [{ id: "thought_level", value: "" }] } },
+    { label: "thought_level key", selection: { model: "gemini-4-hydrogen", thought_level: "xhigh " } },
     { label: "empty", selection: { model: "grok-4.7", options: [{ id: "budget", value: "" }] } },
     { label: "key", selection: { model: "grok-4.7", effort: "xhigh " } },
   ];
@@ -385,6 +389,37 @@ test("real observe omits the report when raw effort is prohibited or malformed",
     const encoded = JSON.stringify(projected);
     assert.equal(encoded.includes("effort unset"), false, entry.label);
     assert.equal(encoded.toLowerCase().includes("xhigh"), false, entry.label);
+  }
+});
+
+test("KRA-11030: seats projects Antigravity thought_level effort accurately", async () => {
+  for (const level of ["low", "medium", "high"]) {
+    const adapter = new LoopbackRuntimeAdapter({
+      client: {
+        isLoopback: true,
+        snapshot: async () => ({
+          threads: [{
+            id: "t-ag",
+            projectId: "p1",
+            updatedAt: "2026-11-23T12:00:00.000Z",
+            modelSelection: {
+              instanceId: "antigravity",
+              model: "gemini-4-hydrogen",
+              options: [{ id: "thought_level", value: level }],
+            },
+            session: { status: "running", providerInstanceId: "antigravity" },
+          }],
+        }),
+        archivedShell: async () => ({ threads: [] }),
+      },
+    });
+    const projected = await adapter.seats();
+    assert.deepEqual(projected.threads[0].report, {
+      status: "generating",
+      lastActivity: "2026-11-23T12:00:00.000Z",
+      summary: `generating. gemini-4-hydrogen, effort ${level}.`,
+      effort: level,
+    });
   }
 });
 

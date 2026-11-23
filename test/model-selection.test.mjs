@@ -78,6 +78,10 @@ test("budgetOptionId maps only known lab effort knobs", () => {
   assert.equal(budgetOptionId("hermes", "some-other-model"), null);
   assert.equal(budgetOptionId("claudeAgent", "claude-opus-4-6"), "effort");
   assert.equal(budgetOptionId("grok", "grok-4.7"), "reasoningEffort");
+  assert.equal(budgetOptionId("antigravity", "gemini-4-hydrogen"), "thought_level");
+  assert.equal(budgetOptionId("antigravity", "gemini-4-argon"), "thought_level");
+  assert.equal(budgetOptionId("antigravity"), "thought_level");
+  assert.equal(budgetOptionId("antigravity", "gemini-3.8-flash-high"), null);
   for (const lab of ["cursor", "deepseek", "kimi", "pi", "opencode"]) {
     assert.equal(budgetOptionId(lab, "any"), null, lab);
   }
@@ -1119,4 +1123,49 @@ test("act thread.continue/thread.restart keep explicit and all-omitted selection
   await applyIntent(retainedRestart, { action: "thread.restart", threadId: "t1", text: "go", runtimeMode: "full-access" }, waits);
   assert.deepEqual(retainedRestart.commands.map((command) => command.type), ["thread.session.stop", "thread.turn.start"]);
   assert.deepEqual(retainedRestart.commands[1].modelSelection, { instanceId: "grok", model: "grok-4.7", options: [{ id: "reasoningEffort", value: "high" }] });
+});
+
+test("KRA-11030: Antigravity base models map budget and policy to thought_level without breaking legacy suffixed aliases", () => {
+  for (const level of ["low", "medium", "high"]) {
+    assert.deepEqual(
+      resolveModelSelection({ instanceId: "antigravity", model: "gemini-4-hydrogen", budget: level }),
+      { instanceId: "antigravity", model: "gemini-4-hydrogen", options: [{ id: "thought_level", value: level }] },
+    );
+    assert.deepEqual(
+      resolveModelSelection({ instanceId: "antigravity", model: "gemini-4-hydrogen", options: [{ id: "thought_level", value: level }] }),
+      { instanceId: "antigravity", model: "gemini-4-hydrogen", options: [{ id: "thought_level", value: level }] },
+    );
+  }
+  // Missing budget pins the default thought_level (high).
+  assert.deepEqual(
+    resolveModelSelection({ instanceId: "antigravity", model: "gemini-4-hydrogen" }),
+    { instanceId: "antigravity", model: "gemini-4-hydrogen", options: [{ id: "thought_level", value: "high" }] },
+  );
+  // Above high stays Founder-manual only and duplicate thought_level options refuse.
+  assert.throws(
+    () => resolveModelSelection({ instanceId: "antigravity", model: "gemini-4-hydrogen", options: [{ id: "thought_level", value: "xhigh" }] }),
+    /thought_level must be one of low, medium, high; above high is Founder-manual only/,
+  );
+  assert.throws(
+    () => resolveModelSelection({ instanceId: "antigravity", model: "gemini-4-hydrogen", options: [{ id: "thought_level", value: "low" }, { id: "thought_level", value: "high" }] }),
+    /must not repeat option id thought_level/,
+  );
+  // Retained continues pin missing thought_level, keep valid thought_level, and refuse xhigh.
+  assert.deepEqual(
+    retainedSelectionPin({ instanceId: "antigravity", model: "gemini-4-hydrogen" }),
+    { instanceId: "antigravity", model: "gemini-4-hydrogen", options: [{ id: "thought_level", value: "high" }] },
+  );
+  assert.equal(
+    retainedSelectionPin({ instanceId: "antigravity", model: "gemini-4-hydrogen", options: [{ id: "thought_level", value: "medium" }] }),
+    undefined,
+  );
+  assert.throws(
+    () => retainedSelectionPin({ instanceId: "antigravity", model: "gemini-4-hydrogen", options: [{ id: "thought_level", value: "xhigh" }] }),
+    /thought_level must be one of low, medium, high; above high is Founder-manual only/,
+  );
+  // Legacy effort-suffixed slugs do not invent a conflicting thought_level option.
+  assert.deepEqual(
+    resolveModelSelection({ instanceId: "antigravity", model: "gemini-4-argon-low" }),
+    { instanceId: "antigravity", model: "gemini-4-argon-low" },
+  );
 });

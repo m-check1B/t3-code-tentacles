@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- KRA-11030: recognize Antigravity's `thought_level` option across T3 v2 native turn results (`EFFORT_OPTION_IDS`), outbound pairer seats projection (`EFFORT_KEYS`), and model selection (`budgetOptionId` for non-alias Antigravity models) so Antigravity thinking levels are forwarded and strictly attested without loosening effort validation.
+
 ## [0.5.0-jack.21] - 2026-11-21
 
 In short: this release makes Jack tools on Local · Codex safe against the owner's own Codex setup, and builds the roads for four more labs, which stay off by default. Turns without Jack tools, and Bots on Local · Claude Code, work as before.

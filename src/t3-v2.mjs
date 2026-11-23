@@ -471,7 +471,7 @@ export function threadDetailToV1(detail, threadId) {
 // ── Native turn result (upstream T3 v2, no patched turn-result route) ──────
 
 const RUN_RESULT_STATE = { completed: "succeeded", failed: "failed", cancelled: "cancelled", interrupted: "cancelled", rolled_back: "cancelled" };
-const EFFORT_OPTION_IDS = new Set(["reasoningEffort", "effort"]);
+const EFFORT_OPTION_IDS = new Set(["reasoningEffort", "effort", "thought_level"]);
 const SAFE_RESULT_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 
 // Upstream provider message ids can carry percent-escapes and exceed 128

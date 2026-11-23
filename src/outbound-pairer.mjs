@@ -180,7 +180,7 @@ function pairedThreadLastActivity(thread) {
 }
 
 const OMIT_REPORT = Symbol("omit-report");
-const EFFORT_KEYS = ["budget", "effort", "reasoningEffort"];
+const EFFORT_KEYS = ["budget", "effort", "reasoningEffort", "thought_level"];
 
 function effortRawRefused(raw) {
   if (typeof raw !== "string") return true;
