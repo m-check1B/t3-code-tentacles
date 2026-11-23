@@ -4,9 +4,13 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.5.0-jack.22] - 2026-11-23
+
 ### Fixed
 
 - KRA-11030: recognize Antigravity's `thought_level` option across T3 v2 native turn results (`EFFORT_OPTION_IDS`), outbound pairer seats projection (`EFFORT_KEYS`), and model selection (`budgetOptionId` for non-alias Antigravity models) so Antigravity thinking levels are forwarded and strictly attested without loosening effort validation.
+- KRA-10939, KRA-10940: isolate remote turns and thread/artifact reads in the outbound pairer to Bot workspaces (with repeatable owner-local `--allow-workspace` / `TENTACLES_ALLOWED_WORKSPACES` canonical real-directory allowlist in `tentacles pair`), enforcing workspace scope before `continueImpl`, `existingMessage`, or retained selection pins so private threads never leak `projectId` or model errors.
+- KRA-10941: content-address thread-event artifacts by SHA-256, skip no-op journal rewrites, and run oversized/legacy journal migration and atomic rewrite under `acquirePairStateLock`.
 
 ## [0.5.0-jack.21] - 2026-11-21
 
