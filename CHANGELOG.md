@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- `thread-events` journals an unsafe upstream message id (longer than 128 characters or outside `[A-Za-z0-9._:-]`, seen on Antigravity) under the same `t3v2-sha256:` digest that `turn-result` reports as `assistantMessageId`, so Jack links the reply it already filed instead of importing it twice. A message already journaled under its raw id keeps it (PR #86).
+- An idempotent `originate` that finds the bridge ledger lock held now waits up to 20 s (below Sphere's 30 s relay wait) instead of failing at once with `Bridge state is busy`, so two Bots starting a Local Talk at the same moment both start (PR #85).
+
 ## [0.5.0-jack.22] - 2026-11-23
 
 ### Fixed
