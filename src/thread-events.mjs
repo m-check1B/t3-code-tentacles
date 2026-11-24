@@ -5,6 +5,7 @@ import { DEFAULT_STATE_DIR } from "./config.mjs";
 import { acquirePairStateLock } from "./pair-state.mjs";
 import { privateModeOk } from "./platform.mjs";
 import { classifyFailure } from "./failure-codes.mjs";
+import { safeResultId } from "./t3-v2.mjs";
 
 export const DEFAULT_THREAD_EVENTS_DIRECTORY = path.join(DEFAULT_STATE_DIR, "thread-events");
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -229,8 +230,12 @@ function iso(value) {
   return new Date(value).toISOString();
 }
 
-/** Compact allowlisted projection; raw terminal input/output and auth stay unread. */
-export function projectThreadEvents(thread) {
+/**
+ * Compact allowlisted projection; raw terminal input/output and auth stay unread.
+ * `journaled` holds event ids already in the journal: a message journaled under
+ * its raw id keeps it, so an old journal never gains a second copy.
+ */
+export function projectThreadEvents(thread, { journaled } = {}) {
   if (!record(thread) || !UUID.test(thread.id)) throw new Error("Invalid thread identity");
   const projected = [];
   const messages = Array.isArray(thread.messages) ? thread.messages : [];
@@ -242,9 +247,12 @@ export function projectThreadEvents(thread) {
       && (!message.turnId || message.turnId === thread.session?.activeTurnId)) continue;
     if (!safeText(message.id, 160) || typeof message.text !== "string" || message.text.length > 100_000) throw new Error("Invalid thread message");
     if (!message.text) continue;
-    const eventId = `message:${message.id}`;
+    // turn-result reports an unsafe upstream id as safeResultId(id); the journal
+    // must name the same message the same way or Jack imports the reply twice.
+    const messageId = journaled?.has(`message:${message.id}`) ? message.id : safeResultId(message.id);
+    const eventId = `message:${messageId}`;
     projected.push({ eventId, kind: "message", occurredAt: iso(message.createdAt),
-      payload: { role: message.role, text: message.text, messageId: message.id,
+      payload: { role: message.role, text: message.text, messageId,
         ...(safeText(message.turnId, 200) ? { turnId: message.turnId } : {}) } });
     // Only explicit user marks become memory candidates. Jack revalidates the
     // complete original text against its durable-facts parser, including
@@ -436,9 +444,9 @@ export async function threadEvents(client, params, { directory = DEFAULT_THREAD_
   // If upstream announces windowed history, refuse silent loss. A future T3
   // full-history/event API adapter must explicitly page it before projecting.
   if (response.hasMore || response.nextCursor || response.pagination?.hasMore || response.page?.hasMore || response.page?.beforeCursor) throw new Error("Incomplete T3 history");
-  const projected = projectThreadEvents(response.thread);
   privateDirectory(directory);
   const previous = loadJournal(path.join(directory, `${threadId}.json`), { directory, maxJournalBytes });
+  const projected = projectThreadEvents(response.thread, { journaled: new Set(previous.map((event) => event.eventId)) });
   projected.events.push(...await attachmentEvents(client, response.thread, previous, directory));
   projected.events.sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
   const journal = recordThreadEvents(threadId, projected.events, { directory, state: projected.state, maxJournalBytes });
