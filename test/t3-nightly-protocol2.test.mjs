@@ -34,7 +34,7 @@ function server(shape, { threadDetail = NIGHTLY.threadDetail, patchedTurnResult 
     const { pathname } = new URL(url);
     reads.push([init.method ?? "GET", pathname]);
     if (pathname === "/.well-known/t3/environment") return json({ orchestrationProtocolVersion: 2 });
-    if (pathname === "/api/orchestration/shell") return json({ schemaVersion: 2, snapshotSequence: 1, projects: [], threads: [] });
+    if (pathname === "/api/orchestration/shell") return json({ schemaVersion: 2, snapshotSequence: 1, projects: [{ id: threadDetail.projection.thread.projectId, workspaceRoot: "/synthetic/bot-workspace" }], threads: [] });
     if (pathname.startsWith("/api/orchestration/threads/")) return json(threadDetail);
     if (pathname === "/api/orchestration/turn-result") {
       if (shape === "upstream") return html();
@@ -248,7 +248,7 @@ test("native turn result maps run states and keeps output only for success", () 
 
 test("pairer turn-result accepts the native upstream record through its closed validator", async () => {
   const { client } = server("upstream");
-  const adapter = new LoopbackRuntimeAdapter({ client, doctorImpl: async () => ({ labs: [] }) });
+  const adapter = new LoopbackRuntimeAdapter({ client, allowedWorkspaces: ["/synthetic/bot-workspace"], doctorImpl: async () => ({ labs: [] }) });
   const tuple = { threadId: THREAD_ID, messageId: RUN_1.userMessageId, turnCommandId: "receipt-command" };
   const result = await adapter.turnResult(tuple);
   assert.equal(result.state, "succeeded");
@@ -261,7 +261,7 @@ test("pairer turn-result on patched T3 still posts to the patched route", async 
   const { client, reads } = server("patched", {
     patchedTurnResult: (body) => ({ ...body, turnId: "turn-1", assistantMessageId: "a-1", instanceId: "codex", model: "gpt-5.6-luna", effort: "low", state: "succeeded", outputText: "PONG" }),
   });
-  const adapter = new LoopbackRuntimeAdapter({ client, doctorImpl: async () => ({ labs: [] }) });
+  const adapter = new LoopbackRuntimeAdapter({ client, allowedWorkspaces: ["/synthetic/bot-workspace"], doctorImpl: async () => ({ labs: [] }) });
   assert.equal((await adapter.turnResult(tuple)).outputText, "PONG");
   assert.ok(reads.some(([method, pathname]) => method === "POST" && pathname === "/api/orchestration/turn-result"));
 });
@@ -295,8 +295,56 @@ test("unsafe upstream assistant ids (Antigravity) become a stable safe digest; s
   const assistant = detail.projection.messages.filter((message) => message.role === "assistant" && message.runId === RUN_1.id).at(-1);
   assistant.id = unsafe;
   const { client } = server("upstream", { threadDetail: detail });
-  const adapter = new LoopbackRuntimeAdapter({ client, doctorImpl: async () => ({ labs: [] }) });
+  const adapter = new LoopbackRuntimeAdapter({ client, allowedWorkspaces: ["/synthetic/bot-workspace"], doctorImpl: async () => ({ labs: [] }) });
   const result = await adapter.turnResult({ threadId: THREAD_ID, messageId: RUN_1.userMessageId, turnCommandId: "c" });
   assert.equal(result.assistantMessageId, mapped);
   assert.equal(result.outputText, "PONG");
+});
+
+test("KRA-11030: nativeTurnResult and pairer turn-result attest Antigravity thought_level strictly", async () => {
+  const tuple = { threadId: THREAD_ID, messageId: RUN_1.userMessageId, turnCommandId: "antigravity-cmd" };
+  const makeDetail = (options, { instanceId = "antigravity", model = "gemini-4-hydrogen" } = {}) => {
+    const detail = clone(NIGHTLY.threadDetail);
+    const run = detail.projection.runs.find((entry) => entry.id === RUN_1.id);
+    run.providerInstanceId = instanceId;
+    run.modelSelection = { instanceId, model, options };
+    return detail;
+  };
+
+  for (const level of ["low", "medium", "high", "xhigh"]) {
+    const detail = makeDetail([{ id: "thought_level", value: level }]);
+    const direct = nativeTurnResult(detail, tuple);
+    assert.equal(direct.state, "succeeded", level);
+    assert.equal(direct.instanceId, "antigravity", level);
+    assert.equal(direct.model, "gemini-4-hydrogen", level);
+    assert.equal(direct.effort, level, level);
+
+    const { client } = server("upstream", { threadDetail: detail });
+    const adapter = new LoopbackRuntimeAdapter({ client, allowedWorkspaces: ["/synthetic/bot-workspace"], doctorImpl: async () => ({ labs: [] }) });
+    const attested = await adapter.turnResult(tuple);
+    assert.equal(attested.instanceId, "antigravity", level);
+    assert.equal(attested.model, "gemini-4-hydrogen", level);
+    assert.equal(attested.effort, level, level);
+    assert.equal(attested.outputText, "PONG", level);
+  }
+
+  // Mismatch / strict attestation: actual executed thought_level is reported verbatim (never coerced to requested).
+  const mismatched = nativeTurnResult(makeDetail([{ id: "thought_level", value: "low" }]), tuple);
+  assert.equal(mismatched.effort, "low");
+  assert.notEqual(mismatched.effort, "high");
+
+  // Malformed thought_level values fail closed to null rather than being echoed.
+  for (const bad of ["", "high ", "bad/value", true, "a".repeat(33)]) {
+    assert.equal(nativeTurnResult(makeDetail([{ id: "thought_level", value: bad }]), tuple).effort, null, JSON.stringify(bad));
+  }
+
+  // Existing Codex (reasoningEffort) and Claude (effort) extraction stays intact.
+  assert.equal(
+    nativeTurnResult(makeDetail([{ id: "reasoningEffort", value: "medium" }], { instanceId: "codex", model: "gpt-5.6-luna" }), tuple).effort,
+    "medium",
+  );
+  assert.equal(
+    nativeTurnResult(makeDetail([{ id: "effort", value: "high" }], { instanceId: "claudeAgent", model: "claude-sonnet-5" }), tuple).effort,
+    "high",
+  );
 });

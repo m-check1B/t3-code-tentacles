@@ -2,7 +2,8 @@
 
 **Tentacles lets one AI agent hire and steer other AI agents.**
 [T3 Code](https://github.com/pingdotgg/t3code) is an app that runs many coding
-agents side by side (Claude Code, Codex, Cursor, Grok Code, OpenCode), but a
+agents side by side (Claude Code, Codex, Cursor, Grok Code, OpenCode,
+Antigravity), but a
 person drives it by clicking. Tentacles is a small command line that lets an
 agent drive it instead. Your orchestrator, the "chair" (the Grok Bot, Agent
 Jack, Claude Code or a plain script), asks `tentacles doctor` which labs are
@@ -20,7 +21,7 @@ The public command is `tentacles`; `t3-agent-bridge` is an exact compatibility
 alias.
 
 T3 Code already orchestrates Codex CLI, Claude Code CLI, Grok Code CLI, OpenCode CLI,
-and Cursor CLI, plus its own `t3 pair` / `app.t3.codes` remote path. Those are
+Cursor CLI and Antigravity (Gemini), plus its own `t3 pair` / `app.t3.codes` remote path. Those are
 T3-native capabilities, not Tentacles inventions or Tentacles proof claims.
 T3's native `codex` driver can host multiple named instances with different
 Codex binaries. Tentacles uses that existing seam to keep the standalone CLI
@@ -117,8 +118,8 @@ arrows and two different proof claims.
                         without the T3 GUI
                                 |
               [Tentacles adapter: protocol V1 / V2]
-               V2: patched atomic mode + message RPC
-               Talk: patched turn-result contract
+               V2: stock T3 Code (Beta) 0.1.8+
+               Talk: exact run joined to messageId
                                 |
                             [T3 Code]
                                 |
@@ -129,7 +130,7 @@ arrows and two different proof claims.
                  |                             |
   [Codex CLI] [Claude Code CLI]     [Kimi CLI] [DeepSeek CLI]
   [Grok Code CLI] [OpenCode CLI]   [Hermes] [Pi CLI]
-  [Cursor CLI]
+  [Cursor CLI] [Antigravity]
   [t3 pair / app.t3.codes]
 ```
 
@@ -148,11 +149,11 @@ flowchart TB
     Chairs --> ChairCLI["Tentacles chair CLI"]
     ChairCLI --> Adapter["Tentacles adapter: negotiated V1 / V2"]
     Adapter --> V1["V1 orchestration API"]
-    Adapter --> V2["V2: patched atomic mode + message RPC"]
+    Adapter --> V2["V2: stock T3 Code (Beta), see src/t3-support.mjs"]
     V1 --> T3["T3 Code"]
     V2 --> T3
-    T3 --> Result["Talk requires patched turn-result correlation"]
-    T3 --> Native["T3 native: Codex CLI, Claude Code CLI, Grok Code CLI, OpenCode CLI, Cursor CLI, t3 pair / app.t3.codes"]
+    T3 --> Result["Talk: exact turn result from the thread projection"]
+    T3 --> Native["T3 native: Codex CLI, Claude Code CLI, Grok Code CLI, OpenCode CLI, Cursor CLI, Antigravity (Gemini), t3 pair / app.t3.codes"]
     T3 --> Additive["Tentacles additive: Kimi CLI, DeepSeek CLI, Hermes, Pi CLI"]
 ```
 
@@ -164,13 +165,15 @@ flowchart TB
 | --- | --- |
 | Tentacles version | This is the 0.5 source line; identify the exact commit as well as the package version. It does not identify the installed or running build. |
 | Negotiated protocol | The T3 environment descriptor selects V1 or V2. An absent protocol field or descriptor selects V1; an unknown protocol refuses. Tentacles 0.5 can still use V1. |
-| Required patched T3 extensions | V2 turns require `orchestration.dispatchMessageWithMode` to accept mode and message atomically. Local Talk also requires the patched `turn-result` contract with exact command/message/run correlation. A V2 descriptor alone proves neither extension. |
+| Supported T3 Code | The official, unmodified T3 Code (Beta) in the range stated in `src/t3-support.mjs` (`T3_SUPPORT`) (today 0.1.8 through 0.1.11, tested on v0.1.11). No fork or patched build is needed or asked for. Doctor reports `t3.support` (`supported`, `untested`, `unsupported`, `legacy`, `unknown`) and, outside the range, one recovery line with the official download. Patched builds (TPLUS fork 0.0.42-tplus.*, staging Server labs 0.1.0-jack.*) report `legacy` and still work through the legacy patched route until the estate has moved; that path is marked for removal. |
 | Staged runtime proof | Verify exact installed/running T3 and Tentacles builds, selected protocol, extensions, and real flows on each host through the authorized rollout gates. Source tests and a ready lab row do not prove a cutover. |
 
-The V2 T3 source of record is `m-check1B/t3code-hermes-private-archive`, branch
-`jack/upstream-0.1.0` (audited stage-1 commit `e027af1a`). The 24 October 2026
-audit found every inspected live host still using V1; the staged estate V2
-cutover remains incomplete. This documentation changes no runtime or host pin.
+The T3 source of record is upstream `pingdotgg/t3code` (official releases only;
+nightlies are not supported). The supported range lives in one machine-readable
+place, `T3_SUPPORT` in `src/t3-support.mjs`, so every vendored copy carries it;
+`tentacles doctor --json` reports it as `t3.support`. A
+scheduled job (`.github/workflows/upstream-t3-stable.yml`) proves every new
+upstream stable release against Tentacles without any lab login.
 See [protocol support and limits](docs/orchestration.md#protocol-support-and-runtime-proof).
 
 Remote clients use Tentacles only after the optional outbound pairing path has
@@ -236,16 +239,100 @@ Local Talk support is separate from lab readiness. Doctor probes T3's
 `GET /api/orchestration/turn-result` and publishes `capabilities.talkTurnResult`
 only for the exact `"v1"` contract. The bounded `t3.talk` finding carries
 `status`, `code`, and one-line `action` text for inline recovery. A missing route,
-SPA response, or absent contract reports `t3_not_patched`; timeout, connection,
+SPA response, or absent contract reports `t3_not_patched` (machine code kept for
+compatibility; its action names the supported stock range and the official download); timeout, connection,
 and authentication failures remain unavailable. Local doctor and the paired
 `doctor-status` report use the same outcome. No response bodies are published.
+
+Jack tools on a Local Bot (Local · Claude Code, Local · Codex). A paired Agent Jack
+that pinned its origin in the pair offer gets `jackMcpProxy` and `jackMcpSelf` in
+`doctor-status`, and its Bots then get Jack's own tools and their connectors. A
+pairing without a pinned origin (an older Agent Jack) gets only the public docs
+server, so that Agent Jack keeps refusing connector turns itself, as before. People
+in the Talk see the names of the tools the Bot used on the owner's computer, never
+their input or output.
+
+Local · Codex home (KRA-10891). On a Codex Bot turn with a server list, Tentacles
+uses a Codex home only where the table below proves it equal to the one stock T3
+0.1.11 hands Codex (each "equal" row checked with codex-cli 0.169.0). Every other
+setup refuses before the stop. The server-name check and the trust table then use
+exactly that home. Turns without a server list, and other labs, read nothing new.
+A later review judges against these two tables; a new input outside them that
+fails closed is a table row to add, not a defect.
+
+Table 2, the Codex home (closed). "svc" is T3's `service.env`; "field" is the CODEX_HOME path field, trimmed as T3's schema trims it; "env" is the Codex instance's environment list. T3's `~` is T3's own `$HOME`, which a `HOME` in svc moves. Rows 16, 17, 19 and 20 are checked first, then row 1, then row 15, then the rest. Every refusal is `bot_connectors.codex_home_field`, with one fix: put the absolute path of the Codex home into the CODEX_HOME path field of T3's Codex settings and leave the shadow home field blank, then send again.
+
+| # | Input | Home T3 0.1.11 uses | Tentacles |
+|---|---|---|---|
+| 1 | field absolute (any mode, any env, any svc) | the field | equal to T3: the field |
+| 2 | field `~` or `~/x`, no `HOME` in svc | T3 `$HOME` based | equal to T3: expanded with Tentacles' home |
+| 3 | field `~` or `~/x`, `HOME` in svc | svc HOME based | refuses |
+| 4 | managed mode, field blank, no `HOME` in svc | `$HOME/.codex` | equal to T3: `~/.codex` |
+| 5 | managed mode, field blank, `HOME` in svc | svc HOME `/.codex` | refuses |
+| 6 | direct, field blank, every `CODEX_HOME` entry readable, the last absolute and equal to its trim | that path | equal to T3: that path |
+| 7 | as 6, but the last is `~` or `~/x`, no `HOME` in svc | T3 `$HOME` based | equal to T3: expanded |
+| 8 | as 7, `HOME` in svc | svc HOME based | refuses |
+| 9 | direct, field blank, a hidden (sensitive, redacted or not text) `CODEX_HOME` entry | unknown | refuses |
+| 10 | direct, field blank, the last `CODEX_HOME` whitespace only, padded, relative, `~\x` or `~user/x` | `<T3 cwd>/…` or other | refuses |
+| 11 | direct, field blank, the last `CODEX_HOME` exactly `""` | `$HOME/.codex` | refuses (equal, but not needed) |
+| 12 | direct, field blank, no `CODEX_HOME` entry, no `HOME` entry, no `CODEX_HOME`/`HOME` in svc | `$HOME/.codex` | equal to T3: `~/.codex` |
+| 13 | direct, field blank, no `CODEX_HOME` entry, a `HOME` entry | env HOME `/.codex` | refuses |
+| 14 | direct, field blank, no instance `CODEX_HOME`, `CODEX_HOME` or `HOME` in svc | svc based | refuses |
+| 15 | an entry or svc name equal to `CODEX_HOME` or `HOME` only when case is ignored | ignored on macOS/Linux, used on Windows | refuses |
+| 16 | svc not a small regular file, or unreadable for any reason but "absent" | unknown | refuses |
+| 17 | the settings call fails, or `providerInstances.codex` (its `config`, `environment` or `homePath`) has another shape | unknown | refuses |
+| 18 | field relative, `~user/x` or `~\x` | `<T3 cwd>/…` or other | refuses |
+| 19 | no instance field, but a legacy `providers.codex.homePath` that is set | unknown | refuses |
+| 20 | shadow home set (`config.shadowHomePath` not a blank string; T3's auth overlay, any mode) | the shadow home | refuses |
+
+Table 1, every input stock T3 0.1.11 uses to build the Codex child:
+
+| # | Input | Tentacles |
+|---|---|---|
+| 1 | the CODEX_HOME path field | Table 2 rows 1-3, 18: equal to T3 or refuses |
+| 2 | instance env `CODEX_HOME`, field blank, direct | Table 2 rows 6-11: equal to T3 or refuses |
+| 3 | instance env `HOME`, field blank | Table 2 row 13: refuses |
+| 4 | shadow home | Table 2 row 20: refuses |
+| 5 | managed mode | Table 2 rows 4-5: equal to T3 or refuses |
+| 6 | the Launch arguments setting | equal to T3 when every override is a plain key outside `mcp_servers`; else refuses (`codex_launch_args`) |
+| 7 | instance env `T3CODE_CODEX_LAUNCH_ARGS` | as 6; a hidden entry refuses |
+| 8 | T3's own fixed arguments | equal to T3 (harmless by code) |
+| 9 | other instance env entries | equal to T3 (names only, harmless) |
+| 10 | `<home>/.env` | equal to T3 (harmless: it sets no server) |
+| 11 | the binary path | not seen; any program the owner chooses |
+| 12 | the working folder and the folders above it | equal to T3, or refuses a Bot-named, inline or unreadable server (`codex_project_servers`) |
+| 13 | the home trust table | equal to T3: Tentacles writes exact-folder trust only |
+| 14 | T3's `service.env` | Table 2 rows 3, 5, 8, 14-16; `T3CODE_CODEX_LAUNCH_ARGS` there as 6 |
+| 15 | the rest of T3's process environment | not seen |
+| 16 | `/etc/codex/config.toml` | equal to T3, or refuses a Bot-named or unreadable server (`codex_system_servers`) |
+| 17 | `/etc/codex/managed_config.toml` | as 16 |
+| 18 | `/etc/codex/requirements.toml` | equal to T3: not read; it can disable a Bot server, never add or change one |
+| 19 | macOS MDM managed config | not seen |
+| 20 | Codex cloud-managed config | not seen |
+| 21 | profiles | equal to T3 (Codex rejects them) |
+
+Not seen: T3's process environment outside `service.env`, Codex's macOS MDM managed config, Codex's cloud-managed config, the Codex binary, and a T3 base dir that is neither `TENTACLES_T3_HOME` nor `T3CODE_HOME` (nor the default `~/.t3`).
+
+Unproven roads (Local · Grok, Local · OpenCode 2, Local · Cursor, Local ·
+Antigravity): built, but no real Agent Jack Talk has proven them yet, so they are
+off by default. Each is admitted and advertised only when the process that runs
+the pair names its switch word in `TENTACLES_JACK_TOOLS_TRY`: `grok`, `opencode`,
+`cursor`, `antigravity` (comma-separated, any subset, for example
+`TENTACLES_JACK_TOOLS_TRY=grok,cursor`). With it unset, those labs behave as
+before, and their files in the Bot workspace are neither read nor written, except
+that a Grok turn still removes a trust table an opt-in run left (see CHANGELOG).
 
 Ready means T3 accepts the lab, not that its model answers. To check that, run
 `tentacles doctor --responds all` (or `--responds codex,grok`). This opt-in
 probe costs one model call per lab: it originates one no-tools turn per selected
 lab in a `doctor-probe` workspace under the Tentacles state directory, in threads
 titled `Tentacles doctor probe: <lab>`, and reports `responds`, `no_response` or
-`error` with the time to the first model event. A turn with no answer within
+`error` with the time to the first model event. On Antigravity only, a spent
+Google quota arrives as an ordinary reply, so the reply is classified (never
+shown): a usage limit gives `no_response` / `usage_limit` with "not responding:
+quota" and, when the reply names one in a strict time form, its reset time;
+any other reply, a known failure class included, is `responds`, as for every
+lab. A turn with no answer within
 `--responds-timeout` seconds (default 60), or whose T3 read fails, is
 interrupted through the turn interrupt path and gets a next action. On a T3
 without the turn-result route the turn cannot be interrupted; the row then says
@@ -280,7 +367,7 @@ T3-native reference rows:
 | Grok Code CLI | T3 ships it. A chair selects `--instance grok --model grok-4.6`. Grok Bot remains a chair, not this lab |
 | OpenCode CLI | T3 ships it |
 | Cursor CLI | T3 ships it |
-| Antigravity (Gemini) | T3 owns the native provider and reports its installed, authentication and readiness states. Unknown sign-in stays not ready. Enable, **Install Antigravity** and **Sign in with Google** all happen in T3 → Settings → Providers. Doctor codes: `disabled`, `not_installed`, `sign_in_unchecked`, `not_signed_in`, `t3_update_required`; `setupUrl` opens T3's own page. Never use unofficial OAuth plugins |
+| Antigravity (Gemini) | T3 owns the native provider and reports its installed, authentication and readiness states. Unknown sign-in stays not ready. Enable, **Install Antigravity** and **Sign in with Google** all happen in T3 → Settings → Providers. Doctor codes: `disabled`, `not_installed`, `sign_in_unchecked`, `not_signed_in`, `t3_update_required`, and `runtime_update_required` / `runtime_changed` when T3's managed runtime needs **Update** or **Reinstall** in its Antigravity setup; `setupUrl` opens T3's own page. Never use unofficial OAuth plugins |
 | `t3 pair` / `app.t3.codes` | T3 ships this native remote path |
 
 Tentacles-additive rows:
@@ -376,6 +463,7 @@ assistant content are never published.
 | Claude Code CLI | `claudeAgent` | `claude-sonnet-5`; ready when T3 reports it ready and signed in (`auth_required` → `claude auth login`). T3 without auth status: skipped | Originate + continue |
 | Grok Code CLI | `grok` | `grok-4.6` when doctor advertises it | Originate + continue |
 | Cursor CLI | `cursor` | always pass a model shown by doctor | Originate + continue |
+| Antigravity (Gemini) | `antigravity` | always pass a model shown by doctor. An old `gemini-…-low`/`-medium`/`-high` id is sent as the base id plus `thought_level` only when T3's live list lacks the old id, lists the base id, and that model's `thought_level` descriptor offers that level (no descriptor, no mapping); never `xhigh`. Raw `act` intents send the id as given | Not proved on a real turn |
 | DeepSeek CLI adapter | `deepseek` | `deepseek/deepseek-v4-flash` when doctor advertises it | Originate + continue |
 | Kimi CLI adapter | `kimi` | `moonshotai/kimi-k3` when doctor advertises it | Originate + continue |
 | Pi CLI adapter | `pi` | `gpt-5.6-terra` when doctor advertises it | Originate + continue |
@@ -480,12 +568,27 @@ rotated that file. It never retries a network error or an ambiguous server failu
 If the file was not rotated, local CLI commands (not `--computer`) run the
 `reauth` flow below once per process and retry the rejected request once (a 401
 means T3 acted on nothing). The T3 CLI is `TENTACLES_T3_BIN`, else `t3` on PATH,
-else the newest semantic version under `<T3 home>/runtime/versions/*/t3`
+else the newest semantic version under `<T3 home>/runtime/versions/*/t3`,
+else `<T3 home>/bin/t3`, the launcher stock T3 Code (Beta) installs when it
+first opens. Windows is not supported yet: T3 Code (Beta) ships its CLI there
+only as `bin\t3.cmd`, which Node cannot run without a shell, so Tentacles
+names it as unsupported instead of trying it
 (`TENTACLES_T3_HOME`, default `~/.t3`; symlinks leaving the T3 home are ignored,
 and a symlink inside it runs as its checked real path). An invalid
 `TENTACLES_T3_BIN` is reported as rejected and never falls through to PATH.
+Each issued session is checked against the running T3 before it is stored. If
+T3 rejects it (for example a leftover launcher of an older T3 app under
+`runtime/versions`), it is dropped and the next CLI in that order is tried, so a
+rejected session is never stored. An explicit `TENTACLES_T3_BIN` is the only
+candidate and is never replaced; its error says to repoint or unset it.
 A missing CLI, a failed issuance or a second 401 fails as before, naming the
-exact manual command with the resolved (or rejected configured) paths. Because
+exact manual command with the resolved (or rejected configured) paths.
+A first run with no token file (or a zero-byte one) takes the same path before
+its first request instead of failing at startup. `doctor --json` reports a
+missing CLI as `t3_reauth_required` and T3 not running (connection refused)
+as `t3_unreachable`, each with a one-line action, and exits 1. Other network
+failures keep their error. `capabilities scan` reports `labsState:
+"unavailable"` (`labs: null`) for both. Because
 of this, `doctor` and `capabilities scan` may issue a new 30-day T3 session on a
 401; set `TENTACLES_T3_AUTO_REAUTH=0` to keep them read-only and to disable it. Library `T3Client` instances do this only with a `reauth` hook.
 Explicit in-memory bearers are not replaced from disk. `doctor` reports
@@ -514,8 +617,8 @@ output or concurrent replacement preserve the existing file. Besides an explicit
 
 Stock v0.0.42 and the exact V2 nightly v0.0.46-nightly.20261003.2610 expose the
 same session-issue flags and no local refresh grant (source comparison). This is
-an authentication-CLI comparison only. Tentacles' V1/V2 adapter and required
-patched T3 extensions are described in
+an authentication-CLI comparison only. Tentacles' V1/V2 adapter and the supported
+stock T3 range are described in
 [protocol support and limits](docs/orchestration.md#protocol-support-and-runtime-proof);
 neither that source support nor this flag comparison proves an installed V2
 runtime or the estate cutover.

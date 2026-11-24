@@ -46,10 +46,11 @@ pairer with the Sphere machine identity already used by Jack 1:
 ```bash
 tentacles pair \
   --pair-file /private/path/pair-offer.json \
-  --machine-id '<sphere-machine-id>'
+  --machine-id '<sphere-machine-id>' \
+  [--allow-workspace /absolute/non-symlink/folder]
 ```
 
-The bind omits the `interrupt` RPC by default for compatibility with older Sphere relays. Once the relay supports it, pass `--enable-interrupt` to advertise and accept that RPC.
+The bind omits the `interrupt` RPC by default for compatibility with older Sphere relays. Once the relay supports it, pass `--enable-interrupt` to advertise and accept that RPC. Repeat `--allow-workspace <dir>` (or set `TENTACLES_ALLOWED_WORKSPACES`, colon-separated on POSIX / semicolon-separated on Windows) to add owner-local non-symlink folders to the remote allowlist alongside the default Bot workspace root.
 
 Tentacles sends the token only in the initial `pair.bind` frame. It removes the
 exact file inode only after the endpoint acknowledges `pair.bound`. Expired or
@@ -291,25 +292,21 @@ route. A changed command id or requested model cannot turn an older response
 into proof: unknown correlation or mismatched accepted selection blocks use.
 
 
-## Paired Local Talk workspace preparation (KRA-6259)
+## Paired Local Talk workspace isolation (KRA-6259, KRA-10939, KRA-10940)
 
-After the authenticated pairer admits a closed-body originate request, and before
-T3 project/turn dispatch, the machine prepares the requested workspace only if
-it is its own private `<home>/.jack-local-scratch/jack-talk/<tenant>/<agent>`.
-Both IDs must be exactly 32 lowercase hex characters. The root is derived from
-the machine's canonical user home, never from an RPC override. The home must be
-current-user-owned and not group/other writable; every private level is a real
-current-user-owned directory opened without following links and set to0700.
-Malformed scopes, another machine's scratch root, files, symlinks and foreign
-ownership refuse before provider dispatch. Source checkout guard components
-remain refused. No arbitrary workspace is created.
+A paired server can reach only:
+- Prepared Bot workspaces under this computer's own `<home>/.jack-local-scratch/jack-talk/<tenant>/<agent>` (two 32-character lowercase hex IDs) or `<home>/.jack-local-scratch/seats/<owner-digest>/agents/<bot-id>` (64-character lowercase hex digest and UUID).
+- Folders explicitly listed on this computer's owner-configured local allowlist via repeatable `tentacles pair --allow-workspace <dir>` or `TENTACLES_ALLOWED_WORKSPACES` (`allowedWorkspaces`, empty by default and never supplied by RPC parameters).
 
-Web, routine and Bot-DM Local turns arrive through this same outbound-pairing
-RPC path; none requires an earlier desktop-originated turn or renderer IPC.
-Existing hire/chair and legacy non-scratch workspace behavior is unchanged.
-T3 still receives its existing project creation flag; this bounded machine-side
-step makes the admitted directory exist first. Pairing/Sphere authorization,
-native Allow/Ask and remote parameter allowlists are unchanged.
+A paired server cannot reach the owner's home directory, `/tmp`, or any other T3 project or thread outside that scope:
+- Remote `originate` and `continue` refuse any out-of-scope workspace or thread before anything reaches T3, with refusal code `talk.workspace_outside_bot_root` (mapped over the relay to `computer.unavailable`, plus `data.refusal` when the caller opts into `refusalCodes: "v1"`).
+- Remote `seats` omits out-of-scope threads and their active turns.
+- Remote `thread-events`, `thread-artifact`, `turn-result`, and `interrupt` refuse any out-of-scope or unresolvable thread with `computer.unavailable`.
+- Local CLI commands (`tentacles originate`, `tentacles act`, `tentacles observe`, etc.) are unchanged.
+
+For Bot workspaces, the root is derived from the machine's canonical user home, never from an RPC override. The home must be current-user-owned and not group/other writable; every private level is a real current-user-owned directory opened without following links and set to 0700. Malformed scopes, another machine's scratch root, files, symlinks and foreign ownership refuse before provider dispatch. Source checkout guard components remain refused. No arbitrary workspace is created.
+
+Web, routine and Bot-DM Local turns arrive through this same outbound-pairing RPC path; none requires an earlier desktop-originated turn or renderer IPC. T3 still receives its existing project creation flag; this bounded machine-side step makes the admitted directory exist first. Pairing/Sphere authorization, native Allow/Ask and remote parameter allowlists are unchanged.
 
 This code requires the reviewed Tentacles pairer runtime to be released on the
 paired computer. A Jack API/web release alone cannot update an old machine-side

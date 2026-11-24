@@ -1,15 +1,23 @@
 import fs from "node:fs";
-import { ensureLocalTalkWorkspace } from "./local-talk-workspace.mjs";
+import path from "node:path";
+import {
+  ensureLocalTalkWorkspace,
+  isAllowedRemoteWorkspace,
+  REMOTE_WORKSPACE_REFUSAL,
+} from "./local-talk-workspace.mjs";
+import { BOT_CONNECTOR_REFUSALS } from "./bot-connector-refusals.mjs";
+import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEYS, botConnectorProviders, checkBotConnectorPaths, checkCodexAncestorLayers, codexHomeAllowed, checkCodexLaunchArgs, checkCodexServerNames, codexOuterFiles, commitCodexTrust, readT3ServiceEnv, connectorsNeedRestart, GROK_TRUST_MARKER, grokHomeFor, planGrokTrust, planGrokUntrust, pinnedJackOrigin, planCodexTrust, requireBotWorkspace, writeBotConnectors, writePrivate } from "./bot-connectors.mjs";
 import { privateModeOk } from "./platform.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
+import { refusalOf } from "./refusal-codes.mjs";
 import { randomUUID } from "node:crypto";
-import { continueThread, doctor, originate, probeTalkCapabilities } from "./bridge.mjs";
+import { continueThread, doctor, labVersion, originate, probeTalkCapabilities } from "./bridge.mjs";
 import { requireFreshFlags, requireFreshProviderContext } from "./fresh-provider-context.mjs";
 import { observe, REPORT_MODEL_LABEL, threadReportFailure, threadReportStatus } from "./orchestrate.mjs";
 import { classifyFailure } from "./failure-codes.mjs";
 import { PluginInventoryCache } from "./plugin-inventory.mjs";
 import { requireContinueSelection } from "./model-selection.mjs";
-import { readBoundedWebSocketData } from "./t3-client.mjs";
+import { readBoundedWebSocketData, readOrchestrationSnapshot } from "./t3-client.mjs";
 import {
   acquirePairStateLock,
   DEFAULT_PAIR_STATE_FILE,
@@ -31,11 +39,19 @@ const offerSecrets = new WeakMap();
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const MAX_TIMER_MS = 2_147_483_647;
 const ORIGINATE_PARAM_KEYS = new Set([
-  "workspace", "title", "message", "instanceId", "model", "options", "budget", "runtimeMode", "idempotencyKey", "freshProviderContext", "fixedTitle",
+  "workspace", "title", "message", "instanceId", "model", "options", "budget", "runtimeMode", "idempotencyKey", "freshProviderContext", "fixedTitle", ...BOT_CONNECTOR_PARAM_KEYS,
 ]);
 const CONTINUE_PARAM_KEYS = new Set([
-  "threadId", "message", "instanceId", "model", "options", "budget", "runtimeMode", "turnCommandId", "messageId", "freshProviderContext",
+  "threadId", "message", "instanceId", "model", "options", "budget", "runtimeMode", "turnCommandId", "messageId", "freshProviderContext", ...BOT_CONNECTOR_PARAM_KEYS,
 ]);
+
+// `<decided_at>\n<Grok home>\n` (older markers: the first line only); anything else is no marker.
+function readGrokMarker(file) {
+  try {
+    const found = fs.lstatSync(file).isFile() && /^(\d{1,15})\n?(?:(\/[^\n]+)\n)?$/.exec(fs.readFileSync(file, "utf8"));
+    return found ? { decidedAt: found[1], home: found[2] ? path.resolve(found[2]) : undefined } : null;
+  } catch { return null; }
+}
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -104,9 +120,15 @@ export function readPairOffer(file, { now = Date.now() } = {}) {
     || new Date(expiresAtMs).toISOString() !== parsed.expiresAt) {
     throw new Error("Pair offer expiresAt must be a canonical ISO timestamp");
   }
+  // KRA-10862 (B3 P1-1 on #99): the owner's Agent Jack names its own origin when it
+  // writes the offer. Absent (an older Agent Jack) means no Jack tools, never "any host".
+  if (parsed.jackOrigin !== undefined && pinnedJackOrigin(parsed.jackOrigin) === null) {
+    throw new Error("Pair offer jackOrigin must be a canonical https origin");
+  }
   const offer = Object.freeze({
     version: PAIR_PROTOCOL_VERSION,
     endpoint,
+    jackOrigin: pinnedJackOrigin(parsed.jackOrigin),
     expiresAt: new Date(expiresAtMs).toISOString(),
     expired: expiresAtMs <= now,
     sourceFile: file,
@@ -162,7 +184,7 @@ function pairedThreadLastActivity(thread) {
 }
 
 const OMIT_REPORT = Symbol("omit-report");
-const EFFORT_KEYS = ["budget", "effort", "reasoningEffort"];
+const EFFORT_KEYS = ["budget", "effort", "reasoningEffort", "thought_level"];
 
 function effortRawRefused(raw) {
   if (typeof raw !== "string") return true;
@@ -236,6 +258,39 @@ function remoteSeatsProjection(observed) {
   return { activeTurns, threads };
 }
 
+/**
+ * Shared KRA-10940 helper: resolves a thread's workspace folder (worktreePath
+ * when set, else the owning project's workspaceRoot). Returns null when
+ * unresolvable so callers fail closed.
+ */
+export async function resolveThreadWorkspace(client, thread, projectsById = null) {
+  if (!isRecord(thread)) return null;
+  if (typeof thread.worktreePath === "string" && thread.worktreePath !== "") {
+    return thread.worktreePath;
+  }
+  if (typeof thread.projectId !== "string" || thread.projectId === "") return null;
+  if (projectsById instanceof Map) {
+    const root = projectsById.get(thread.projectId);
+    return typeof root === "string" && root !== "" ? root : null;
+  }
+  if (!client || (typeof client.snapshot !== "function" && typeof client.shell !== "function")) return null;
+  const snapshot = await readOrchestrationSnapshot(client);
+  const project = (Array.isArray(snapshot?.projects) ? snapshot.projects : [])
+    .find((entry) => isRecord(entry) && entry.id === thread.projectId);
+  return typeof project?.workspaceRoot === "string" && project.workspaceRoot !== "" ? project.workspaceRoot : null;
+}
+
+function projectRootsMap(projects) {
+  const map = new Map();
+  if (!Array.isArray(projects)) return map;
+  for (const project of projects) {
+    if (isRecord(project) && typeof project.id === "string" && typeof project.workspaceRoot === "string" && project.workspaceRoot !== "") {
+      map.set(project.id, project.workspaceRoot);
+    }
+  }
+  return map;
+}
+
 export class LoopbackRuntimeAdapter {
   constructor({
     client,
@@ -243,6 +298,9 @@ export class LoopbackRuntimeAdapter {
     observeImpl = observe,
     originateImpl = originate,
     prepareTalkWorkspaceImpl = ensureLocalTalkWorkspace,
+    allowedWorkspaces = [],
+    workspaceHome,
+    workspacePlatform,
     continueImpl = continueThread,
     doctorImpl = doctor,
     pluginInventory = new PluginInventoryCache(),
@@ -251,6 +309,7 @@ export class LoopbackRuntimeAdapter {
     interruptOptions = {},
     capabilityCache = null,
     frameBytes = DEFAULT_MAX_FRAME_BYTES,
+    codexFiles = codexOuterFiles(),
   }) {
     if (!client) throw new Error("Loopback runtime requires a T3 client");
     this.client = client;
@@ -258,6 +317,12 @@ export class LoopbackRuntimeAdapter {
     this.observeImpl = observeImpl;
     this.originateImpl = originateImpl;
     this.prepareTalkWorkspaceImpl = prepareTalkWorkspaceImpl;
+    // Owner-configured local allowlist (empty by default; never read from RPC params).
+    this.allowedWorkspaces = Object.freeze(Array.isArray(allowedWorkspaces) ? [...allowedWorkspaces] : []);
+    this.workspaceHome = workspaceHome;
+    this.workspacePlatform = workspacePlatform;
+    // Set by the pairer from the owner's pair offer; null admits no Jack-hosted entry.
+    this.jackOrigin = null;
     this.continueImpl = continueImpl;
     this.doctorImpl = doctorImpl;
     this.pluginInventory = pluginInventory;
@@ -265,36 +330,171 @@ export class LoopbackRuntimeAdapter {
     this.threadEventsDirectory = threadEventsDirectory;
     this.capabilityCache = capabilityCache;
     this.frameBytes = frameBytes;
+    this.codexFiles = codexFiles;
     this.withThreadLock = createThreadLock();
     this.interrupter = new TurnInterrupter({
       readTurnResult: (tuple) => this.turnResult(tuple),
       readThread: (threadId) => this.client.thread(threadId),
       dispatch: (command) => this.client.dispatch(command),
       withThreadLock: this.withThreadLock,
+      assertThreadInScope: (threadId) => this.requireThreadInScope(threadId),
       ...interruptOptions,
     });
   }
 
+  isWorkspaceAllowed(workspace) {
+    return isAllowedRemoteWorkspace(workspace, {
+      ...(this.workspaceHome !== undefined ? { home: this.workspaceHome } : {}),
+      ...(this.workspacePlatform !== undefined ? { platform: this.workspacePlatform } : {}),
+      allowedWorkspaces: this.allowedWorkspaces,
+    });
+  }
+
+  async requireThreadInScope(threadId) {
+    if (typeof threadId !== "string" || !SAFE_ID.test(threadId)) {
+      throw new Error(REMOTE_WORKSPACE_REFUSAL);
+    }
+    if (typeof this.client.thread !== "function") {
+      throw new Error(REMOTE_WORKSPACE_REFUSAL);
+    }
+    const response = await this.client.thread(threadId);
+    const thread = response?.thread ?? response;
+    if (!isRecord(thread) || thread.id !== threadId) {
+      throw new Error(REMOTE_WORKSPACE_REFUSAL);
+    }
+    const workspace = await resolveThreadWorkspace(this.client, thread);
+    if (!this.isWorkspaceAllowed(workspace)) {
+      throw new Error(REMOTE_WORKSPACE_REFUSAL);
+    }
+    return { workspace, thread };
+  }
+
   async seats() {
-    return remoteSeatsProjection(await this.observeImpl(this.client));
+    const observed = await this.observeImpl(this.client);
+    requireRecord(observed, "Observed Tentacles state");
+    const rawThreads = Array.isArray(observed.threads) ? observed.threads.filter(isRecord) : [];
+    const needsProjects = rawThreads.some((thread) => !(typeof thread.worktreePath === "string" && thread.worktreePath !== ""));
+    let projectsById = Array.isArray(observed.projects) ? projectRootsMap(observed.projects) : null;
+    if (needsProjects && projectsById === null && (typeof this.client.snapshot === "function" || typeof this.client.shell === "function")) {
+      const snapshot = await readOrchestrationSnapshot(this.client);
+      projectsById = projectRootsMap(snapshot?.projects);
+    }
+    const allowedThreads = [];
+    const allowedThreadIds = new Set();
+    for (const thread of rawThreads) {
+      const workspace = await resolveThreadWorkspace(this.client, thread, projectsById ?? new Map());
+      if (!this.isWorkspaceAllowed(workspace)) continue;
+      allowedThreads.push(thread);
+      if (typeof thread.id === "string") allowedThreadIds.add(thread.id);
+    }
+    const allowedActiveTurns = Array.isArray(observed.activeTurns)
+      ? observed.activeTurns.filter((turn) => isRecord(turn) && typeof turn.threadId === "string" && allowedThreadIds.has(turn.threadId))
+      : [];
+    return remoteSeatsProjection({ ...observed, threads: allowedThreads, activeTurns: allowedActiveTurns });
   }
 
   originate(params) {
-    const admitted = fullAccessParams(params, "originate", ORIGINATE_PARAM_KEYS);
+    const { params: admitted, servers, scope } = admitBotConnectors(fullAccessParams(params, "originate", ORIGINATE_PARAM_KEYS), { jackOrigin: this.jackOrigin });
     requireFreshFlags(admitted);
-    const dispatch = () => {
-      this.prepareTalkWorkspaceImpl(admitted.workspace);
+    const dispatch = async () => {
+      // A new thread starts a new lab session, so no restart is needed here.
+      await this.writeConnectors(admitted.workspace, { servers, scope, instanceId: admitted.instanceId });
       return this.originateImpl(this.client, admitted);
     };
     return admitted.freshProviderContext === true || admitted.fixedTitle === true
       ? requireFreshProviderContext(this.client, admitted).then(dispatch) : dispatch();
   }
 
+  // Order matters (B3 P2-1/P2-2 and P3-D on #99, P3-2 on #101): every check that
+  // can refuse (folder scope, workspace custody, the Codex home, the workspace's
+  // .claude/.codex directories and file targets), then stop an idle live session,
+  // then write, then (the caller) start the turn. A refusal or a failed stop
+  // leaves the old files, so the next turn still knows to restart. What can
+  // still fail after the stop: an I/O error while writing (ENOSPC, EACCES, EIO),
+  // the Codex home changing between plan and commit, or a path swapped between
+  // this check and the write. Then the turn is refused with the session stopped
+  // and the files partly rewritten; the next turn still restarts and rewrites all.
+  async writeConnectors(workspace, { servers, scope, instanceId, restartIdleSession }) {
+    if (servers !== undefined && !requireBotWorkspace(workspace, scope)) {
+      // A Talk started before the upgrade lives in jack-talk/<tenant>/<agent> (B3 P3-3 on #106).
+      if (servers.length) throw new Error(workspace.split(/[\\/]/).includes("jack-talk") ? BOT_CONNECTOR_REFUSALS.oldTalk : BOT_CONNECTOR_REFUSALS.notOwnWorkspace);
+      servers = undefined; // an empty list for another folder clears nothing there
+    }
+    // Idempotent and leaves .mcp.json alone, so it cannot change the restart decision.
+    if (typeof workspace !== "string" || workspace === "") throw new Error(REMOTE_WORKSPACE_REFUSAL);
+    const prepared = await this.prepareTalkWorkspaceImpl(workspace);
+    if (servers?.length && prepared !== true) throw new Error(BOT_CONNECTOR_REFUSALS.notBotWorkspace);
+    // KRA-10939: a remote full-access turn must stay inside a prepared Bot workspace
+    // or an owner-configured local allowlist; never arbitrary folders.
+    if (prepared !== true && !this.isWorkspaceAllowed(workspace)) {
+      throw new Error(REMOTE_WORKSPACE_REFUSAL);
+    }
+    const marker = path.join(workspace, GROK_TRUST_MARKER);
+    const grokHome = instanceId === "grok" && servers?.length ? await grokHomeFor(this.client) : undefined;
+    // B3 P3-2 on #115: a table left in another Grok home (GROK_HOME moved) is removed
+    // first; if that throws, the turn refuses before the stop and the marker stays.
+    const left = grokHome && prepared === true ? readGrokMarker(marker) : null;
+    if (left?.home && left.home !== grokHome) {
+      commitCodexTrust(planGrokUntrust(left.home, workspace, left.decidedAt));
+      fs.rmSync(marker, { force: true });
+    }
+    // The lab's own folder-trust table (Codex or Grok), planned before the stop.
+    const codexTrust = !servers?.length ? undefined
+      : instanceId === "codex" ? await (async () => {
+        let settings;
+        try { settings = await this.client.getSettings(); } catch { /* unreadable: the home allow-list refuses (row 17) */ }
+        const serviceEnv = readT3ServiceEnv(this.codexFiles.serviceEnv);
+        checkCodexLaunchArgs(settings, serviceEnv.T3CODE_CODEX_LAUNCH_ARGS);
+        // KRA-10891: the name check and the trust table use exactly the one allowed home.
+        const codexHome = codexHomeAllowed(settings, serviceEnv);
+        checkCodexServerNames(codexHome, servers.map(server => server.name), this.codexFiles.system);
+        checkCodexAncestorLayers(workspace, servers.map(server => server.name));
+        return planCodexTrust(codexHome, workspace);
+      })()
+        : grokHome ? planGrokTrust(grokHome, workspace) : undefined;
+    const opencode = instanceId === "opencode" && botConnectorProviders().includes("opencode");
+    const cursor = instanceId === "cursor" && botConnectorProviders().includes("cursor");
+    const antigravity = instanceId === "antigravity" && botConnectorProviders().includes("antigravity");
+    if (servers !== undefined && prepared === true) checkBotConnectorPaths(workspace, { opencode, cursor, antigravity });
+    if (restartIdleSession && connectorsNeedRestart(workspace, servers)) await restartIdleSession();
+    const written = writeBotConnectors(workspace, prepared, servers, { codexTrust, opencode, cursor, antigravity });
+    // The marker records the table Tentacles itself added, so only that one is ever removed.
+    // It also names the Grok home written to, so a later GROK_HOME change cannot strand the table.
+    if (instanceId === "grok" && codexTrust && servers?.length) writePrivate(marker, `${codexTrust.decidedAt}\n${path.dirname(codexTrust.file)}\n`);
+    // B3 P3-5 on #110: a Grok Bot turn without tools drops that table again. With no
+    // marker nothing outside the workspace is read. Best effort: never fails the turn.
+    if (instanceId === "grok" && prepared === true && !servers?.length) {
+      const found = readGrokMarker(marker);
+      if (found) {
+        // B3 P3-2 on #110: the marker goes only once the table is gone or no longer
+        // Tentacles' own (plan null); on any throw it stays so the next turn tries again.
+        try {
+          // An old one-line marker has no home: failing settings throw (B3 P3-1 on #115).
+          const home = found.home ?? await grokHomeFor(this.client, { strict: true });
+          commitCodexTrust(planGrokUntrust(home, workspace, found.decidedAt));
+          fs.rmSync(marker, { force: true });
+        } catch { /* kept for the next turn */ }
+      }
+    }
+    return written;
+  }
+
   continue(params) {
-    const input = fullAccessParams(params, "continue", CONTINUE_PARAM_KEYS);
+    const { params: input, servers, scope } = admitBotConnectors(fullAccessParams(params, "continue", CONTINUE_PARAM_KEYS), { jackOrigin: this.jackOrigin });
     requireContinueSelection({ instanceId: input.instanceId, model: input.model, options: input.options, budget: input.budget });
     requireFreshFlags(input);
-    const guarded = () => this.continueImpl(this.client, input, { prepareTalkWorkspace: this.prepareTalkWorkspaceImpl });
+    const guarded = async () => {
+      // KRA-10939/KRA-10940 (B3 P2-1): enforce workspace scope before continueImpl
+      // (before idempotent existingMessage check and retainedSelectionPin) so
+      // private non-Bot threads never leak projectId or model-selection errors,
+      // while valid in-scope idempotent replays still skip prepareTalkWorkspace.
+      const scoped = await this.requireThreadInScope(input.threadId);
+      return this.continueImpl(this.client, input, {
+        prepareTalkWorkspace: (workspace, { restartIdleSession } = {}) => this.writeConnectors(workspace, { servers, scope, instanceId: input.instanceId, restartIdleSession }),
+        prefetchedThread: scoped.thread,
+        prefetchedWorkspace: scoped.workspace,
+      });
+    };
     const dispatch = () => input.freshProviderContext === true
       ? requireFreshProviderContext(this.client, input).then(guarded)
       : guarded();
@@ -304,12 +504,16 @@ export class LoopbackRuntimeAdapter {
       : dispatch();
   }
 
-  threadArtifact(params) {
-    return threadArtifact(params, { directory: this.threadEventsDirectory });
+  async threadArtifact(params) {
+    const input = requireRecord(params, "thread-artifact params");
+    await this.requireThreadInScope(input.threadId);
+    return threadArtifact(input, { directory: this.threadEventsDirectory });
   }
 
-  threadEvents(params) {
-    return this.threadEventsImpl(this.client, params, { directory: this.threadEventsDirectory });
+  async threadEvents(params) {
+    const input = requireRecord(params, "thread-events params");
+    await this.requireThreadInScope(input.threadId);
+    return this.threadEventsImpl(this.client, input, { directory: this.threadEventsDirectory });
   }
 
   refreshModels() {
@@ -335,7 +539,19 @@ export class LoopbackRuntimeAdapter {
     }
     const report = await this.refreshModels();
     const capabilities = report.capabilities ?? (await probeTalkCapabilities(this.client)).capabilities;
-    const result = { ...report, capabilities };
+    // Connectors need a result to report into, so they ride Local Talk support.
+    // Jack-hosted entries are admitted only from the origin pinned at pairing, so a
+    // pairing without one (an older Agent Jack) does not invite them: that Agent Jack
+    // then refuses its own connector turns as it did on jack.19. Learn still rides.
+    const { jackMcpProxy, jackMcpSelf, ...unpinned } = BOT_CONNECTOR_CAPABILITIES;
+    const advert = { ...(this.jackOrigin ? BOT_CONNECTOR_CAPABILITIES : unpinned), jackMcpProviders: botConnectorProviders() };
+    // Only T3's OpenCode 2 road (one shared server, per-request folder) is built;
+    // T3 runs OpenCode below 2 through another adapter.
+    const opencode = report.labs?.find(lab => lab.instanceId === "opencode");
+    if (!/^v?([2-9]|[1-9][0-9]+)\./.test(labVersion(opencode) ?? "")) {
+      advert.jackMcpProviders = Object.freeze(advert.jackMcpProviders.filter(id => id !== "opencode"));
+    }
+    const result = { ...report, capabilities: capabilities?.talkTurnResult === "v1" ? { ...capabilities, ...advert } : capabilities };
     if (this.capabilityCache) {
       // KRA-7369: the connector inventory rides the lab-catalog answer, because
       // Sphere admits only the advertised v1 methods. A scan never delays this
@@ -359,6 +575,7 @@ export class LoopbackRuntimeAdapter {
       throw new Error("turn-result requires exactly threadId, messageId and turnCommandId");
     }
     for (const key of keys) requireSafeId(input[key], key);
+    const { thread: scopedThread } = await this.requireThreadInScope(input.threadId);
     const result = typeof this.client.turnResult === "function"
       ? await this.client.turnResult(input)
       : await this.client.request("/api/orchestration/turn-result", { method: "POST", body: input });
@@ -385,10 +602,16 @@ export class LoopbackRuntimeAdapter {
     const typed = result.state === "failed" || result.state === "cancelled"
       ? classifyFailure({ state: result.state, error: typeof result.error === "string" || isRecord(result.error) ? result.error : null })
       : null;
-    const failureDetail = result.state === "failed" ? redactFailureLine(await this.sessionFailureDetail(input.threadId)) : null;
+    const prefetchedFailed = typeof scopedThread?.session?.lastError === "string" && scopedThread.session.lastError.trim().length > 0
+      ? scopedThread : null;
+    const failureDetail = result.state === "failed" ? redactFailureLine(await this.sessionFailureDetail(input.threadId, prefetchedFailed)) : null;
     return { ...Object.fromEntries([...keys, "turnId", "assistantMessageId", "instanceId", "model", "effort", "state", "outputText"].map((key) => [key, result[key]])), ...(fresh ? { freshProviderContext: true, nativeContextGeneration: result.nativeContextGeneration } : {}), ...(typed ?? {}), ...(failureDetail ? { failureDetail } : {}) };
   }
-  async sessionFailureDetail(threadId) {
+  async sessionFailureDetail(threadId, prefetched = null) {
+    if (prefetched && typeof prefetched === "object" && prefetched.id === threadId
+      && typeof prefetched.session?.lastError === "string" && prefetched.session.lastError.trim().length > 0) {
+      return redactFailureLine(prefetched.session.lastError);
+    }
     if (typeof this.client.thread !== "function") return null;
     try {
       const response = await this.client.thread(threadId);
@@ -492,33 +715,57 @@ export function redactFailureLine(value) {
   return line || null;
 }
 
-function unavailable(id) {
+function unavailable(id, refusal = null) {
   return {
     version: PAIR_PROTOCOL_VERSION,
     type: "rpc.error",
     id,
-    error: { code: "computer.unavailable", message: "Computer unavailable", data: null },
+    error: { code: "computer.unavailable", message: "Computer unavailable", data: refusal ? { refusal } : null },
   };
 }
 
+// KRA-10870 part 2: a turn RPC that sends `refusalCodes: "v1"` gets the typed code and
+// its fixed words in `data.refusal`. Only on request: Sphere closes the whole relay on an
+// error frame it does not know, so an advert alone never changes the frame.
+export const REFUSAL_CODES_VERSION = "v1";
+const REFUSAL_CODE_METHODS = new Set(["originate", "continue"]);
+
 export class RemoteRpcShim {
-  constructor(runtime, { enableInterrupt = false } = {}) {
+  constructor(runtime, { enableInterrupt = false, onRefusal = () => {} } = {}) {
     if (!runtime) throw new Error("Remote RPC shim requires a runtime");
     this.runtime = runtime;
+    this.onRefusal = onRefusal;
     this.rpcMethods = Object.freeze([...REMOTE_RPC_METHODS, ...(enableInterrupt === true ? ["interrupt"] : [])]);
   }
 
   async handle(message) {
     let id = null;
+    let wantsCode;
     try {
       requireRecord(message, "RPC request");
       if (message.version !== PAIR_PROTOCOL_VERSION || message.type !== "rpc.request") throw new Error("Invalid RPC envelope");
       id = requireSafeId(message.id, "RPC request id");
       if (!this.rpcMethods.includes(message.method)) throw new Error("Unsupported RPC method");
-      const params = message.params === undefined ? {} : requireRecord(message.params, "RPC params");
+      let params = message.params === undefined ? {} : requireRecord(message.params, "RPC params");
+      // Any other value stays in params, so the runtime refuses it as an unknown parameter.
+      if (REFUSAL_CODE_METHODS.has(message.method) && params.refusalCodes === REFUSAL_CODES_VERSION) {
+        ({ refusalCodes: wantsCode, ...params } = params);
+      }
       const method = ({ "doctor-status": "doctorStatus", "turn-result": "turnResult", "thread-events": "threadEvents", "thread-artifact": "threadArtifact" })[message.method] ?? message.method;
       if (typeof this.runtime[method] !== "function") throw new Error("Runtime method is unavailable");
-      const result = await this.runtime[method](params);
+      let result;
+      try { result = await this.runtime[method](params); } catch (error) {
+        // KRA-10870: the relay still gets only "Computer unavailable"; this computer's
+        // log gets the typed code and its fixed words, never the raw error text.
+        // A rejecting async hook must not become an unhandled rejection that ends the pairer.
+        const refusal = refusalOf(error);
+        try { this.onRefusal({ method: message.method, ...refusal })?.catch?.(() => {}); } catch {}
+        if (wantsCode) return unavailable(id, refusal);
+        throw error;
+      }
+      if (method === "doctorStatus" && isRecord(result?.capabilities)) {
+        result = { ...result, capabilities: { ...result.capabilities, refusalCodes: REFUSAL_CODES_VERSION } };
+      }
       return { version: PAIR_PROTOCOL_VERSION, type: "rpc.result", id, result: result ?? null };
     } catch {
       return unavailable(id);
@@ -621,7 +868,8 @@ export class OutboundPairer {
     }
     reconnectDelayMs(0, { baseMs: reconnectBaseMs, capMs: reconnectCapMs, random: () => 0 });
     if (typeof random !== "function") throw new Error("Reconnect jitter source must be a function");
-    this.shim = new RemoteRpcShim(runtime, { enableInterrupt });
+    this.shim = new RemoteRpcShim(runtime, { enableInterrupt, onRefusal: (refusal) => this.emit({ event: "rpc.refused", ...refusal }) });
+    this.runtime = runtime;
     this.WebSocketImpl = WebSocketImpl;
     this.pairStateFile = pairStateFile;
     this.handshakeTimeoutMs = handshakeTimeoutMs;
@@ -644,6 +892,8 @@ export class OutboundPairer {
   async run({ pairFile, machineId, signal } = {}) {
     const offer = readPairOffer(pairFile, { now: this.now() });
     machineId = requireMachineId(machineId);
+    // The offer is one-shot and this process is the pairing: the pin lives exactly as long.
+    if (this.runtime) this.runtime.jackOrigin = offer.jackOrigin;
     const releasePairState = acquirePairStateLock(this.pairStateFile);
     if (!releasePairState) throw new Error("Another outbound pairer already owns this pair state");
     let pairStateReleased = false;

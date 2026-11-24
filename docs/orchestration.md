@@ -19,19 +19,25 @@ Keep four facts separate:
    protocol 1 selects V1, protocol 2 selects V2, and an absent protocol field or
    a missing (404) descriptor selects V1. Unknown versions and other descriptor
    failures refuse. Tentacles 0.5 with protocol 1 is a supported pairing.
-3. **Patched T3 extensions.** V2 turns require the atomic mode/message RPC
-   below. Local Talk separately requires the patched `turn-result` endpoint:
-   its result must correlate the exact accepted command, message and run and
-   retain bounded output/restart-continuation semantics. Negotiating V2 does
-   not prove either extension exists. Upstream T3 Code (Nightly) 0.1.8
-   (KRA-10175/10176) is supported through feature detection: an exact
-   `Unknown request tag` reply moves turns to `orchestration.dispatchCommand`
-   and settings to `server.getConfig().settings`; without the patched route,
-   Local Talk reads the exact run joined to the sent `messageId` from the
-   thread projection. There the runtime mode is set by the preceding
-   `thread.runtime-mode.set` step and the pre-send check, not atomically with
-   the message. Live proof: codex, claudeAgent and antigravity originate,
-   continue and report on 0.1.8-nightly.20261107.4314 (7 Nov 2026).
+3. **Stock T3 Code (Beta).** Tentacles supports the official, unmodified T3
+   Code in the range in `src/t3-support.mjs` (`T3_SUPPORT`) (minimum 0.1.8, the first
+   stable release with orchestration protocol 2; tested through v0.1.11). It
+   uses feature detection, never a fork: an exact `Unknown request tag` reply
+   moves turns to `orchestration.dispatchCommand` (`message.dispatch`, with
+   `freshProviderContext` sent as upstream `freshContext` when
+   `server.getConfig` advertises it) and settings to
+   `server.getConfig().settings`. Local Talk reads the exact run joined to the
+   sent `messageId` from the thread projection (`turnResultSource` =
+   `native-v2`). The runtime mode is set by the preceding
+   `thread.runtime-mode.set` step plus the pre-send projection check, not
+   atomically with the message. Proof (20 Nov 2026, stock 0.1.8 and 0.1.11):
+   seats, originate, continue, doctor-status, turn-result, thread-events,
+   thread-artifact, interrupt and fresh provider context. Older upstream
+   releases (for example 0.0.45, protocol 1, no turn-result route) are outside
+   the range and doctor says so. TPLUS fork builds keep the legacy patched
+   route (`orchestration.dispatchMessageWithMode` and `GET/POST
+   /api/orchestration/turn-result`) until the estate has moved to stock T3;
+   that path is then removed.
 4. **Staged runtime evidence.** Record exact installed and running T3/Tentacles
    builds, negotiated protocol and extension proof, then verify originate,
    continue, report, observe, doctor and the relevant Talk/Guardian consumers

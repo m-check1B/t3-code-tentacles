@@ -47,7 +47,7 @@ class FakeT3 {
           state: turn.state, outputText: succeeded ? "partial reply" : null,
         };
       },
-      thread: async (threadId) => ({ thread: { id: threadId, session: this.sessions.get(threadId) ?? null } }),
+      thread: async (threadId) => ({ thread: { id: threadId, worktreePath: "/synthetic/bot-workspace", session: this.sessions.get(threadId) ?? null } }),
       dispatch: async (command) => {
         this.dispatched.push(command);
         if (command.type === "thread.turn.interrupt") {
@@ -74,7 +74,7 @@ const A = { threadId: "thread-1", messageId: "message-a", turnCommandId: "comman
 const B = { threadId: "thread-1", messageId: "message-b", turnCommandId: "command-b" };
 
 function adapterFor(t3, extra = {}) {
-  return new LoopbackRuntimeAdapter({ client: t3.client(), interruptOptions: FAST, ...extra });
+  return new LoopbackRuntimeAdapter({ client: t3.client(), allowedWorkspaces: ["/synthetic/bot-workspace"], interruptOptions: FAST, ...extra });
 }
 
 test("interrupt is allowlisted and advertised only with exact turn results", async () => {
@@ -182,7 +182,10 @@ test("accepted but unstarted turn is unavailable and retryable, never guessed", 
 
 test("an unreachable T3 is unavailable, not a successful Stop", async () => {
   const adapter = new LoopbackRuntimeAdapter({
-    client: { request: async () => { throw new Error("connect ECONNREFUSED"); } },
+    client: {
+      request: async () => { throw new Error("connect ECONNREFUSED"); },
+      thread: async () => { throw new Error("connect ECONNREFUSED"); },
+    },
     interruptOptions: FAST,
   });
   assert.equal((await adapter.interrupt(stopFor(A))).status, "unavailable");
@@ -251,6 +254,7 @@ test("KRA-6575: a slow T3 read past the budget is unavailable and never dispatch
     };
     const adapter = new LoopbackRuntimeAdapter({
       client: slowClient,
+      allowedWorkspaces: ["/synthetic/bot-workspace"],
       interruptOptions: { ...FAST, totalBudgetMs: 120 },
     });
     const started = Date.now();

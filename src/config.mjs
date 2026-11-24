@@ -63,6 +63,14 @@ function readPrivateTokenFile(tokenFile, label) {
   }
 }
 
+// KRA-10852: a first run has no bearer yet. Only a missing file or a zero-byte,
+// owner-owned regular file counts; every other bad token file still fails closed.
+export function tokenFileUnset(tokenFile = process.env.T3_HERMES_TOKEN_FILE || DEFAULT_TOKEN_FILE) {
+  let stat;
+  try { stat = fs.lstatSync(tokenFile); } catch (error) { return error.code === "ENOENT"; }
+  return stat.isFile() && stat.size === 0 && (typeof process.getuid !== "function" || stat.uid === process.getuid());
+}
+
 export function readToken(tokenFile = process.env.T3_HERMES_TOKEN_FILE || DEFAULT_TOKEN_FILE) {
   return readPrivateTokenFile(tokenFile, "T3 bearer token");
 }

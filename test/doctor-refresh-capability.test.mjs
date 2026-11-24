@@ -100,7 +100,8 @@ for (const [label, capability] of [
     assert.equal(Object.hasOwn(report.capabilities, "talkFreshProviderContext"), false);
     assert.equal(report.t3.talk.status, "missing");
     assert.equal(report.t3.talk.code, "t3_not_patched");
-    assert.match(report.t3.talk.action, /update T3/i);
+    assert.match(report.t3.talk.action, /update T3 Code to \d+\.\d+\.\d+ or newer from the official download \(https:\/\/github\.com\/pingdotgg\/t3code\/releases\/latest\)/);
+    assert.doesNotMatch(report.t3.talk.action, /patched|approved/i);
     assert.match(formatDoctor(report), /t3_not_patched/);
     assert.equal(JSON.stringify(report).includes("SYNTHETIC_PRIVATE_BODY"), false);
     assert.equal(cursor(report).ready, true);

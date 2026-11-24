@@ -186,7 +186,7 @@ test("golden twin doctor row and doctor-status preserve webTools without fabrica
   const shim = new RemoteRpcShim(new LoopbackRuntimeAdapter({ client, doctorImpl: runDoctor }));
   const reply = await shim.handle({ version: 1, type: "rpc.request", id: "doctor", method: "doctor-status", params: {} });
   assert.deepEqual(reply.result.labs.find(row => row.instanceId === "codex-noweb").webTools, row.webTools);
-  assert.equal(Object.hasOwn(reply.result.capabilities, "jackMcpProviders"), false);
+  assert.equal((reply.result.capabilities.jackMcpProviders ?? []).some(id => id.endsWith("-noweb")), false);
   assert.equal(JSON.stringify(row).includes(f.root), false);
 });
 
@@ -209,7 +209,7 @@ test("real legacy/V2 client transports and result receipts retain all twin selec
       assert.equal(turns.length, 2);
       assert.ok(turns.every(turn => turn.modelSelection.instanceId === instanceId));
       assert.equal(captured.receipt.instanceId, instanceId);
-      assert.equal(Object.hasOwn(captured.doctor.capabilities, "jackMcpProviders"), false);
+      assert.equal((captured.doctor.capabilities.jackMcpProviders ?? []).some(id => id.endsWith("-noweb")), false);
     }
   }
 });
@@ -238,9 +238,10 @@ test("originate, continue, legacy/V2 commands and exact turn-result keep every t
       assert.equal(turn.modelSelection.instanceId, id);
       assert.equal((await translateCommand(turn)).at(-1).payload.modelSelection.instanceId, id);
     }
+    client.snapshot = async () => ({ projects });
     client.request = async () => ({ ...second, turnId: "turn", assistantMessageId: "assistant", instanceId: id, model: selection.model, effort: null, state: "succeeded", outputText: "Synthetic reply" });
     const { threadId, messageId, turnCommandId } = second;
-    const result = await new LoopbackRuntimeAdapter({ client }).turnResult({ threadId, messageId, turnCommandId });
+    const result = await new LoopbackRuntimeAdapter({ client, allowedWorkspaces: [f.root] }).turnResult({ threadId, messageId, turnCommandId });
     assert.equal(result.instanceId, id);
   }
 });

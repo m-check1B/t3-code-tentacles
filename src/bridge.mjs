@@ -1,6 +1,7 @@
 import { requireFreshFlags, requireFreshProviderContext, freshContextProviders } from "./fresh-provider-context.mjs";
+import { t3Support, talkMissingAction } from "./t3-support.mjs";
 import { TURN_INTERRUPT_CONTRACT } from "./turn-interrupt.mjs";
-import { inspectLeakedSessions } from "./orchestrate.mjs";
+import { inspectLeakedSessions, threadSessionStop, waitForRestartableSession } from "./orchestrate.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -52,7 +53,8 @@ import { boundDoctorInventories } from "./inventory-budget.mjs";
 import { pluginInventoryBlock } from "./plugin-inventory.mjs";
 import { LAB_NAMES, labName } from "./lab-names.mjs";
 import { inspectInstanceWebTools } from "./web-tools.mjs";
-import { ANTIGRAVITY_INSTANCE_ID, antigravityAction, applyAntigravityState } from "./antigravity.mjs";
+import { codexHomeFromSettings, codexServerNames, readSmallRegularFile } from "./bot-connectors.mjs";
+import { ANTIGRAVITY_INSTANCE_ID, antigravityAction, antigravityModelAlias, applyAntigravityState } from "./antigravity.mjs";
 import { enforceManagedPolicy, isDriverAllowed, managedPolicyReport, policySummary } from "./managed-policy.mjs";
 
 const HERMES_MENTION = /(^|\s)@hermes\b/i;
@@ -689,7 +691,7 @@ export async function ensureProject(client, { workspace, title, instanceId = DEF
   const projects = Array.isArray(snapshot?.projects) ? snapshot.projects : [];
   const existing = projects.find((project) => project?.deletedAt == null && (project.workspaceRoot === workspace || project.id === projectId));
   if (existing) return { project: existing, created: false, shell: snapshot };
-  const defaultModelSelection = resolveModelSelection({ instanceId, model, options, budget });
+  const defaultModelSelection = await liveModelSelection(client, resolveModelSelection({ instanceId, model, options, budget }));
   await client.dispatch({ type: "project.create", commandId: projectCommandId, projectId, title: title || path.basename(workspace) || "Hermes", workspaceRoot: workspace, createWorkspaceRootIfMissing: false, defaultModelSelection, createdAt: now() });
   const projected = await waitFor(async () => {
     const current = await readOrchestrationSnapshot(client);
@@ -699,7 +701,7 @@ export async function ensureProject(client, { workspace, title, instanceId = DEF
 }
 
 export async function startThread(client, { projectId, title, message, instanceId, model = DEFAULT_MODEL, options, budget, runtimeMode, freshProviderContext, fixedTitle, threadId = randomUUID(), threadCommandId = randomUUID(), turnCommandId = randomUUID(), messageId = randomUUID() }) {
-  const modelSelection = resolveModelSelection({ instanceId: instanceId === undefined ? DEFAULT_INSTANCE_ID : instanceId, model, options, budget });
+  const modelSelection = await liveModelSelection(client, resolveModelSelection({ instanceId: instanceId === undefined ? DEFAULT_INSTANCE_ID : instanceId, model, options, budget }));
   runtimeMode = requireExplicitRuntimeMode(runtimeMode);
   requireFreshFlags({ freshProviderContext, fixedTitle });
   await requireFreshProviderContext(client, { freshProviderContext, fixedTitle, instanceId });
@@ -717,6 +719,20 @@ export async function startThread(client, { projectId, title, message, instanceI
   return { threadId, projectId, messageId, turnCommandId };
 }
 
+// shortcut: T3 has no conditional stop, so a turn the owner starts in the T3 window
+// between this read and the stop is cut; Bot Talks are not driven from T3's UI.
+async function restartIdleSession(client, threadId, turnCommandId) {
+  const session = (await waitForThread(client, threadId)).thread.session;
+  const status = session?.status ?? null;
+  if (status === null || status === "stopped" || status === "error") return;
+  // Never cut a running turn; refused at once so the relay hears it in time.
+  if (session.activeTurnId != null || status === "running" || status === "starting") {
+    throw new Error("This Talk is still answering. Its tools change once it finishes; try again then.");
+  }
+  await client.dispatch(threadSessionStop({ threadId, commandId: `connectors:${turnCommandId}` }));
+  await waitForRestartableSession(client, threadId, { timeoutMs: 5_000 });
+}
+
 export async function continueThread(client, {
   threadId,
   message,
@@ -728,13 +744,15 @@ export async function continueThread(client, {
   freshProviderContext,
   turnCommandId = randomUUID(),
   messageId = randomUUID(),
-}, { prepareTalkWorkspace } = {}) {
+}, { prepareTalkWorkspace, prefetchedThread, prefetchedWorkspace } = {}) {
   // Partial selection input is refused before any read or dispatch.
   const retained = !requireContinueSelection({ instanceId, model, options, budget });
-  let modelSelection = retained ? undefined : resolveModelSelection({ instanceId, model, options, budget });
+  let modelSelection = retained ? undefined : await liveModelSelection(client, resolveModelSelection({ instanceId, model, options, budget }));
   runtimeMode = requireExplicitRuntimeMode(runtimeMode);
   await requireFreshProviderContext(client, { freshProviderContext, instanceId });
-  const detail = await waitForThread(client, threadId);
+  const detail = prefetchedThread && prefetchedThread.id === threadId
+    ? { thread: prefetchedThread }
+    : await waitForThread(client, threadId);
   const existingMessage = (detail.thread.messages || []).find((entry) => entry.id === messageId);
   if (existingMessage && existingMessage.text !== undefined && existingMessage.text !== message) throw new Error("messageId was already used with different input");
   if (!existingMessage) {
@@ -743,14 +761,20 @@ export async function continueThread(client, {
     if (prepareTalkWorkspace) {
       // KRA-9781: workspaces from 0.5.0-jack.1..5 predate the guard. A throw aborts before T3.
       // T3 runs a thread in its worktreePath when set, else in the project root; unresolvable fails closed.
-      let workspace = detail.thread.worktreePath;
+      let workspace = typeof prefetchedWorkspace === "string" && prefetchedWorkspace !== ""
+        ? prefetchedWorkspace
+        : detail.thread.worktreePath;
       if (typeof workspace !== "string" || workspace === "") {
         const snapshot = await readOrchestrationSnapshot(client);
         const project = (Array.isArray(snapshot?.projects) ? snapshot.projects : []).find((entry) => entry?.id === detail.thread.projectId);
         workspace = project?.workspaceRoot;
       }
       if (typeof workspace !== "string") throw new Error("Thread workspace could not be resolved; continue refused before T3");
-      await prepareTalkWorkspace(workspace);
+      // KRA-10862: T3 keeps a lab process alive across turns, and that process
+      // loaded its MCP list and turn token once. The hook stops an idle session
+      // before it rewrites them, so this turn starts a fresh one (it resumes the
+      // conversation) on the new list.
+      await prepareTalkWorkspace(workspace, { restartIdleSession: () => restartIdleSession(client, threadId, turnCommandId) });
     }
     await client.dispatch({
       type: "thread.turn.start",
@@ -1098,16 +1122,46 @@ export function skillInventoryRow(instanceId, configProvider) {
 }
 const DOCTOR_STATUS_VALUES = new Set(["absent", "configured", "disabled", "error", "installed", "ready", "unavailable"]);
 
+// KRA-10869: an old effort-suffixed Antigravity id maps to its base id plus thought_level,
+// only on evidence: T3's live model list for that lab is non-empty, no longer has the
+// old id, does have the base id, and (when T3 describes that model's thought_level)
+// offers that level. Anything less keeps the id as given.
+export async function liveModelSelection(client, selection) {
+  const alias = baseLabId(selection.instanceId) === "antigravity" ? antigravityModelAlias(selection.model) : null;
+  if (!alias) return selection;
+  // B3 P3-2 on #117: a level that disagrees with the old id refuses, mapped or not.
+  for (const required of alias.options) {
+    if ((selection.options ?? []).some((entry) => entry.id === required.id && entry.value !== required.value)) throw new Error(`Antigravity model alias ${selection.model} conflicts with option ${required.id}`);
+  }
+  let providers = [];
+  try { providers = (await client.rpc("server.getConfig", {}))?.providers ?? []; } catch { return selection; }
+  const provider = Array.isArray(providers) ? providers.find((entry) => entry?.instanceId === selection.instanceId) : undefined;
+  const slugs = normalizedModelSlugs(provider);
+  if (slugs.includes(selection.model) || !slugs.includes(alias.model)) return selection;
+  // B3 P3-3 on #114: the same key as the slug list, and no descriptor means no alias.
+  const target = provider.models.find((entry) => modelSlug(entry) === alias.model);
+  const descriptors = target?.capabilities?.optionDescriptors;
+  const level = Array.isArray(descriptors) ? descriptors.find((entry) => entry?.id === "thought_level") : undefined;
+  if (!level || !Array.isArray(level.options) || !alias.options.every((wanted) => level.options.some((choice) => choice?.id === wanted.value))) return selection;
+  const options = [...(selection.options ?? [])];
+  for (const required of alias.options) {
+    if (!options.some((entry) => entry.id === required.id)) options.push({ ...required });
+  }
+  return { ...selection, model: alias.model, options };
+}
+
+function modelSlug(model) {
+  const value = typeof model === "string" ? model : model?.slug || model?.id || model?.model || model?.name || null;
+  return typeof value === "string" ? value.trim() : null;
+}
+
 function normalizedModelSlugs(provider) {
   const models = Array.isArray(provider?.models) ? provider.models : [];
   const seen = new Set();
   const normalized = [];
   for (const model of models) {
-    const value = typeof model === "string"
-      ? model
-      : model?.slug || model?.id || model?.model || model?.name || null;
-    if (typeof value !== "string") continue;
-    const slug = value.trim();
+    const slug = modelSlug(model);
+    if (slug === null) continue;
     if (!/^[^\u0000-\u001f\u007f]{1,256}$/.test(slug) || seen.has(slug)) continue;
     seen.add(slug);
     normalized.push(slug);
@@ -1286,6 +1340,9 @@ const T3_FIXED_PROBE_TIMEOUTS = [
   [/^Failed to load OpenCode provider inventory: Timed out while checking the OpenCode server version\.$/, { command: "opencode serve", probe: "opencode-server" }],
 ];
 const probeCommands = new WeakMap();
+// T3's provider snapshot version per doctor row, kept off the wire.
+const labVersions = new WeakMap();
+export const labVersion = lab => labVersions.get(lab) ?? null;
 
 function providerProbeTimeout(message) {
   if (typeof message !== "string") return null;
@@ -1310,6 +1367,21 @@ function providerErrorCode(message) {
 function providerSignedIn(configProvider) {
   const status = configProvider?.auth?.status;
   return status === "authenticated" ? true : status === "unauthenticated" ? false : null;
+}
+
+// KRA-10891: the old static Agent Jack road left an `agent-jack` server in some Codex
+// homes; Jack's tools now come per Bot, so it duplicates them, and it fails when its
+// variable is unset. Names only are read, from a regular file of at most 1 MiB.
+export const STALE_JACK_SERVER = "agent-jack";
+// B3 P3-6/P3-3 on #116: the bounded read lives with the turn path's (B3 on #117).
+export { readSmallRegularFile };
+
+function staleCodexJackServer(settings, instanceId, instance) {
+  if (instanceId !== "codex" && instance?.driver !== "codex") return false;
+  try {
+    const text = readSmallRegularFile(path.join(codexHomeFromSettings(settings, { instanceId }), "config.toml"), 1024 * 1024);
+    return text !== null && codexServerNames(text).names.has(STALE_JACK_SERVER);
+  } catch { return false; }
 }
 
 function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
@@ -1358,6 +1430,8 @@ function labRow({ instanceId, advertised, settings, configById, modelsMode }) {
     defaultAvailable,
     webTools: inspectInstanceWebTools(settings, instanceId),
   };
+  if (installed && staleCodexJackServer(settings, instanceId, instance)) row.staleJackServer = STALE_JACK_SERVER;
+  labVersions.set(row, configProvider?.version);
   if (code === "provider_probe_timeout") probeCommands.set(row, providerProbeTimeout(configProvider.message));
   if (defaultSource?.startsWith("t3-") && kind !== "external") {
     const pick = labDefaultModel(instanceId, instance);
@@ -1566,7 +1640,8 @@ export async function probeTalkCapabilities(client, { signal = AbortSignal.timeo
     finding: supported ? { status: "present", code: null, action: null } : {
       status: code === "t3_not_patched" ? "missing" : "unavailable",
       code,
-      action: code === "t3_not_patched" ? "This Mac's T3 Code lacks Local Talk support; update T3 to the approved patched build."
+      // Machine code kept for compatibility; the text names the supported stock range.
+      action: code === "t3_not_patched" ? talkMissingAction(null)
         : code === "t3_reauth_required" ? reauthAction
           : "Check the local T3 connection, then rerun doctor to verify Local Talk support.",
     },
@@ -1608,6 +1683,17 @@ async function doctorReport(client, {
     settings = await withinDoctorDeadline(signal, () => client.getSettings({ signal }));
     config = await withinDoctorDeadline(signal, () => client.rpc("server.getConfig", {}, { signal }));
   } catch (error) {
+    // KRA-10852: only a refused connection is T3 not running; other network failures keep their error.
+    if (error instanceof TypeError && error.cause?.code === "ECONNREFUSED" && !signal?.aborted) {
+      const action = "Open T3 Code (Beta), then rerun tentacles doctor.";
+      return {
+        product: "Tentacles",
+        capabilities: { talkTurnResult: null, turnInterrupt: null },
+        t3: { reachable: false, auth: { status: "unknown", code: "t3_unreachable", action }, talk: { status: "unavailable", code: "t3_unreachable", action } },
+        pairing: readPairPresence(pairStateFile),
+        labs: [],
+      };
+    }
     if (!(error instanceof T3HttpError) || error.status !== 401) throw error;
     const action = error.action ?? T3_REAUTH_ACTION;
     return {
@@ -1644,6 +1730,8 @@ async function doctorReport(client, {
     && /^[A-Za-z0-9._+-]{1,128}$/.test(config.environment.serverVersion)
     ? config.environment.serverVersion
     : null;
+  const support = t3Support(serverVersion);
+  if (talk.finding.code === "t3_not_patched") talk.finding.action = talkMissingAction(serverVersion);
   const configById = new Map();
   const duplicateIds = new Set();
   for (const entry of providers) {
@@ -1801,7 +1889,7 @@ async function doctorReport(client, {
   return boundDoctorInventories({
     product: "Tentacles",
     capabilities: talk.capabilities,
-    t3: { reachable: true, auth: { status: "valid" }, version: serverVersion, talk: talk.finding, projects: projects.length, threads: threads.length, leakedSessions },
+    t3: { reachable: true, auth: { status: "valid" }, version: serverVersion, support, talk: talk.finding, projects: projects.length, threads: threads.length, leakedSessions },
     pairing,
     managedPolicy,
     labs,
@@ -1857,10 +1945,15 @@ export function formatDoctor(result = {}) {
   } else {
     lines.push(`Hermes health: unreachable  code: ${hermes.code || "hermes_unreachable"}`);
   }
+  if (t3.reachable === false) return ["Tentacles doctor — T3 is not reachable", `Recovery: ${t3.auth.action}`, "Lab readiness is unavailable until T3 Code runs."].join("\n");
   if (t3.auth?.status === "invalid") return ["Tentacles doctor — T3 re-authentication required (401)", `Recovery: ${t3.auth.action}`, "Lab readiness is unavailable until reauthentication."].join("\n");
   if (t3.auth) {
     lines.push(`T3 authentication: ${t3.auth.status === "valid" ? "valid" : "re-authentication required (401)"}`);
     if (t3.auth.status === "invalid") lines.push(`Recovery: ${t3.auth.action}`);
+  }
+  if (t3.support) {
+    lines.push(`T3 Code support: ${t3.support.status}  range: ${t3.support.minimum}..${t3.support.testedThrough}`);
+    if (t3.support.action && !t3.talk?.action) lines.push(`Recovery: ${t3.support.action}`);
   }
   if (t3.talk) {
     lines.push(`Local Talk: ${t3.talk.status}${t3.talk.code ? `  code: ${t3.talk.code}` : ""}`);
@@ -1932,6 +2025,9 @@ export function formatDoctor(result = {}) {
       if (action) parts.push(`action: ${action}`);
       lines.push(`  - ${parts.join("  ")}`);
     }
+  }
+  for (const lab of labs.filter((entry) => entry.staleJackServer === STALE_JACK_SERVER)) {
+    lines.push(`Stale Codex server (${lab.instanceId}): the Codex config has an old \`agent-jack\` server from the static Agent Jack road; Jack's tools now come per Bot, so it duplicates them, and it fails on every turn when its variable is unset. Fix: remove the [mcp_servers.agent-jack] table from config.toml in the Codex home T3 uses.`);
   }
   const blockedByPolicy = Array.isArray(result.blockedByPolicy) ? result.blockedByPolicy : [];
   if (blockedByPolicy.length) {

@@ -38,7 +38,7 @@ export async function captureWire(protocol, { fresh = false, instanceId = "codex
   };
   const selection = { instanceId, model: "gpt-5.6-sol", runtimeMode: "full-access" };
   await startThread(client, { ...selection, projectId: "project", threadId: "12345678-1111-4111-8111-111111111111", threadCommandId: "thread-command", turnCommandId: "first-command", messageId: "first-message", title: "Synthetic", message: "first", ...(fresh ? { freshProviderContext: true, fixedTitle: true } : {}) });
-  const adapter = new LoopbackRuntimeAdapter({ client, doctorImpl: async () => ({ ready: true }) });
+  const adapter = new LoopbackRuntimeAdapter({ client, allowedWorkspaces: ["/synthetic-hire"], doctorImpl: async () => ({ ready: true }) });
   await adapter.continue({ ...selection, threadId: "12345678-1111-4111-8111-111111111111", turnCommandId: "next-command", messageId: "next-message", message: "next", ...(fresh ? { freshProviderContext: true } : {}) });
   const doctor = await adapter.doctorStatus();
   const receipt = await adapter.turnResult({ threadId: "12345678-1111-4111-8111-111111111111", messageId: "next-message", turnCommandId: "next-command" });

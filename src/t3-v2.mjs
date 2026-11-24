@@ -35,6 +35,7 @@ export const isUnknownTagError = (error, tag) => error instanceof T3RpcRejectedE
 // Patched T3 v2 (jack/upstream-0.1.0) carries runtime mode atomically on its
 // own message RPC. Upstream T3 >= 0.1.8 removed that tag; it takes
 // message.dispatch through orchestration.dispatchCommand.
+// shortcut: legacy TPLUS path, remove with the patched branches in t3-client.mjs after the stock-T3 rollout.
 export const PATCHED_MESSAGE_METHOD = "orchestration.dispatchMessageWithMode";
 export const UPSTREAM_MESSAGE_METHOD = "orchestration.dispatchCommand";
 
@@ -380,6 +381,48 @@ export function archivedShellToV1(shell) {
   return { ...shell, threads };
 }
 
+// KRA-10862 (C4): official T3 v2 keeps tool calls as turn items, not v1 activities,
+// so a Bot's Jack tool call never reached Talk. A finished MCP tool or web search
+// becomes one `tool.completed` activity whose summary names the tool only;
+// the tool's input and output never leave this machine.
+const TOOL_LABEL = /^[\p{L}\p{N} ._-]{1,80}$/u;
+const toolLabel = (value) => typeof value === "string" && TOOL_LABEL.test(value.trim()) ? value.trim() : null;
+
+export function toolActivities(projection) {
+  const activities = [];
+  for (const item of projection.turnItems ?? []) {
+    if (!isRecord(item) || !["completed", "failed"].includes(item.status) || typeof item.id !== "string" || item.id.length > 150) continue;
+    const at = [item.completedAt, item.updatedAt].find((value) => typeof value === "string" && Number.isFinite(Date.parse(value)));
+    if (!at) continue;
+    let summary = null;
+    if (item.type === "dynamic_tool") {
+      const qualified = typeof item.toolName === "string" ? /^mcp__(.+?)__(.+)$/i.exec(item.toolName) : null;
+      const sourceKey = isRecord(item.toolSource) && typeof item.toolSource.key === "string" ? item.toolSource.key : "";
+      if (!qualified && !sourceKey.startsWith("mcp:")) continue; // built-in lab tools stay out of Talk
+      const server = toolLabel(isRecord(item.toolSource) ? item.toolSource.name : null) ?? toolLabel(qualified?.[1]) ?? toolLabel(sourceKey.slice(4));
+      // Never the item title: T3 can fill it from the model's own tool input.
+      let tool = toolLabel(qualified?.[2] ?? item.toolName);
+      // Codex names an MCP tool "<server>.<tool>"; the server is shown once.
+      const keyServer = sourceKey.startsWith("mcp:") ? sourceKey.slice(4) : "";
+      if (tool && keyServer && tool.toLowerCase().startsWith(`${keyServer.toLowerCase()}.`)) tool = toolLabel(tool.slice(keyServer.length + 1));
+      if (!tool) continue;
+      summary = `${item.status === "failed" ? "Tool failed" : "Used tool"}: ${tool}${server ? ` (${server})` : ""}`;
+    } else if (item.type === "web_search") {
+      // Claude's WebFetch is a web_search item too: its result is a page snippet, or its
+      // pattern is the URL. Both are read here only to choose the words.
+      const results = Array.isArray(item.results) ? item.results : [];
+      const pattern = Array.isArray(item.patterns) && typeof item.patterns[0] === "string" ? item.patterns[0].trim() : "";
+      const fetched = (results.length > 0 && results.every((result) => isRecord(result) && result.snippet !== undefined && result.title === undefined))
+        || /^https?:\/\//i.test(pattern);
+      summary = fetched ? (item.status === "failed" ? "Reading a web page failed" : "Read a web page")
+        : (item.status === "failed" ? "Web search failed" : "Searched the web");
+    } else continue;
+    activities.push({ id: `item:${item.id}`, kind: "tool.completed", summary,
+      createdAt: at, turnId: item.runId ?? null });
+  }
+  return activities;
+}
+
 /** V2 thread detail ({ snapshotSequence, projection }) -> V1 detail ({ thread }). */
 export function threadDetailToV1(detail, threadId) {
   const projection = detail?.projection;
@@ -419,7 +462,7 @@ export function threadDetailToV1(detail, threadId) {
       orchestrationProtocol: V2_PROTOCOL,
       lifecycleWorkPending: hasPendingWork(projection, runs),
       messages,
-      activities: [],
+      activities: toolActivities(projection),
       latestTurn: latest ? { turnId: latest.id, state: latest.status, requestedAt: latest.requestedAt, completedAt: latest.completedAt ?? null } : null,
     },
   };
@@ -428,7 +471,7 @@ export function threadDetailToV1(detail, threadId) {
 // ── Native turn result (upstream T3 v2, no patched turn-result route) ──────
 
 const RUN_RESULT_STATE = { completed: "succeeded", failed: "failed", cancelled: "cancelled", interrupted: "cancelled", rolled_back: "cancelled" };
-const EFFORT_OPTION_IDS = new Set(["reasoningEffort", "effort"]);
+const EFFORT_OPTION_IDS = new Set(["reasoningEffort", "effort", "thought_level"]);
 const SAFE_RESULT_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 
 // Upstream provider message ids can carry percent-escapes and exceed 128

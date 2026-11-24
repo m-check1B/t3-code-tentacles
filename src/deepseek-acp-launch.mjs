@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
+import { PassThrough } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   DEFAULT_OPENROUTER_BASE_URL,
@@ -92,7 +93,19 @@ export function deepseekTokenFile({ env = process.env, home = os.homedir(), plat
   return env.OPENROUTER_TOKEN_FILE || platformPath.join(defaultStateDir({ platform, env, home }), "openrouter.token");
 }
 
-export function buildLaunchPlan({ env = process.env, home = os.homedir(), configPath = BRIDGE_DSH_CONFIG_PATH, cwd = process.cwd() } = {}) {
+// Stock T3 runs commit/PR/title generation and provider probes through the
+// grok ACP driver with these clientInfo names (upstream v0.1.11
+// packages/provider-grok/src/server/{textGeneration,status}.ts). Those runs are
+// headless: nobody can approve a write, and the cwd is the user's repository.
+export const HEADLESS_ACP_CLIENTS = Object.freeze(["t3-code-git-text", "t3-code-provider-probe"]);
+
+/** True when the first client line is an ACP initialize from a headless T3 client. */
+export function isHeadlessInitialize(line) {
+  const message = parseJsonObject(Buffer.isBuffer(line) ? line.toString("utf8") : String(line ?? ""));
+  return message?.method === "initialize" && HEADLESS_ACP_CLIENTS.includes(message.params?.clientInfo?.name);
+}
+
+export function buildLaunchPlan({ env = process.env, home = os.homedir(), configPath = BRIDGE_DSH_CONFIG_PATH, cwd = process.cwd(), headless = false } = {}) {
   const apiKey = readOpenRouterToken(deepseekTokenFile({ env, home }));
   const binary = resolveDshAcpBinary(env);
   const sessionsRoot = env.DSH_SESSIONS_ROOT || path.join(home, ".dsh", "acp-sessions", workspaceSessionsSlug(cwd));
@@ -106,7 +119,8 @@ export function buildLaunchPlan({ env = process.env, home = os.homedir(), config
       DEEPSEEK_API_KEY: apiKey,
       DEEPSEEK_BASE_URL: DEFAULT_OPENROUTER_BASE_URL,
       DEEPSEEK_MODEL: env.DEEPSEEK_MODEL || DEFAULT_LAUNCH_DEEPSEEK_MODEL,
-      DSH_PERMISSION_MODE: env.DSH_PERMISSION_MODE || DEFAULT_DSH_PERMISSION_MODE,
+      // Headless runs are read-only whatever the instance configures (replaces TPLUS ff0fbced3).
+      DSH_PERMISSION_MODE: headless ? "read-only" : (env.DSH_PERMISSION_MODE || DEFAULT_DSH_PERMISSION_MODE),
       DSH_SESSIONS_ROOT: sessionsRoot,
     },
   };
@@ -352,8 +366,9 @@ export function startDeepSeekAcpProxy({
   stdout = process.stdout,
   maxLineBytes = MAX_ACP_LINE_BYTES,
   exitImpl = defaultExit,
+  headless = false,
 } = {}) {
-  const resolvedPlan = plan || buildLaunchPlan();
+  const resolvedPlan = plan || buildLaunchPlan({ headless });
   const child = spawnImpl(resolvedPlan.binary, resolvedPlan.args, {
     stdio: ["pipe", "pipe", "inherit"],
     env: resolvedPlan.env,
@@ -403,6 +418,15 @@ export function startDeepSeekAcpProxy({
   });
 
   stdoutRelay = consumeJsonLines(child.stdout, (line) => {
+    // Lines already split from the same chunk must not escape after a stop.
+    if (stopping) return undefined;
+    // Headless latch (replaces TPLUS c351b8ef4/1692b60cf): any permission request,
+    // whatever its id (absent, empty, null), ends the run before T3 sees output.
+    if (headless && parseJsonObject(Buffer.isBuffer(line) ? line.toString("utf8") : String(line))?.method === "session/request_permission") {
+      console.error("t3-deepseek-acp: permission requested during headless T3 text generation; stopping (read-only run)");
+      stop();
+      return undefined;
+    }
     const transformed = transformAgentToClientLine(line, translatedIds, toolCallState);
     return forwardLine(stdout, transformed);
   }, stop, maxLineBytes);
@@ -431,15 +455,48 @@ function defaultExit(code) {
   process.exit(code);
 }
 
-export function main() {
+// Reads stdin up to the first newline, then hands back that line plus a stream
+// that replays everything read so the proxy sees the exact original bytes.
+export function peekFirstLine(stream, maxBytes = MAX_ACP_LINE_BYTES) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    const done = (error) => {
+      stream.removeListener("data", onData);
+      stream.removeListener("end", onEnd);
+      stream.removeListener("error", done);
+      stream.pause();
+      if (error) return reject(error);
+      const buffered = Buffer.concat(chunks);
+      const newline = buffered.indexOf(10);
+      const replay = new PassThrough();
+      replay.write(buffered);
+      stream.pipe(replay);
+      resolve({ firstLine: newline === -1 ? buffered.toString("utf8") : buffered.subarray(0, newline).toString("utf8"), stdin: replay });
+    };
+    const onData = (chunk) => {
+      chunks.push(chunk);
+      size += chunk.length;
+      if (chunk.includes(10) || size > maxBytes) done();
+    };
+    const onEnd = () => done();
+    stream.on("data", onData);
+    stream.once("end", onEnd);
+    stream.once("error", done);
+  });
+}
+
+export async function main() {
+  const { firstLine, stdin } = await peekFirstLine(process.stdin);
+  const headless = isHeadlessInitialize(firstLine);
   let plan;
   try {
-    plan = buildLaunchPlan();
+    plan = buildLaunchPlan({ headless });
   } catch (error) {
     console.error(`t3-deepseek-acp: ${error.message}`);
     process.exit(1);
   }
-  startDeepSeekAcpProxy({ plan });
+  startDeepSeekAcpProxy({ plan, stdin, headless });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

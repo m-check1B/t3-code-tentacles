@@ -441,6 +441,7 @@ function projectThreadSummary(thread) {
   return {
     id: thread.id ?? null,
     projectId: thread.projectId ?? null,
+    worktreePath: typeof thread.worktreePath === "string" && thread.worktreePath !== "" ? thread.worktreePath : null,
     title: thread.title ?? null,
     modelSelection: thread.modelSelection ?? null,
     runtimeMode: thread.runtimeMode ?? null,
@@ -807,7 +808,7 @@ export async function waitForMessageProjection(client, threadId, messageId, { ti
   throw new Error(`Timed out waiting for message ${messageId} in thread ${threadId}`);
 }
 
-async function waitForRestartableSession(client, threadId, { timeoutMs = 15_000, intervalMs = 100 } = {}) {
+export async function waitForRestartableSession(client, threadId, { timeoutMs = 15_000, intervalMs = 100 } = {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const detail = await getThreadIfProjected(client, threadId);

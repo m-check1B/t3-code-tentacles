@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { startThread, continueThread, originate } from "../src/bridge.mjs";
 import { LoopbackRuntimeAdapter } from "../src/outbound-pairer.mjs";
+import { BOT_CONNECTOR_CAPABILITIES } from "../src/bot-connectors.mjs";
 import { T3Client, T3HttpError } from "../src/t3-client.mjs";
 import { captureWire, freshCapability } from "./helpers/fresh-context-wire.mjs";
 import { translateCommand } from "../src/t3-v2.mjs";
@@ -71,23 +72,27 @@ test("idempotent fresh originate replays the same identifiers but refuses semant
     await assert.rejects(originate(client, { ...input, fixedTitle: false }), /different input/);
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
+// No pair offer pinned a Jack origin here, so Jack-hosted entries are not invited.
+const { jackMcpProxy: _proxy, jackMcpSelf: _self, ...UNPINNED_ALL } = BOT_CONNECTOR_CAPABILITIES;
+// These doctors report no OpenCode version, so opencode is not advertised.
+const UNPINNED_CAPABILITIES = { ...UNPINNED_ALL, jackMcpProviders: UNPINNED_ALL.jackMcpProviders.filter(id => id !== "opencode") };
 test("doctor advertises only the exact agreed capability envelope", async () => {
   const exact = { talkTurnResult: "v1" };
   for (const caps of [{}, capability, exact]) {
     const runtime = new LoopbackRuntimeAdapter({ client: fake(caps), doctorImpl: async () => ({ ready: true }) });
     const result = await runtime.doctorStatus();
-    assert.deepEqual(result.capabilities, caps === exact ? { ...exact, turnInterrupt: "turn-interrupt-v1" } : { talkTurnResult: null, turnInterrupt: null });
+    assert.deepEqual(result.capabilities, caps === exact ? { ...exact, turnInterrupt: "turn-interrupt-v1", ...UNPINNED_CAPABILITIES } : { talkTurnResult: null, turnInterrupt: null });
   }
 });
 test("exact result forwards only actual applied context receipt and rejects the wrong generation", async () => {
   const input = { threadId: "thread", messageId: "message", turnCommandId: "command" };
   const result = { ...input, turnId: "turn", assistantMessageId: null, instanceId: "codex", model: "gpt-5.6-sol", effort: "high", state: "failed", outputText: null };
   for (const receipt of [{}, { freshProviderContext: true, nativeContextGeneration: "command" }]) {
-    const runtime = new LoopbackRuntimeAdapter({ client: { request: async (_path, options) => options ? ({ ...result, ...receipt, secretInternal: "not forwarded" }) : capability } });
+    const runtime = new LoopbackRuntimeAdapter({ allowedWorkspaces: ["/synthetic/bot-workspace"], client: { thread: async (id) => ({ thread: { id, worktreePath: "/synthetic/bot-workspace" } }), request: async (_path, options) => options ? ({ ...result, ...receipt, secretInternal: "not forwarded" }) : capability } });
     assert.deepEqual(await runtime.turnResult(input), { ...result, ...receipt, ...failure("provider_error") });
   }
   for (const receipt of [{ freshProviderContext: true, nativeContextGeneration: "other" }, { freshProviderContext: true }, { nativeContextGeneration: "command" }, { freshProviderContext: false, nativeContextGeneration: "command" }]) {
-    const runtime = new LoopbackRuntimeAdapter({ client: { request: async () => ({ ...result, ...receipt }) } });
+    const runtime = new LoopbackRuntimeAdapter({ allowedWorkspaces: ["/synthetic/bot-workspace"], client: { thread: async (id) => ({ thread: { id, worktreePath: "/synthetic/bot-workspace" } }), request: async () => ({ ...result, ...receipt }) } });
     await assert.rejects(runtime.turnResult(input), /Invalid applied/);
   }
 });
@@ -95,9 +100,9 @@ test("exact result forwards only actual applied context receipt and rejects the 
 test("pending results never attest a fresh applied context", async () => {
   const input = { threadId: "thread", messageId: "message", turnCommandId: "command" };
   const result = { ...input, turnId: null, assistantMessageId: null, instanceId: null, model: null, effort: null, state: "pending", outputText: null };
-  const legacy = new LoopbackRuntimeAdapter({ client: { request: async () => result } });
+  const legacy = new LoopbackRuntimeAdapter({ allowedWorkspaces: ["/synthetic/bot-workspace"], client: { thread: async (id) => ({ thread: { id, worktreePath: "/synthetic/bot-workspace" } }), request: async () => result } });
   assert.deepEqual(await legacy.turnResult(input), result);
-  const premature = new LoopbackRuntimeAdapter({ client: { request: async () => ({ ...result, freshProviderContext: true, nativeContextGeneration: "command" }) } });
+  const premature = new LoopbackRuntimeAdapter({ allowedWorkspaces: ["/synthetic/bot-workspace"], client: { thread: async (id) => ({ thread: { id, worktreePath: "/synthetic/bot-workspace" } }), request: async () => ({ ...result, freshProviderContext: true, nativeContextGeneration: "command" }) } });
   await assert.rejects(premature.turnResult(input), /Invalid applied/);
 });
 
@@ -209,7 +214,7 @@ test("doctor drops malformed capabilities and preserves interruption and invento
 test("unadvertised applied receipts are refused instead of escaping the G1 gate", async () => {
   const input = { threadId: "thread", messageId: "message", turnCommandId: "command" };
   const receipt = { ...input, turnId: "turn", assistantMessageId: null, instanceId: "codex", model: "gpt-5.6-sol", effort: "high", state: "failed", outputText: null, freshProviderContext: true, nativeContextGeneration: "command" };
-  const runtime = new LoopbackRuntimeAdapter({ client: { request: async (_path, options) => options ? receipt : { talkTurnResult: "v1", talkFreshProviderContext: 0 } } });
+  const runtime = new LoopbackRuntimeAdapter({ allowedWorkspaces: ["/synthetic/bot-workspace"], client: { thread: async (id) => ({ thread: { id, worktreePath: "/synthetic/bot-workspace" } }), request: async (_path, options) => options ? receipt : { talkTurnResult: "v1", talkFreshProviderContext: 0 } } });
   await assert.rejects(runtime.turnResult(input), /unavailable/);
 });
 
@@ -251,7 +256,7 @@ test("fresh terminal receipts require an applied turn for every terminal state",
   const input = { threadId: "thread", messageId: "message", turnCommandId: "command" };
   for (const state of ["succeeded", "failed", "cancelled"]) {
     const receipt = { ...input, turnId: "turn", assistantMessageId: state === "succeeded" ? "assistant" : null, instanceId: "codex", model: "gpt-5.6-sol", effort: "high", state, outputText: state === "succeeded" ? "synthetic" : null, freshProviderContext: true, nativeContextGeneration: "command" };
-    const adapter = new LoopbackRuntimeAdapter({ client: { request: async (_path, options) => options ? receipt : capability } });
+    const adapter = new LoopbackRuntimeAdapter({ allowedWorkspaces: ["/synthetic/bot-workspace"], client: { thread: async (id) => ({ thread: { id, worktreePath: "/synthetic/bot-workspace" } }), request: async (_path, options) => options ? receipt : capability } });
     assert.deepEqual(await adapter.turnResult(input), { ...receipt, ...(state === "succeeded" ? {} : failure(state === "failed" ? "provider_error" : "cancelled")) });
     if (state !== "succeeded") {
       receipt.turnId = null;

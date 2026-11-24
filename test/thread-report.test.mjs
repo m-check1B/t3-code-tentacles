@@ -73,8 +73,9 @@ test("CLI and real relay projection share the status truth table, including unpr
     const status = mapThreadReportStatus(entry.input);
     assert.equal(status, entry.status, entry.name);
     const { sessionStatus, lastError, ...flags } = entry.input;
-    const thread = { id: THREAD_ID, ...flags, session: { status: sessionStatus, lastError } };
+    const thread = { id: THREAD_ID, worktreePath: "/synthetic/bot-workspace", ...flags, session: { status: sessionStatus, lastError } };
     const adapter = new LoopbackRuntimeAdapter({
+      allowedWorkspaces: ["/synthetic/bot-workspace"],
       client: {
         snapshot: async () => ({ threads: [thread] }),
         archivedShell: async () => ({ threads: [] }),
@@ -105,13 +106,13 @@ test("CLI and relay agree on pending activities and malformed sessions", async (
     { thread: { session: "ready" }, status: null },
   ];
   for (const fixture of cases) {
-    const thread = { id: THREAD_ID, ...fixture.thread };
+    const thread = { id: THREAD_ID, worktreePath: "/synthetic/bot-workspace", ...fixture.thread };
     const client = {
       thread: async () => ({ thread }),
       snapshot: async () => ({ threads: [thread] }),
       archivedShell: async () => ({ threads: [] }),
     };
-    const projected = (await new LoopbackRuntimeAdapter({ client }).seats()).threads[0];
+    const projected = (await new LoopbackRuntimeAdapter({ client, allowedWorkspaces: ["/synthetic/bot-workspace"] }).seats()).threads[0];
     if (fixture.status === null) {
       await assert.rejects(report(client, thread.id), /report is unproven/);
       assert.equal(Object.hasOwn(projected, "report"), false);
@@ -299,9 +300,10 @@ test("report model labels are bounded, printable IDs", () => {
 
 test("relay and CLI share the same model-label bound", async () => {
   for (const model of ["gpt-5.6-sol", "x".repeat(81), `gpt\u0007${PROMPT_CANARY}`]) {
-    const thread = { id: THREAD_ID, modelSelection: { instanceId: "codex", model, options: [{ id: "reasoningEffort", value: "high" }] }, session: { status: "idle" } };
+    const thread = { id: THREAD_ID, worktreePath: "/synthetic/bot-workspace", modelSelection: { instanceId: "codex", model, options: [{ id: "reasoningEffort", value: "high" }] }, session: { status: "idle" } };
     const cli = projectThreadReport(thread, THREAD_ID);
     const relay = (await new LoopbackRuntimeAdapter({
+      allowedWorkspaces: ["/synthetic/bot-workspace"],
       client: { snapshot: async () => ({ threads: [thread] }), archivedShell: async () => ({ threads: [] }) },
     }).seats()).threads[0];
     const relayModelVisible = relay.report.summary.includes(model);

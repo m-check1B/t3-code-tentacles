@@ -136,3 +136,172 @@ test("Antigravity never invents a default model from a fixed fallback", async ()
   assert.equal(row.ready, false);
   assert.equal(row.code, "default_model_unavailable");
 });
+
+// KRA-10863: T3 0.1.11's two repairable managed-runtime messages get their own code and fix.
+const PREDATES = "Antigravity 1.20.3 predates the Antigravity CLI and no longer works with this T3 Code release. Update it in Antigravity setup.";
+const CHANGED = "The managed Antigravity runtime changed on disk. Reinstall it in Antigravity setup.";
+// B3 P3-2 on #100: a withdrawn managed release, same fix (AntigravityInstallation.ts:659 at v0.1.11).
+const WITHDRAWN = "Antigravity 1.5.9 no longer works with this T3 Code release. Update it in Antigravity setup.";
+for (const [message, installed, code, fix] of [
+  [PREDATES, true, "runtime_update_required", /update it in T3 Code's Antigravity setup/],
+  [WITHDRAWN, true, "runtime_update_required", /update it in T3 Code's Antigravity setup/],
+  // T3 reports this one as a missing installation; it is still a repair, not an install.
+  [CHANGED, false, "runtime_changed", /reinstall it in T3 Code's Antigravity setup/],
+]) {
+  test(`T3's repairable runtime message becomes ${code} with T3's setup link, never echoed`, async () => {
+    for (const auth of ["authenticated", "unauthenticated", "unknown"]) {
+      const row = await antigravityRow({ provider: { status: "error", installed, auth: { status: auth }, message: ` ${message} ` } });
+      assert.equal(row.ready, false);
+      assert.equal(row.code, code);
+      assert.match(row.action, fix);
+      assert.equal(row.action.endsWith(ANTIGRAVITY_SETUP_URL), true);
+      assert.equal(JSON.stringify(row).includes(message), false);
+    }
+  });
+}
+
+test("a near miss of a repairable message stays a plain provider error", async () => {
+  for (const message of [`${CHANGED} SECRET-CANARY`, PREDATES.replace("1.20.3", "1.20.3 /tmp/x"), CHANGED.toLowerCase(), WITHDRAWN.replace("1.5.9", "1.5.9 SECRET-CANARY")]) {
+    const row = await antigravityRow({ provider: { status: "error", installed: true, auth: { status: "authenticated" }, message } });
+    assert.equal(row.code, "provider_error");
+    assert.equal(JSON.stringify(row).includes("SECRET-CANARY"), false);
+  }
+  const missing = await antigravityRow({ provider: { status: "error", installed: false, auth: { status: "unknown" }, message: `${CHANGED}x` } });
+  assert.equal(missing.code, "not_installed");
+});
+
+test("after the runtime update, a signed-out Antigravity reaches not_signed_in", async () => {
+  // T3 0.1.11 after a repair: installed, the Google session gone.
+  const row = await antigravityRow({ provider: { status: "warning", installed: true, auth: { status: "unauthenticated" }, message: "Sign in with Google to use Antigravity." } });
+  assert.equal(row.code, "not_signed_in");
+  assert.equal(row.signedIn, false);
+  assert.match(row.action, /^Sign in with Google in T3 Code: /);
+});
+
+test("KRA-10869 B3 P2-2 on #114: an old effort id maps only on evidence from T3's live list; never xhigh", async () => {
+  const { liveModelSelection } = await import("../src/bridge.mjs");
+  const live = (models) => ({ rpc: async (method) => { assert.equal(method, "server.getConfig"); return { providers: [{ instanceId: "antigravity", ...(models === undefined ? {} : { models }) }] }; } });
+  const slugs = (...ids) => ids.map((slug) => ({ slug }));
+  const old = { instanceId: "antigravity", model: "gemini-4-argon-high" };
+  const mapped = { instanceId: "antigravity", model: "gemini-4-argon", options: [{ id: "thought_level", value: "high" }] };
+  const level = (...ids) => [{ slug: "gemini-4-argon", capabilities: { optionDescriptors: [{ id: "thought_level", type: "select", label: "Thinking", options: ids.map((id) => ({ id, label: id })) }] } }];
+  const all = level("low", "medium", "high");
+  assert.deepEqual(await liveModelSelection(live([...all, ...slugs("gemini-4-neon")]), old), mapped);
+  // B3 P3-3 on #114: a listed base id with no thought_level descriptor is not enough evidence.
+  assert.deepEqual(await liveModelSelection(live(slugs("gemini-4-argon", "gemini-4-neon")), old), old);
+  // The target is found by the slug list's own key: `model`, or `id` after an empty `slug`, and trimmed.
+  const lowOnly = level("low")[0].capabilities;
+  for (const entry of [{ model: "gemini-4-argon", capabilities: lowOnly }, { slug: "", id: "gemini-4-argon", capabilities: lowOnly }, { slug: " gemini-4-argon ", capabilities: lowOnly }]) {
+    assert.deepEqual(await liveModelSelection(live([entry]), old), old, JSON.stringify(entry));
+  }
+  assert.deepEqual(await liveModelSelection(live([{ model: "gemini-4-argon", capabilities: all[0].capabilities }]), old), mapped);
+  // No evidence keeps the id: an empty list, no models field, a base id T3 does not list.
+  assert.deepEqual(await liveModelSelection(live([]), old), old);
+  assert.deepEqual(await liveModelSelection(live(undefined), old), old);
+  assert.deepEqual(await liveModelSelection(live(slugs("gemini-4-neon")), old), old);
+  // A runtime that still lists the old id keeps it.
+  assert.deepEqual(await liveModelSelection(live(slugs("gemini-4-argon-high", "gemini-4-argon")), old), old);
+  // T3's thought_level descriptor must offer the level.
+  assert.deepEqual(await liveModelSelection(live(level("low", "medium", "high", "xhigh")), old), mapped);
+  assert.deepEqual(await liveModelSelection(live(level("low", "medium")), old), old);
+  assert.deepEqual(await liveModelSelection(live([{ slug: "gemini-4-argon", capabilities: { optionDescriptors: [] } }]), old), old);
+  // xhigh is never produced, and is not an alias source.
+  assert.deepEqual(await liveModelSelection(live(level("low", "medium", "high", "xhigh")), { instanceId: "antigravity", model: "gemini-4-argon-xhigh" }), { instanceId: "antigravity", model: "gemini-4-argon-xhigh" });
+  await assert.rejects(liveModelSelection(live(all), { ...old, options: [{ id: "thought_level", value: "low" }] }), /conflicts with option thought_level/);
+  // B3 P3-2 on #117: the conflict refuses before the evidence gate, mapped or not, with no T3 call.
+  const noCall = { rpc: async () => assert.fail("no T3 call") };
+  await assert.rejects(liveModelSelection(noCall, { ...old, options: [{ id: "thought_level", value: "low" }] }), /^Error: Antigravity model alias gemini-4-argon-high conflicts with option thought_level$/);
+  assert.deepEqual(await liveModelSelection(live(slugs("gemini-4-argon")), { ...old, options: [{ id: "thought_level", value: "high" }] }), { ...old, options: [{ id: "thought_level", value: "high" }] });
+  // Other labs and plain ids make no T3 call.
+  const none = { rpc: async () => assert.fail("no T3 call") };
+  assert.deepEqual(await liveModelSelection(none, { instanceId: "codex", model: "gpt-5-high" }), { instanceId: "codex", model: "gpt-5-high" });
+  assert.deepEqual(await liveModelSelection(none, { instanceId: "antigravity", model: "gemini-4-argon" }), { instanceId: "antigravity", model: "gemini-4-argon" });
+});
+
+test("KRA-10869 B3 P2-1 on #114: only a strictly parsed reset time reaches the action, rendered from its parts", async () => {
+  const { antigravityQuotaAction, antigravityResetTime } = await import("../src/antigravity.mjs");
+  const cases = [
+    ["Your quota resets at 9 SECRET CANARY sk-ant-api03-ABCDEFGH", null],
+    ["resets at 14:05 UTC. Your password is hunter2 ok", "14:05 UTC"],
+    ["quota resets in 1 token ghp-AbCdEf0123456789xyz now", null],
+    ["Individual quota reached. Your quota resets at 9:05 pm.", "9:05 PM"],
+    ["It resets at 2026-11-22T07:00:00Z.", "2026-11-22 07:00:00 Z"],
+    ["It resets at 2026-11-22 07:00 +01:00, sorry", "2026-11-22 07:00 +01:00"],
+    ["It resets in 3 hours", "in 3 hours"],
+    ["It resets after 1 day!", "after 1 day"],
+    ["resets in 03 minutes", "in 3 minutes"],
+    ["resets at 25:61 UTC", null],
+    ["resets at 13:00 PM", null],
+    ["resets at 14:05UTCSECRET", null],
+    ["resets at 14:05 UTC-SECRET", null], // an unknown capital-letter zone refuses the time
+    // B3 P3-4 on #114: offsets in range, real days, counts of at least 1, no dropped zone.
+    ["resets at 14:05 +99:99", null],
+    ["resets at 14:05 +15:00", null],
+    ["resets at 14:05 -14:59", "14:05 -14:59"],
+    ["resets at 2026-11-22 07:00 +14:60", null],
+    ["resets at 2026-02-31 10:00", null],
+    ["resets at 2028-02-29 10:00", "2028-02-29 10:00"],
+    ["resets at 2026-02-29 10:00", null],
+    ["resets in 0 minutes", null],
+    ["resets after 0 days", null],
+    ["resets at 14:05 EST", null],
+    ["resets at 2026-11-22 07:00 CET", null],
+    ["resets at 9:05 PM PST.", null],
+    ["resets at 14:05 tomorrow", "14:05"],
+    // B3 P3-1 on #117: any other word or a bracket after the time is an unknown zone.
+    ["resets at 14:05 est", null],
+    ["resets at 14:05 Europe/Prague", null],
+    ["resets at 14:05 (PST)", null],
+    ["resets at 14:05 Pacific Time", null],
+    ["resets at 14:05\u00a0UTC", null],
+    ["resets at 14:05 today", "14:05"],
+    ["resets at 14:05 and then some", null],
+    ["resets at 14:05 on Monday", null],
+    ["resets at 14:05 in your region", null],
+    ["resets at 2026-11-22 07:00 est", null],
+    ["resets at 2026-11-22 07:00 GMT", "2026-11-22 07:00 GMT"],
+    // B3 P3-2 on #117 (2nd review): after the time and its zone only the end, punctuation then a space or the end, or today/tomorrow then either.
+    ...["[PST]", "{PST}", "<PST>", "\u00abPST\u00bb", '"PST"', "'PST'", "\u00dcnknown", "\u00e9t\u00e9", "UTC PST", "Z", "todayX", "+1:00"].map((after) => [`resets at 14:05 ${after}`, null]),
+    ...["-PST", "_PST", "9PST", ".5", ",x"].map((after) => [`resets at 14:05${after}`, null]),
+    ["resets at 14:05.", "14:05"],
+    ["resets at 14:05, then", "14:05"],
+    ["resets at 14:05!", "14:05"],
+    ["resets at 14:05", "14:05"],
+    ["resets at 14:05 Today.", "14:05"],
+    ["resets at 14:05 tomorrow morning", null],
+    ["resets at 14:05 UTC tomorrow", "14:05 UTC"],
+    ["resets at 14:05 +01:00 and", null],
+    ["resets at 14:05 in PST", null],
+    ["resets at 2:05 PM in Pacific Time", null],
+    ["resets at 14:05 on PST", null],
+    ["resets at 14:05 and CET", null],
+    ["resets at 14:05 UTC in PST", null],
+    ["resets at 14:05 on_", null],
+    ["resets at 2026-11-22T07:00 Z", null],
+    ["resets at 14:05 today.", "14:05"],
+    ["resets at 14:05 Tomorrow", "14:05"],
+    ["resets in 2 hours. Try later", "in 2 hours"],
+    ["resets in 2 hours-ish", null],
+    ["resets at 2026-11-22T07:00Z, sorry", "2026-11-22 07:00 Z"],
+    ["resets on Monday", null],
+    ["resets at 2026-13-01T00:00Z", null],
+    ["no time here", null],
+  ];
+  for (const [reply, reset] of cases) {
+    assert.equal(antigravityResetTime(reply), reset, reply);
+    const action = antigravityQuotaAction(reply);
+    assert.equal(action, `not responding: quota${reset ? `; resets ${reset}` : ""}; pass --model with another Antigravity model, or wait until its quota resets`, reply);
+    assert.doesNotMatch(action, /SECRET|CANARY|sk-ant|hunter2|ghp-|token/, reply);
+  }
+});
+
+test("KRA-10869 B3 P3-2 on #114: both model-alias conflicts carry a refusal code with a fixed text", async () => {
+  const { refusalOf } = await import("../src/refusal-codes.mjs");
+  assert.deepEqual(refusalOf(new Error("Antigravity model alias gemini-4-argon-high conflicts with option thought_level")),
+    { code: "model.thinking_level_twice", text: "This Antigravity model already sets a thinking level; drop the old -low/-medium/-high from the model or the thinking-level option." });
+  assert.throws(() => resolveModelSelection({ instanceId: "cursor", model: "composer-2.5-fast", options: [{ id: "fastMode", value: false }] }), (error) => {
+    assert.deepEqual(refusalOf(error), { code: "model.fast_mode_twice", text: "This Cursor model already sets fast mode; use composer-2.5 with the fast-mode option, or composer-2.5-fast without it." });
+    return true;
+  });
+  assert.equal(refusalOf(new Error("Antigravity model alias gemini-4-argon-high conflicts with option thought_level SECRET")).code, "unknown");
+});

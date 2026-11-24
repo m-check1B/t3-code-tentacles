@@ -1,8 +1,39 @@
-# Staging Server labs: patched T3 and web-off activation
+# Staging Server labs: stock T3 and web-off activation
 
 Plan for KRA-8715 item 21, KRA-8722 and KRA-8812. This is a source runbook,
 not permission for a service change, credential read or production rollout.
 The appointed staging operator executes a separately admitted packet.
+
+## T3 closure from the upstream tag (20 Nov 2026, KRA-10774)
+
+The Server labs runtime tree takes T3 from the official upstream release, not a
+patched or forked build. This supersedes the patched `0.1.0-jack.1` row and the
+"canonical T3 V2 source" paragraph below, which stay as history only.
+
+| Component | Pin |
+| --- | --- |
+| T3 Code (upstream) | `pingdotgg/t3code` tag `v0.1.11`, commit `59651c1761f6c63e9b6056839067066968e6a406` |
+| Linux x64 runtime | release asset `t3-0.1.11-linux-x64.tar.gz`, SHA-256 `2b691c07f5bcb5adea4a863d5324aae7db21bd6d82280cec7787836dcaa013e1` (matches the release `SHA256SUMS`) |
+| Supported range | `T3_SUPPORT` in `src/t3-support.mjs` in this repo (minimum 0.1.8, tested through 0.1.11) |
+
+Staging-only follow-up steps (nothing here was run on staging or prod; each
+needs the usual admitted staging packet):
+
+1. Download the asset and `SHA256SUMS` from the `v0.1.11` release; check
+   `sha256sum -c --ignore-missing SHA256SUMS` and the SHA-256 above.
+2. In `deploy/production/scripts/server-labs-runtime.py` (agent-jack-3), replace
+   the patched archive name and digest with the upstream asset and digest. The
+   runtime tree layout is the same: `t3`, `client/`, `lib/`, `node_modules/`.
+3. Install it beside the current runtime under a new version directory; do not
+   overwrite the running tree.
+4. A fresh 0.1.11 home defaults Codex to T3-managed setup: set the Codex instance
+   to `setupMode: "existing"` with its `homePath` where the twin's Codex login
+   lives. Cursor now needs a T3-held sign-in or `CURSOR_API_KEY`.
+5. Gate: `tentacles doctor --json` shows `t3.version` 0.1.11,
+   `t3.support.status` `supported`, `t3.talk.status` `present`,
+   `capabilities.talkTurnResult` `v1`; then one synthetic originate and
+   turn-result per twin.
+6. Roll back by pointing the service back at the previous version directory.
 
 ## Inventory and immutable pins
 
