@@ -422,10 +422,12 @@ test("an unsafe upstream message id is journaled under the id turn-result report
   const reply = { id: unsafe, role: "assistant", text: "Done", createdAt: WHEN };
   const fresh = setup(t);
   fresh.thread.messages.push(reply);
-  const event = (await threadEvents(fresh.client, { threadId: THREAD }, { directory: fresh.directory })).events.find((entry) => entry.payload.role === "assistant");
+  const freshEvents = (await threadEvents(fresh.client, { threadId: THREAD }, { directory: fresh.directory })).events;
+  const event = freshEvents.find((entry) => entry.payload.role === "assistant");
   assert.equal(event.eventId, `message:${safeResultId(unsafe)}`);
   assert.equal(event.payload.messageId, safeResultId(unsafe));
-  assert.equal(fresh.thread.messages[0].id, "m1", "a safe id stays verbatim");
+  const safe = freshEvents.find((entry) => entry.kind === "message" && entry.payload.role !== "assistant");
+  assert.deepEqual([safe.eventId, safe.payload.messageId], ["message:m1", "m1"], "a safe id stays verbatim");
 
   // A journal written before this fix keeps the raw id and gains no second copy.
   const old = setup(t);
