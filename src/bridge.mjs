@@ -84,6 +84,8 @@ const ORIGINATION_LIMIT = 1_000;
 // hire, and warns well before that.
 const ORIGINATION_WARN_AT = 800;
 const ORIGINATION_PRUNE_TO = 900;
+// Below Sphere's 30 s relay wait, so a queued originate still answers in time.
+const ORIGINATION_LOCK_WAIT_MS = 20_000;
 const LINK_LIMIT = 10_000;
 const CURSOR_LIMIT = 10_000;
 const MAX_STATE_BYTES = 32 * 1024 * 1024;
@@ -807,7 +809,7 @@ function pruneOriginationLedger(state, stateFile) {
   }
 }
 
-export async function originate(client, { workspace, title, message, instanceId, model = DEFAULT_MODEL, options, budget, runtimeMode, freshProviderContext, fixedTitle, idempotencyKey, stateFile = DEFAULT_BRIDGE_STATE_FILE } = {}) {
+export async function originate(client, { workspace, title, message, instanceId, model = DEFAULT_MODEL, options, budget, runtimeMode, freshProviderContext, fixedTitle, idempotencyKey, stateFile = DEFAULT_BRIDGE_STATE_FILE, lockWaitMs = ORIGINATION_LOCK_WAIT_MS } = {}) {
   const modelSelection = resolveModelSelection({ instanceId: instanceId === undefined ? DEFAULT_INSTANCE_ID : instanceId, model, options, budget });
   runtimeMode = requireExplicitRuntimeMode(runtimeMode);
   // KRA-8715: a driver or runtime mode the managed policy forbids is refused with no fallback.
@@ -819,7 +821,10 @@ export async function originate(client, { workspace, title, message, instanceId,
     return { ...(await startThread(client, { projectId: project.id, title, message, instanceId: modelSelection.instanceId, model: modelSelection.model, options: modelSelection.options, runtimeMode, freshProviderContext, fixedTitle })), projectCreated: created };
   }
   if (typeof idempotencyKey !== "string" || !/^[A-Za-z0-9._:-]{1,256}$/.test(idempotencyKey)) throw new Error("originate idempotencyKey must be 1-256 safe characters");
-  const release = acquireStateLock(stateFile);
+  // The ledger lock is held across the T3 round trips, so two Bots originating
+  // at once queue here instead of the second one being refused outright.
+  let release = acquireStateLock(stateFile);
+  for (const deadline = Date.now() + lockWaitMs; !release && Date.now() < deadline; release = acquireStateLock(stateFile)) await delay(50);
   if (!release) throw new Error("Bridge state is busy; retry originate after the active watcher operation completes");
   try {
     const loaded = loadBridgeState(stateFile);
