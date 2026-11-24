@@ -664,6 +664,40 @@ test("originate idempotency reconciles an accepted-but-ambiguous turn without du
   await assert.rejects(originate(client, { ...options, message: "different" }), /different input/);
 });
 
+test("two Bots originating at once both start; a held ledger still refuses after the wait", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "t3-bridge-concurrent-"));
+  const stateFile = path.join(directory, "state.json");
+  const projects = new Map();
+  const threads = new Map();
+  const client = {
+    shell: async () => ({ projects: [...projects.values()] }),
+    thread: async (id) => {
+      const thread = threads.get(id);
+      if (!thread) throw new T3HttpError({ method: "GET", pathname: id, status: 404, body: null });
+      return { thread };
+    },
+    dispatch: async (command) => {
+      await new Promise((resolve) => setTimeout(resolve, 30)); // T3 round trip while the ledger lock is held
+      if (command.type === "project.create") projects.set(command.projectId, { id: command.projectId, workspaceRoot: command.workspaceRoot });
+      else if (command.type === "thread.create") threads.set(command.threadId, { id: command.threadId, messages: [] });
+      else threads.get(command.threadId).messages.push({ id: command.message.messageId });
+      return {};
+    },
+  };
+  const options = { title: "Bot", message: "hello", runtimeMode: "full-access", stateFile };
+  const [a, b] = await Promise.all([
+    originate(client, { ...options, workspace: "/tmp/bot-a", idempotencyKey: "jack-talk:a" }),
+    originate(client, { ...options, workspace: "/tmp/bot-b", idempotencyKey: "jack-talk:b" }),
+  ]);
+  assert.notEqual(a.threadId, b.threadId);
+  assert.deepEqual(Object.keys(readBridgeState(stateFile).originations).sort(), ["jack-talk:a", "jack-talk:b"]);
+  const release = acquireStateLock(stateFile);
+  try {
+    await assert.rejects(originate(client, { ...options, workspace: "/tmp/bot-c", idempotencyKey: "jack-talk:c", lockWaitMs: 120 }), /Bridge state is busy/);
+  } finally { release(); }
+  assert.equal(threads.size, 2);
+});
+
 test("originate prunes the oldest ledger keys at the cap and warns before it (KRA-9686)", async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "t3-bridge-ledger-"));
   const stateFile = path.join(directory, "state.json");
