@@ -280,10 +280,10 @@ Table 2, the Codex home (closed). "svc" is T3's `service.env`; "field" is the CO
 | 14 | direct, field blank, no instance `CODEX_HOME`, `CODEX_HOME` or `HOME` in svc | svc based | refuses |
 | 15 | an entry or svc name equal to `CODEX_HOME` or `HOME` only when case is ignored | ignored on macOS/Linux, used on Windows | refuses |
 | 16 | svc not a small regular file, or unreadable for any reason but "absent" | unknown | refuses |
-| 17 | the settings call fails, settings has neither `providerInstances` nor `providers`, or `providerInstances` / `providerInstances.codex` (its `config`, `environment` or `homePath`) / `providers.codex` has another shape | unknown | refuses |
+| 17 | the settings call fails, `providerInstances` is missing or not an object, or `providerInstances.codex` (its `config`, `environment` or `homePath`) / `providers` / `providers.codex` has another shape | unknown | refuses |
 | 18 | field relative, `~user/x` or `~\x` | `<T3 cwd>/…` or other | refuses |
 | 19 | no instance field, but a legacy `providers.codex.homePath` that is set | unknown | refuses |
-| 20 | shadow home set (`config.shadowHomePath` not a blank string; T3's auth overlay, any mode) | the shadow home | refuses |
+| 20 | shadow home set (`config.shadowHomePath` or legacy `providers.codex.shadowHomePath` not a blank string; T3's auth overlay, any mode) | the shadow home | refuses |
 
 Table 1, every input stock T3 0.1.11 uses to build the Codex child:
 

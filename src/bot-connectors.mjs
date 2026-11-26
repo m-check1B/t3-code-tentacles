@@ -492,8 +492,7 @@ export function codexHomeAllowed(settings, serviceEnv, { home = os.homedir() } =
   // Row 17: the settings call failed, or settings / providerInstances / codex is not in T3 0.1.11's shape.
   // Stock T3 0.1.11 omits providerInstances.codex when the built-in codex provider uses unmodified defaults.
   if (!plainObject(settings)
-      || (settings.providerInstances !== undefined && !plainObject(settings.providerInstances))
-      || (settings.providerInstances === undefined && !plainObject(settings.providers))
+      || !plainObject(settings.providerInstances)
       || (settings.providers !== undefined && !plainObject(settings.providers))) refuse();
   const rawInstance = settings.providerInstances?.codex;
   if (rawInstance !== undefined && !plainObject(rawInstance)) refuse();
