@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.5.0-jack.23] - 2026-11-26
+
 ### Fixed
 
 - Local · Codex (`codexHomeAllowed`): stock T3 Code `0.1.11` omits `providerInstances.codex` from `getSettings()` when the built-in Codex provider uses unmodified defaults. Tentacles now treats an omitted `providerInstances.codex` under a valid `providerInstances` object as default `{}` and runs all Codex home, legacy `providers.codex`, `service.env`, and launch-argument checks identically before resolving `~/.codex`, while keeping Row 17 fail-closed for unreadable or malformed settings.
