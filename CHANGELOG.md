@@ -6,6 +6,7 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- Local · Codex (`codexHomeAllowed`): stock T3 Code `0.1.11` omits `providerInstances.codex` from `getSettings()` when the built-in Codex provider uses unmodified defaults. Tentacles now treats an omitted `providerInstances.codex` under a valid `providerInstances` object as default `{}` and runs all Codex home, legacy `providers.codex`, `service.env`, and launch-argument checks identically before resolving `~/.codex`, while keeping Row 17 fail-closed for unreadable or malformed settings.
 - `thread-events` journals an unsafe upstream message id (longer than 128 characters or outside `[A-Za-z0-9._:-]`, seen on Antigravity) under the same `t3v2-sha256:` digest that `turn-result` reports as `assistantMessageId`, so Jack links the reply it already filed instead of importing it twice. A message already journaled under its raw id keeps it (PR #86).
 - An idempotent `originate` that finds the bridge ledger lock held now waits up to 20 s (below Sphere's 30 s relay wait) instead of failing at once with `Bridge state is busy`, so two Bots starting a Local Talk at the same moment both start (PR #85).
 

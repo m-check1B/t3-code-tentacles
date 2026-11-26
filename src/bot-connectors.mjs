@@ -489,16 +489,26 @@ const tildeHome = value => value === "~" || value.startsWith("~/");
  */
 export function codexHomeAllowed(settings, serviceEnv, { home = os.homedir() } = {}) {
   const refuse = () => { throw new Error(R.codexHomeField); };
-  const instance = settings?.providerInstances?.codex;
-  // Row 17: the settings call failed, or the instance is not in T3 0.1.11's shape.
-  if (!plainObject(instance) || (instance.config !== undefined && !plainObject(instance.config)) || (instance.environment !== undefined && !Array.isArray(instance.environment))) refuse();
+  // Row 17: the settings call failed, or settings / providerInstances / codex is not in T3 0.1.11's shape.
+  // Stock T3 0.1.11 omits providerInstances.codex when the built-in codex provider uses unmodified defaults.
+  if (!plainObject(settings)
+      || !plainObject(settings.providerInstances)
+      || (settings.providers !== undefined && !plainObject(settings.providers))) refuse();
+  const rawInstance = settings.providerInstances?.codex;
+  if (rawInstance !== undefined && !plainObject(rawInstance)) refuse();
+  const instance = rawInstance ?? {};
+  if ((instance.config !== undefined && !plainObject(instance.config)) || (instance.environment !== undefined && !Array.isArray(instance.environment))) refuse();
   const config = instance.config ?? {};
   if (config.homePath !== undefined && typeof config.homePath !== "string") refuse();
   // Row 19: no instance field, but a legacy providers.codex.homePath T3 might still read.
-  const legacy = settings.providers?.codex?.homePath;
+  const legacyCodex = settings.providers?.codex;
+  if (legacyCodex !== undefined && !plainObject(legacyCodex)) refuse();
+  const legacy = legacyCodex?.homePath;
   if (config.homePath === undefined && legacy !== undefined && (typeof legacy !== "string" || legacy.trim())) refuse();
   // Row 20: a shadow home (T3's auth overlay) becomes the child's CODEX_HOME in both modes.
   if (config.shadowHomePath !== undefined && (typeof config.shadowHomePath !== "string" || config.shadowHomePath.trim())) refuse();
+  const legacyShadow = legacyCodex?.shadowHomePath;
+  if (config.shadowHomePath === undefined && legacyShadow !== undefined && (typeof legacyShadow !== "string" || legacyShadow.trim())) refuse();
   const field = (config.homePath ?? "").trim(); // T3's schema trims the field
   if (path.isAbsolute(field)) return path.resolve(field); // row 1
   const environment = instance.environment ?? [];
