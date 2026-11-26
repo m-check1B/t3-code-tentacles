@@ -446,7 +446,7 @@ export class LoopbackRuntimeAdapter {
         const serviceEnv = readT3ServiceEnv(this.codexFiles.serviceEnv);
         checkCodexLaunchArgs(settings, serviceEnv.T3CODE_CODEX_LAUNCH_ARGS);
         // KRA-10891: the name check and the trust table use exactly the one allowed home.
-        const codexHome = codexHomeAllowed(settings, serviceEnv);
+        const codexHome = codexHomeAllowed(settings, serviceEnv, this.workspaceHome !== undefined ? { home: this.workspaceHome } : undefined);
         checkCodexServerNames(codexHome, servers.map(server => server.name), this.codexFiles.system);
         checkCodexAncestorLayers(workspace, servers.map(server => server.name));
         return planCodexTrust(codexHome, workspace);

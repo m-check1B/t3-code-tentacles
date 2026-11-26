@@ -1130,7 +1130,12 @@ test("B3 P2-1 on #117: a Codex launch argument override that is not a plain key 
   assert.throws(() => checkCodexLaunchArgs(env({ name: "T3CODE_CODEX_LAUNCH_ARGS", value: "-c mcp_servers.jack.url=x" })), { message: refusal });
   for (const hidden of [{ valueRedacted: true }, { sensitive: true, value: "x" }]) assert.throws(() => checkCodexLaunchArgs(env({ name: "T3CODE_CODEX_LAUNCH_ARGS", ...hidden })), { message: refusal });
   assert.doesNotThrow(() => checkCodexLaunchArgs(env({ name: "T3CODE_CODEX_LAUNCH_ARGS", value: "-c model=o3" })));
-  for (const nothing of [undefined, {}, at(""), at(undefined)]) assert.doesNotThrow(() => checkCodexLaunchArgs(nothing));
+  for (const nothing of [undefined, {}, { providerInstances: { grok: {}, antigravity: {} } }, at(""), at(undefined)]) assert.doesNotThrow(() => checkCodexLaunchArgs(nothing));
+  // Omitted default providerInstances.codex still checks legacy launchArgs and service.env T3CODE_CODEX_LAUNCH_ARGS.
+  const omittedDefault = { providerInstances: { grok: {}, cursor: {}, antigravity: {} } };
+  assert.doesNotThrow(() => checkCodexLaunchArgs(omittedDefault, "-c model=o3"));
+  assert.throws(() => checkCodexLaunchArgs(omittedDefault, "-c mcp_servers.jack.url=x"), { message: refusal });
+  assert.throws(() => checkCodexLaunchArgs({ ...omittedDefault, providers: { codex: { launchArgs: "-c mcp_servers.jack.url=x" } } }), { message: refusal });
 });
 
 test("B3 P2-1 on #117: a launch argument server override refuses before the stop and any write; with no list or on another lab it is never read", async () => {
@@ -1277,19 +1282,32 @@ const CODEX_HOME_TABLE = [
   [11, "last CODEX_HOME exactly empty", S({ homePath: "" }, [CH("/a"), CH("")]), undefined, REFUSE],
   [12, "direct, no entries, service.env absent", S({ homePath: "" }), undefined, `${OWN}/.codex`],
   [12, "direct, other entries only, other svc names", S({}, [{ name: "OTHER", value: "x" }]), "OTHER=x\nT3CODE_CODEX_LAUNCH_ARGS=\n", `${OWN}/.codex`],
+  [12, "default T3 0.1.11 omits providerInstances.codex when unmodified", { providerInstances: { grok: {}, cursor: {}, opencode: {}, deepseek: {}, hermes: {}, "codex-app": {}, pi: {}, antigravity: {} } }, undefined, `${OWN}/.codex`],
+  [12, "default T3 0.1.11 empty providerInstances, benign svc", { providerInstances: {} }, "OTHER=1\n", `${OWN}/.codex`],
+  [12, "default T3 0.1.11 omits codex, blank legacy homePath", { providerInstances: { grok: {} }, providers: { codex: { homePath: "" } } }, undefined, `${OWN}/.codex`],
   [13, "direct, no CODEX_HOME, a HOME entry", S({ homePath: "" }, [{ name: "HOME", value: "/x" }]), undefined, REFUSE],
   [13, "direct, no CODEX_HOME, a hidden HOME entry", S({ homePath: "" }, [{ name: "HOME", valueRedacted: true }]), undefined, REFUSE],
   [14, "direct, no instance CODEX_HOME, CODEX_HOME in svc", S({ homePath: "" }), "CODEX_HOME=/svc\n", REFUSE],
   [14, "direct, no instance CODEX_HOME, HOME in svc", S({ homePath: "" }), "HOME=/svc\n", REFUSE],
+  [14, "omitted codex, CODEX_HOME in svc", { providerInstances: { grok: {} } }, "CODEX_HOME=/svc\n", REFUSE],
+  [14, "omitted codex, HOME in svc", { providerInstances: { grok: {} } }, "HOME=/svc\n", REFUSE],
   [15, "an entry codex_home", S({ homePath: "" }, [{ name: "codex_home", value: "/x" }]), undefined, REFUSE],
   [15, "an entry Home with a ~ field", S({ homePath: "~/x" }, [{ name: "Home", value: "/x" }]), undefined, REFUSE],
   [15, "svc home, managed", S({ homePath: "", setupMode: "managed" }), "home=/svc\n", REFUSE],
+  [15, "omitted codex, svc case-variant home", { providerInstances: { grok: {} } }, "home=/svc\n", REFUSE],
+  [15, "omitted codex, svc case-variant codex_home", { providerInstances: { grok: {} } }, "codex_home=/svc\n", REFUSE],
   [16, "svc a FIFO", S({ homePath: "~/x" }), "fifo", REFUSE],
   [16, "svc a folder", S({ homePath: "" }), "dir", REFUSE],
   [16, "svc over 64 KiB", S({ homePath: "" }), "big", REFUSE],
   [16, "svc unreadable (EACCES)", S({ homePath: "" }), "eacces", REFUSE],
   [17, "settings call failed", undefined, undefined, REFUSE],
+  [17, "settings null", null, undefined, REFUSE],
+  [17, "settings an array", [], undefined, REFUSE],
   [17, "no providerInstances", {}, undefined, REFUSE],
+  [17, "providerInstances null", { providerInstances: null }, undefined, REFUSE],
+  [17, "providerInstances an array", { providerInstances: [] }, undefined, REFUSE],
+  [17, "providers null", { providerInstances: {}, providers: null }, undefined, REFUSE],
+  [17, "providers.codex null", { providerInstances: {}, providers: { codex: null } }, undefined, REFUSE],
   [17, "providerInstances.codex null", { providerInstances: { codex: null } }, undefined, REFUSE],
   [17, "providerInstances.codex an array", { providerInstances: { codex: [] } }, undefined, REFUSE],
   [17, "config an array", { providerInstances: { codex: { config: [] } } }, undefined, REFUSE],
@@ -1300,7 +1318,11 @@ const CODEX_HOME_TABLE = [
   [18, "field ~\\x", S({ homePath: "~\\x" }), undefined, REFUSE],
   [19, "no instance field, a legacy providers.codex.homePath", S({}, undefined, { providers: { codex: { homePath: "/legacy" } } }), undefined, REFUSE],
   [19, "no instance field, a legacy homePath that is not text", S({}, undefined, { providers: { codex: { homePath: 1 } } }), undefined, REFUSE],
+  [19, "omitted codex, a legacy providers.codex.homePath", { providerInstances: { grok: {} }, providers: { codex: { homePath: "/legacy" } } }, undefined, REFUSE],
+  [19, "omitted codex, a legacy homePath that is not text", { providerInstances: { grok: {} }, providers: { codex: { homePath: 1 } } }, undefined, REFUSE],
+  [19, "legacy-only providers.codex.homePath set", { providers: { codex: { homePath: "/legacy" } } }, undefined, REFUSE],
   [12, "no instance field, a blank legacy homePath", S({}, undefined, { providers: { codex: { homePath: "" } } }), undefined, `${OWN}/.codex`],
+  [20, "omitted codex, legacy shadow home set", { providerInstances: { grok: {} }, providers: { codex: { shadowHomePath: "/shadow" } } }, undefined, REFUSE],
   [20, "shadow home set, with row 1 (field absolute)", S({ homePath: "/field", shadowHomePath: "/shadow" }), undefined, REFUSE],
   [20, "shadow home set, with row 2 (field ~/x)", S({ homePath: "~/x", shadowHomePath: "~/shadow" }), undefined, REFUSE],
   [20, "shadow home set, with row 4 (managed, field blank)", S({ homePath: "", setupMode: "managed", shadowHomePath: "/shadow" }), undefined, REFUSE],
@@ -1707,4 +1729,58 @@ test("KRA-10869: an Antigravity plugin Tentacles did not write refuses before th
     fs.rmSync(path.join(workspace, ".agents"), { recursive: true });
     await adapter.continue({ threadId: "t1", message: "again", ...antigravity, ...connectors([learn]) });
   }
+});
+
+test("T3 0.1.11 default omitted providerInstances.codex passes Codex connector turns and keeps every security gate", async (t) => {
+  const { home, workspace, sent, stops, adapter, settings, codexFiles } = setup();
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  // Exact live T3 Code 0.1.11 getSettings() shape when built-in codex has default unmodified settings.
+  settings.providerInstances = {
+    grok: { driver: "grok", enabled: true },
+    cursor: { driver: "cursor", enabled: true },
+    opencode: { driver: "opencode", enabled: true },
+    deepseek: { driver: "deepseek", enabled: true },
+    hermes: { driver: "hermes", enabled: true },
+    "codex-app": { driver: "codex-app", enabled: true },
+    pi: { driver: "pi", enabled: true },
+    antigravity: { driver: "antigravity", enabled: true },
+  };
+  const codexHome = path.join(home, ".codex");
+  const ownerConfig = path.join(codexHome, "config.toml");
+  const fieldRefusal = /T3 sets the Codex home in a way Tentacles has not proven equal to its own/;
+
+  // Security gates still refuse before any stop or write even when providerInstances.codex is omitted.
+  fs.mkdirSync(path.dirname(codexFiles.serviceEnv), { recursive: true });
+  for (const svc of ["HOME=/elsewhere\n", "CODEX_HOME=/elsewhere\n", "home=/elsewhere\n", "codex_home=/elsewhere\n"]) {
+    fs.writeFileSync(codexFiles.serviceEnv, svc);
+    await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), fieldRefusal, svc);
+  }
+  fs.writeFileSync(codexFiles.serviceEnv, "T3CODE_CODEX_LAUNCH_ARGS='-c mcp_servers.jack.url=x'\n");
+  await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), /launch arguments/);
+  fs.rmSync(codexFiles.serviceEnv);
+
+  // Legacy providers.codex.homePath still refuses (Row 19).
+  settings.providers = { codex: { homePath: "/legacy-codex" } };
+  await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), fieldRefusal);
+  delete settings.providers;
+
+  // Owner server clash in ~/.codex/config.toml still refuses.
+  fs.mkdirSync(codexHome, { mode: 0o700 });
+  const clashing = '[mcp_servers.jack]\ncommand = "owner-jack"\n';
+  fs.writeFileSync(ownerConfig, clashing, { mode: 0o640 });
+  await assert.rejects(async () => adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack]) }), /already has a server named like one of this Bot's Jack tools/);
+  assert.equal(fs.readFileSync(ownerConfig, "utf8"), clashing);
+  assert.deepEqual([sent, stops], [[], []]);
+  assert.equal(fs.existsSync(path.join(workspace, ".codex", "config.toml")), false);
+
+  // Clean default T3 0.1.11 setup: originate and continue succeed, trust ~/.codex/config.toml, and write workspace config.
+  const safeOwner = '[mcp_servers.mine]\ncommand = "owner-only"\n';
+  fs.writeFileSync(ownerConfig, safeOwner, { mode: 0o640 });
+  await adapter.originate({ workspace, message: "hi", ...codex, ...connectors([jack, learn]) });
+  assert.equal(sent.length, 1);
+  assert.ok(fs.readFileSync(ownerConfig, "utf8").includes(`[projects.${JSON.stringify(workspace)}]`));
+  assert.match(fs.readFileSync(path.join(workspace, ".codex", "config.toml"), "utf8"), /^\[mcp_servers\.jack\]$/m);
+  await adapter.continue({ threadId: "t1", message: "again", ...codex, ...connectors([jack]) });
+  assert.equal(sent.length, 2);
+  assert.deepEqual(stops, ["t1"]);
 });
