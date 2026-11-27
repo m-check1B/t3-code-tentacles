@@ -6,6 +6,7 @@ import { acquirePairStateLock } from "./pair-state.mjs";
 import { privateModeOk } from "./platform.mjs";
 import { classifyFailure } from "./failure-codes.mjs";
 import { safeResultId } from "./t3-v2.mjs";
+import { ANTIGRAVITY_WARMUP_PROMPT } from "./antigravity.mjs";
 
 export const DEFAULT_THREAD_EVENTS_DIRECTORY = path.join(DEFAULT_STATE_DIR, "thread-events");
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -230,6 +231,48 @@ function iso(value) {
   return new Date(value).toISOString();
 }
 
+function filterAntigravityWarmup(thread) {
+  const rawMessages = Array.isArray(thread.messages) ? thread.messages : [];
+  const excludedIndices = new Set();
+  const warmupTurnIds = new Set();
+  let inWarmup = false;
+  for (let i = 0; i < rawMessages.length; i += 1) {
+    const message = rawMessages[i];
+    if (!record(message)) continue;
+    if (message.role === "user") {
+      if (message.text === ANTIGRAVITY_WARMUP_PROMPT) {
+        inWarmup = true;
+        excludedIndices.add(i);
+        if (safeText(message.turnId, 200)) warmupTurnIds.add(message.turnId);
+      } else {
+        inWarmup = false;
+      }
+    } else if (message.role === "assistant") {
+      if (inWarmup || (safeText(message.turnId, 200) && warmupTurnIds.has(message.turnId))) {
+        excludedIndices.add(i);
+        if (safeText(message.turnId, 200)) warmupTurnIds.add(message.turnId);
+      }
+    }
+  }
+  if (warmupTurnIds.size > 0) {
+    for (let i = 0; i < rawMessages.length; i += 1) {
+      const message = rawMessages[i];
+      if (record(message) && safeText(message.turnId, 200) && warmupTurnIds.has(message.turnId)) {
+        excludedIndices.add(i);
+      }
+    }
+  }
+  const messages = rawMessages.filter((_, index) => !excludedIndices.has(index));
+  const rawActivities = Array.isArray(thread.activities) ? thread.activities : [];
+  const activities = warmupTurnIds.size > 0
+    ? rawActivities.filter((activity) => !(record(activity) && safeText(activity.turnId, 200) && warmupTurnIds.has(activity.turnId)))
+    : rawActivities;
+  const latestTurn = record(thread.latestTurn) && safeText(thread.latestTurn.turnId, 200) && warmupTurnIds.has(thread.latestTurn.turnId)
+    ? null
+    : thread.latestTurn;
+  return { messages, activities, latestTurn, warmupTurnIds };
+}
+
 /**
  * Compact allowlisted projection; raw terminal input/output and auth stay unread.
  * `journaled` holds event ids already in the journal: a message journaled under
@@ -238,7 +281,7 @@ function iso(value) {
 export function projectThreadEvents(thread, { journaled } = {}) {
   if (!record(thread) || !UUID.test(thread.id)) throw new Error("Invalid thread identity");
   const projected = [];
-  const messages = Array.isArray(thread.messages) ? thread.messages : [];
+  const { messages, activities, latestTurn, warmupTurnIds } = filterAntigravityWarmup(thread);
   for (const message of messages) {
     if (!record(message) || !["user", "assistant"].includes(message.role)) continue;
     // A streaming assistant message is not an immutable journal entry yet.
@@ -268,7 +311,7 @@ export function projectThreadEvents(thread, { journaled } = {}) {
       }
     }
   }
-  for (const activity of Array.isArray(thread.activities) ? thread.activities : []) {
+  for (const activity of activities) {
     if (!record(activity) || !safeText(activity.id, 160)) continue;
     if (!["tool.completed", "terminal.completed", "tool.result"].includes(activity.kind)) continue;
     // Summary/title is deliberately separate from rawInput/rawOutput.
@@ -277,7 +320,7 @@ export function projectThreadEvents(thread, { journaled } = {}) {
     projected.push({ eventId: `tool:${activity.id}`, kind: "tool_summary",
       occurredAt: iso(activity.createdAt), payload: { summary } });
   }
-  projected.push(...turnEndEvents(thread));
+  projected.push(...turnEndEvents({ ...thread, messages, latestTurn }).filter((event) => !warmupTurnIds.has(event.payload.turnId)));
   projected.sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
   const status = thread.hasPendingApprovals || thread.hasPendingUserInput ? "blocked"
     : ["starting", "running"].includes(thread.session?.status) ? "generating"

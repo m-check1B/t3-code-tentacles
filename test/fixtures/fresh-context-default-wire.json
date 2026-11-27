@@ -139,7 +139,8 @@
           "jackMcpConfig": "v1",
           "jackMcpProviders": [
             "claudeAgent",
-            "codex"
+            "codex",
+            "antigravity"
           ],
           "jackMcpHeaders": false,
           "jackMcpPublicUrls": [
@@ -325,7 +326,8 @@
           "jackMcpConfig": "v1",
           "jackMcpProviders": [
             "claudeAgent",
-            "codex"
+            "codex",
+            "antigravity"
           ],
           "jackMcpHeaders": false,
           "jackMcpPublicUrls": [

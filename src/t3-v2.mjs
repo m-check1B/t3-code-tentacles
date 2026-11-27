@@ -423,6 +423,32 @@ export function toolActivities(projection) {
   return activities;
 }
 
+function projectedProviderThreads(projection) {
+  return (projection.providerThreads ?? []).map((provider) => {
+    const instanceId = typeof provider.providerInstanceId === "string" && provider.providerInstanceId !== ""
+      ? provider.providerInstanceId
+      : typeof provider.providerName === "string" && provider.providerName !== ""
+        ? provider.providerName
+        : typeof provider.provider === "string" && provider.provider !== ""
+          ? provider.provider
+          : null;
+    return {
+      status: provider.status,
+      ...(instanceId !== null ? { providerInstanceId: instanceId } : {}),
+    };
+  });
+}
+
+function liveProviderThreadStatus(providerThreads, instanceId) {
+  if (!Array.isArray(providerThreads) || providerThreads.length === 0) return null;
+  const matching = instanceId
+    ? providerThreads.filter((entry) => !entry.providerInstanceId || entry.providerInstanceId === instanceId)
+    : providerThreads;
+  if (matching.length === 0) return null;
+  const live = matching.findLast((entry) => entry.status === "active" || entry.status === "idle");
+  return (live ?? matching.at(-1)).status;
+}
+
 /** V2 thread detail ({ snapshotSequence, projection }) -> V1 detail ({ thread }). */
 export function threadDetailToV1(detail, threadId) {
   const projection = detail?.projection;
@@ -436,6 +462,7 @@ export function threadDetailToV1(detail, threadId) {
     ? (projection.turnItems ?? []).filter((item) => item.runId === latest.id && item.type === "error").at(-1)
     : undefined;
   const pendingKinds = (projection.runtimeRequests ?? []).filter((request) => request.status === "pending").map((request) => request.kind);
+  const providerThreads = projectedProviderThreads(projection);
   const summary = v1Thread(thread, {
     status: active?.status ?? latest?.status ?? "idle",
     activeRunId: active?.id,
@@ -443,6 +470,7 @@ export function threadDetailToV1(detail, threadId) {
     pendingKinds,
     updatedAt: projection.updatedAt,
   });
+  const providerThreadStatus = liveProviderThreadStatus(providerThreads, summary.session.providerInstanceId);
   for (const message of projection.messages ?? []) requireEnum(message?.role, MESSAGE_ROLES, "message role");
   const messages = (projection.messages ?? [])
     .filter((message) => message.role === "user" || message.role === "assistant")
@@ -459,6 +487,11 @@ export function threadDetailToV1(detail, threadId) {
     snapshotSequence: detail.snapshotSequence ?? null,
     thread: {
       ...summary,
+      session: {
+        ...summary.session,
+        providerThreadStatus,
+      },
+      providerThreads,
       orchestrationProtocol: V2_PROTOCOL,
       lifecycleWorkPending: hasPendingWork(projection, runs),
       messages,

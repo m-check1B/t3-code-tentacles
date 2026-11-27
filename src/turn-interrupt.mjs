@@ -136,6 +136,16 @@ export class TurnInterrupter {
     return entry.promise;
   }
 
+  /**
+   * Internal lock-free interrupt for callers that already hold `withThreadLock`
+   * for `params.threadId` (e.g. cancelling a timed-out warm-up inside `continue`).
+   */
+  interruptLockFree(params, { totalBudgetMs = 4_000 } = {}) {
+    const input = requireInterruptParams(params);
+    const deadlineMs = Date.now() + totalBudgetMs;
+    return this.interruptExact(input, deadlineMs).catch(() => interruptEnvelope(input, "unavailable"));
+  }
+
   evictSettled() {
     if (this.requests.size <= this.maxRememberedRequests) return;
     for (const [requestId, entry] of this.requests) {

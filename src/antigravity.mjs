@@ -4,6 +4,11 @@
 
 export const ANTIGRAVITY_INSTANCE_ID = "antigravity";
 
+// Synthetic warm-up turn prompt sent once on a cold Antigravity session with
+// Jack MCP tools so `antigravity acp` discovers `.agents/plugins/jack-tools`
+// before the real user turn runs. Filtered out of thread-events projection.
+export const ANTIGRAVITY_WARMUP_PROMPT = "Session warm-up: reply with a single word READY. Do not call any tools.";
+
 // Minimum desktop setup-link contract; a version alone never proves readiness.
 export const ANTIGRAVITY_MIN_T3_VERSION = "0.0.43";
 
