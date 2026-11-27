@@ -688,13 +688,60 @@ async function waitForMessage(client, threadId, messageId) {
   }, `message ${messageId} in thread ${threadId}`);
 }
 
+const OPAQUE_PROJECT_TITLE = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+const UNSAFE_PROJECT_TITLE_CHARS = /[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]+/g;
+
+function sanitizeProjectTitle(value) {
+  if (typeof value !== "string") return "";
+  const cleaned = value.replace(UNSAFE_PROJECT_TITLE_CHARS, " ").replace(/\s+/g, " ").trim();
+  return [...cleaned].slice(0, 120).join("").trim();
+}
+
+/** True when a T3 project title is a raw UUID or 32-char hex scratch-folder id. */
+export function isOpaqueProjectTitle(value) {
+  return typeof value === "string" && OPAQUE_PROJECT_TITLE.test(value.trim());
+}
+
+/** Prefer a readable Bot/thread title over an opaque UUID scratch-folder basename. */
+export function resolveProjectTitle(workspace, threadTitle) {
+  const base = path.basename(String(workspace || ""));
+  const readable = sanitizeProjectTitle(threadTitle);
+  if (isOpaqueProjectTitle(base) && readable && !isOpaqueProjectTitle(readable)) {
+    return readable;
+  }
+  return base || "Hermes";
+}
+
+async function upgradeOpaqueProjectTitle(client, project, desiredTitle) {
+  const nextTitle = sanitizeProjectTitle(desiredTitle);
+  if (!project?.id || project.deletedAt != null || !nextTitle || nextTitle === project.title) return project;
+  if (!isOpaqueProjectTitle(project.title) || isOpaqueProjectTitle(nextTitle)) return project;
+  if (typeof project.workspaceRoot === "string" && !isOpaqueProjectTitle(path.basename(project.workspaceRoot))) {
+    return project;
+  }
+  try {
+    await client.dispatch({
+      type: "project.meta.update",
+      commandId: randomUUID(),
+      projectId: project.id,
+      title: nextTitle,
+    });
+    return { ...project, title: nextTitle };
+  } catch {
+    return project;
+  }
+}
+
 export async function ensureProject(client, { workspace, title, instanceId = DEFAULT_INSTANCE_ID, model = DEFAULT_MODEL, options, budget, projectId = randomUUID(), projectCommandId = randomUUID() }) {
   const snapshot = await readOrchestrationSnapshot(client);
   const projects = Array.isArray(snapshot?.projects) ? snapshot.projects : [];
   const existing = projects.find((project) => project?.deletedAt == null && (project.workspaceRoot === workspace || project.id === projectId));
-  if (existing) return { project: existing, created: false, shell: snapshot };
+  if (existing) {
+    const project = await upgradeOpaqueProjectTitle(client, existing, title);
+    return { project, created: false, shell: snapshot };
+  }
   const defaultModelSelection = await liveModelSelection(client, resolveModelSelection({ instanceId, model, options, budget }));
-  await client.dispatch({ type: "project.create", commandId: projectCommandId, projectId, title: title || path.basename(workspace) || "Hermes", workspaceRoot: workspace, createWorkspaceRootIfMissing: false, defaultModelSelection, createdAt: now() });
+  await client.dispatch({ type: "project.create", commandId: projectCommandId, projectId, title: sanitizeProjectTitle(title) || path.basename(workspace) || "Hermes", workspaceRoot: workspace, createWorkspaceRootIfMissing: false, defaultModelSelection, createdAt: now() });
   const projected = await waitFor(async () => {
     const current = await readOrchestrationSnapshot(client);
     return (Array.isArray(current?.projects) ? current.projects : []).find((project) => project?.id === projectId) || null;
@@ -766,10 +813,11 @@ export async function continueThread(client, {
       let workspace = typeof prefetchedWorkspace === "string" && prefetchedWorkspace !== ""
         ? prefetchedWorkspace
         : detail.thread.worktreePath;
+      let resolvedProject = null;
       if (typeof workspace !== "string" || workspace === "") {
         const snapshot = await readOrchestrationSnapshot(client);
-        const project = (Array.isArray(snapshot?.projects) ? snapshot.projects : []).find((entry) => entry?.id === detail.thread.projectId);
-        workspace = project?.workspaceRoot;
+        resolvedProject = (Array.isArray(snapshot?.projects) ? snapshot.projects : []).find((entry) => entry?.id === detail.thread.projectId) || null;
+        workspace = resolvedProject?.workspaceRoot;
       }
       if (typeof workspace !== "string") throw new Error("Thread workspace could not be resolved; continue refused before T3");
       // KRA-10862: T3 keeps a lab process alive across turns, and that process
@@ -777,6 +825,20 @@ export async function continueThread(client, {
       // before it rewrites them, so this turn starts a fresh one (it resumes the
       // conversation) on the new list.
       await prepareTalkWorkspace(workspace, { restartIdleSession: () => restartIdleSession(client, threadId, turnCommandId) });
+      // Upgrade legacy UUID/hex scratch-folder project titles to the Bot's readable thread title in T3 Code.
+      const desiredProjectTitle = sanitizeProjectTitle(detail.thread.title);
+      if (isOpaqueProjectTitle(path.basename(workspace)) && desiredProjectTitle && !isOpaqueProjectTitle(desiredProjectTitle)) {
+        try {
+          let project = resolvedProject;
+          if (!project && detail.thread.projectId) {
+            const snapshot = await readOrchestrationSnapshot(client);
+            project = (Array.isArray(snapshot?.projects) ? snapshot.projects : []).find((entry) => entry?.id === detail.thread.projectId) || null;
+          }
+          if (project) await upgradeOpaqueProjectTitle(client, project, desiredProjectTitle);
+        } catch {
+          // Best-effort project title upgrade never blocks continuing a turn.
+        }
+      }
     }
     await client.dispatch({
       type: "thread.turn.start",
@@ -817,7 +879,7 @@ export async function originate(client, { workspace, title, message, instanceId,
   requireFreshFlags({ freshProviderContext, fixedTitle });
   await requireFreshProviderContext(client, { freshProviderContext, fixedTitle, instanceId });
   if (!idempotencyKey) {
-    const { project, created } = await ensureProject(client, { workspace, title: path.basename(workspace), instanceId: modelSelection.instanceId, model: modelSelection.model, options: modelSelection.options });
+    const { project, created } = await ensureProject(client, { workspace, title: resolveProjectTitle(workspace, title), instanceId: modelSelection.instanceId, model: modelSelection.model, options: modelSelection.options });
     return { ...(await startThread(client, { projectId: project.id, title, message, instanceId: modelSelection.instanceId, model: modelSelection.model, options: modelSelection.options, runtimeMode, freshProviderContext, fixedTitle })), projectCreated: created };
   }
   if (typeof idempotencyKey !== "string" || !/^[A-Za-z0-9._:-]{1,256}$/.test(idempotencyKey)) throw new Error("originate idempotencyKey must be 1-256 safe characters");
@@ -838,7 +900,7 @@ export async function originate(client, { workspace, title, message, instanceId,
       state.originations[idempotencyKey] = intent;
       writeBridgeState(state, stateFile);
     }
-    const { project, created } = await ensureProject(client, { workspace, title: path.basename(workspace), instanceId: modelSelection.instanceId, model: modelSelection.model, options: modelSelection.options, projectId: intent.projectId, projectCommandId: intent.projectCommandId });
+    const { project, created } = await ensureProject(client, { workspace, title: resolveProjectTitle(workspace, title), instanceId: modelSelection.instanceId, model: modelSelection.model, options: modelSelection.options, projectId: intent.projectId, projectCommandId: intent.projectCommandId });
     const result = await startThread(client, { projectId: project.id, title, message, instanceId: modelSelection.instanceId, model: modelSelection.model, options: modelSelection.options, runtimeMode, freshProviderContext, fixedTitle, threadId: intent.threadId, threadCommandId: intent.threadCommandId, turnCommandId: intent.turnCommandId, messageId: intent.messageId });
     return { ...result, projectCreated: created, idempotencyKey };
   } finally {
