@@ -528,6 +528,7 @@ async function main() {
     } finally {
       process.removeListener("SIGTERM", stop);
       process.removeListener("SIGINT", stop);
+      await runtime.close?.();
     }
     return;
   }
