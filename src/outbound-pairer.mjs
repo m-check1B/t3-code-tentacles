@@ -10,7 +10,8 @@ import { admitBotConnectors, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PARAM_KEY
 import { privateModeOk } from "./platform.mjs";
 import { threadEvents, threadArtifact } from "./thread-events.mjs";
 import { refusalOf } from "./refusal-codes.mjs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { continueThread, doctor, labVersion, originate, probeTalkCapabilities } from "./bridge.mjs";
 import { requireFreshFlags, requireFreshProviderContext } from "./fresh-provider-context.mjs";
 import { observe, REPORT_MODEL_LABEL, threadReportFailure, threadReportStatus } from "./orchestrate.mjs";
@@ -24,9 +25,11 @@ import {
   writePairPresence,
 } from "./pair-state.mjs";
 import { boundDoctorInventories, withoutDoctorInventories } from "./inventory-budget.mjs";
+import { ANTIGRAVITY_WARMUP_PROMPT } from "./antigravity.mjs";
 import { createThreadLock, TurnInterrupter } from "./turn-interrupt.mjs";
 import { boundForPublish, MAX_PUBLISH_BYTES } from "./capabilities.mjs";
 
+export { ANTIGRAVITY_WARMUP_PROMPT };
 export const PAIR_PROTOCOL_VERSION = 1;
 export const SPHERE_PRODUCT_ID = "agentjack-desktop";
 export const SPHERE_ABILITY = "desktop.use";
@@ -291,6 +294,11 @@ function projectRootsMap(projects) {
   return map;
 }
 
+function deterministicUuid(seed) {
+  const hex = createHash("sha256").update(seed).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
 export class LoopbackRuntimeAdapter {
   constructor({
     client,
@@ -310,6 +318,8 @@ export class LoopbackRuntimeAdapter {
     capabilityCache = null,
     frameBytes = DEFAULT_MAX_FRAME_BYTES,
     codexFiles = codexOuterFiles(),
+    antigravityWarmupTimeoutMs = 15_000,
+    antigravityWarmupPollMs = 150,
   }) {
     if (!client) throw new Error("Loopback runtime requires a T3 client");
     this.client = client;
@@ -331,6 +341,13 @@ export class LoopbackRuntimeAdapter {
     this.capabilityCache = capabilityCache;
     this.frameBytes = frameBytes;
     this.codexFiles = codexFiles;
+    this.antigravityWarmupTimeoutMs = antigravityWarmupTimeoutMs;
+    this.antigravityWarmupPollMs = antigravityWarmupPollMs;
+    // Tracks threadIds whose live antigravity acp session has already completed Turn 1
+    // with `.agents/plugins/jack-tools` configured, so warm-up runs once per cold session.
+    this.warmAntigravityThreads = new Set();
+    // Active warm-up AbortControllers per threadId so user Stop cancels warm-up cleanly.
+    this.activeWarmups = new Map();
     this.withThreadLock = createThreadLock();
     this.interrupter = new TurnInterrupter({
       readTurnResult: (tuple) => this.turnResult(tuple),
@@ -393,12 +410,191 @@ export class LoopbackRuntimeAdapter {
     return remoteSeatsProjection({ ...observed, threads: allowedThreads, activeTurns: allowedActiveTurns });
   }
 
+  isAntigravityCold(threadId, thread = null, { restarted = false } = {}) {
+    if (restarted || typeof threadId !== "string" || !threadId) {
+      if (typeof threadId === "string" && threadId) this.warmAntigravityThreads.delete(threadId);
+      return true;
+    }
+    if (!this.warmAntigravityThreads.has(threadId)) return true;
+    // Fail closed: require positive confirmation that a live Antigravity session exists.
+    if (!isRecord(thread) || !isRecord(thread.session)) {
+      this.warmAntigravityThreads.delete(threadId);
+      return true;
+    }
+    const session = thread.session;
+    const providerId = session.providerInstanceId ?? thread.modelSelection?.instanceId ?? null;
+    if (providerId !== "antigravity") {
+      this.warmAntigravityThreads.delete(threadId);
+      return true;
+    }
+    // T3 V2 maps idle completed runs to session.status === "stopped", so check live providerThreads / providerThreadStatus.
+    const isV2 = thread.orchestrationProtocol === 2
+      || Array.isArray(thread.providerThreads)
+      || typeof session.providerThreadStatus === "string";
+    if (isV2) {
+      const liveV2 = Array.isArray(thread.providerThreads)
+        ? thread.providerThreads.some((entry) => isRecord(entry)
+          && (!entry.providerInstanceId || entry.providerInstanceId === "antigravity")
+          && (entry.status === "idle" || entry.status === "active"))
+        : (session.providerThreadStatus === "idle" || session.providerThreadStatus === "active");
+      if (liveV2) return false;
+      this.warmAntigravityThreads.delete(threadId);
+      return true;
+    }
+    // T3 V1 strict allowlist of live session states.
+    if (["ready", "idle", "running"].includes(session.status)) return false;
+    this.warmAntigravityThreads.delete(threadId);
+    return true;
+  }
+
+  async waitForAntigravityWarmup(turn, { signal } = {}) {
+    if (!isRecord(turn) || typeof turn.threadId !== "string" || !turn.threadId) return false;
+    const hasTuple = typeof turn.messageId === "string" && turn.messageId !== ""
+      && typeof turn.turnCommandId === "string" && turn.turnCommandId !== "";
+    const canTurnResult = hasTuple && (typeof this.client.turnResult === "function" || typeof this.client.request === "function");
+    const canReadThread = typeof this.client.thread === "function";
+    if (!canTurnResult && !canReadThread) return true;
+
+    const deadline = Date.now() + this.antigravityWarmupTimeoutMs;
+    const sleep = async (ms) => {
+      if (signal?.aborted) return;
+      try { await delay(ms, undefined, { signal }); } catch {}
+    };
+    const readResult = async () => {
+      const tuple = { threadId: turn.threadId, messageId: turn.messageId, turnCommandId: turn.turnCommandId };
+      return typeof this.client.turnResult === "function"
+        ? await this.client.turnResult(tuple)
+        : await this.client.request("/api/orchestration/turn-result", { method: "POST", body: tuple });
+    };
+    const sessionIsIdle = (thread) => {
+      const session = thread?.session;
+      if (!isRecord(session)) return true;
+      return session.activeTurnId == null && !["running", "starting"].includes(session.status);
+    };
+    const interruptWarmup = async () => {
+      if (!hasTuple || typeof this.client.dispatch !== "function") return;
+      try {
+        // Lock-free interrupt: callers inside `continue()` already hold `withThreadLock`.
+        await this.interrupter.interruptLockFree({
+          requestId: `antigravity-warmup:${randomUUID()}`,
+          threadId: turn.threadId,
+          messageId: turn.messageId,
+          turnCommandId: turn.turnCommandId,
+          reason: "user_stop",
+        }, { totalBudgetMs: 3_000 });
+      } catch { /* best effort, never leak secrets */ }
+    };
+    const waitUntilIdle = async () => {
+      if (!canReadThread) return true;
+      while (!signal?.aborted && Date.now() < deadline) {
+        try {
+          const response = await this.client.thread(turn.threadId);
+          const thread = response?.thread ?? response;
+          if (sessionIsIdle(thread)) return true;
+        } catch {
+          // Transient read error: retry until deadline.
+        }
+        await sleep(Math.min(this.antigravityWarmupPollMs, Math.max(0, deadline - Date.now())));
+      }
+      return false;
+    };
+
+    while (!signal?.aborted && Date.now() < deadline) {
+      if (canTurnResult) {
+        let result = null;
+        try { result = await readResult(); } catch { result = null; }
+        if (isRecord(result) && typeof result.state === "string" && result.state !== "pending") {
+          const idle = await waitUntilIdle();
+          if (signal?.aborted) break;
+          if (!idle) break; // Still busy at deadline: interrupt & fail rather than dispatching onto busy session.
+          return result.state === "succeeded";
+        }
+      } else if (canReadThread) {
+        let response = null;
+        try { response = await this.client.thread(turn.threadId); } catch { response = null; }
+        if (response !== null) {
+          const thread = response?.thread ?? response;
+          if (!Array.isArray(thread?.messages)) {
+            if (sessionIsIdle(thread)) return true;
+          } else {
+            const index = hasTuple ? thread.messages.findIndex((entry) => entry?.id === turn.messageId) : -1;
+            const reply = index >= 0 ? thread.messages.slice(index + 1).find((entry) => entry?.role === "assistant") : undefined;
+            if (reply && sessionIsIdle(thread)) return true;
+            if (thread?.session?.status === "error" && sessionIsIdle(thread)) return false;
+          }
+        }
+      }
+      await sleep(Math.min(this.antigravityWarmupPollMs, Math.max(0, deadline - Date.now())));
+    }
+
+    await interruptWarmup();
+    if (signal?.aborted) throw new Error("Antigravity session warm-up cancelled");
+    throw new Error("Antigravity session warm-up timed out");
+  }
+
+  async originateWarmAntigravity(admitted) {
+    const warmupKey = typeof admitted.idempotencyKey === "string"
+      ? (admitted.idempotencyKey.length <= 249
+        ? `${admitted.idempotencyKey}:warmup`
+        : `warmup:${createHash("sha256").update(admitted.idempotencyKey).digest("hex")}`)
+      : undefined;
+    const warmup = await this.originateImpl(this.client, {
+      ...admitted,
+      message: ANTIGRAVITY_WARMUP_PROMPT,
+      ...(warmupKey !== undefined ? { idempotencyKey: warmupKey } : {}),
+    });
+    if (!isRecord(warmup) || typeof warmup.threadId !== "string" || !warmup.threadId) {
+      return warmup;
+    }
+    const controller = new AbortController();
+    this.activeWarmups.set(warmup.threadId, controller);
+    let warmed = false;
+    try {
+      warmed = await this.waitForAntigravityWarmup(warmup, { signal: controller.signal });
+    } finally {
+      if (this.activeWarmups.get(warmup.threadId) === controller) {
+        this.activeWarmups.delete(warmup.threadId);
+      }
+    }
+    if (warmed) this.warmAntigravityThreads.add(warmup.threadId);
+    const deterministicIds = typeof admitted.idempotencyKey === "string"
+      ? {
+        turnCommandId: deterministicUuid(`antigravity-real-cmd:${admitted.idempotencyKey}`),
+        messageId: deterministicUuid(`antigravity-real-msg:${admitted.idempotencyKey}`),
+      }
+      : {};
+    // Omit freshProviderContext on the real turn: the warm-up turn already established
+    // the fresh provider context, and passing it again would discard the warmed session.
+    const realParams = {
+      threadId: warmup.threadId,
+      message: admitted.message,
+      instanceId: admitted.instanceId,
+      ...(admitted.model !== undefined ? { model: admitted.model } : {}),
+      ...(admitted.options !== undefined ? { options: admitted.options } : {}),
+      ...(admitted.budget !== undefined ? { budget: admitted.budget } : {}),
+      runtimeMode: admitted.runtimeMode,
+      ...deterministicIds,
+    };
+    const realResult = await this.continueImpl(this.client, realParams, {
+      prepareTalkWorkspace: async () => false,
+      prefetchedWorkspace: admitted.workspace,
+    });
+    return {
+      ...realResult,
+      ...(warmup.projectCreated !== undefined ? { projectCreated: warmup.projectCreated } : {}),
+      ...(admitted.idempotencyKey !== undefined ? { idempotencyKey: admitted.idempotencyKey } : {}),
+    };
+  }
+
   originate(params) {
     const { params: admitted, servers, scope } = admitBotConnectors(fullAccessParams(params, "originate", ORIGINATE_PARAM_KEYS), { jackOrigin: this.jackOrigin });
     requireFreshFlags(admitted);
     const dispatch = async () => {
       // A new thread starts a new lab session, so no restart is needed here.
       await this.writeConnectors(admitted.workspace, { servers, scope, instanceId: admitted.instanceId });
+      if (admitted.instanceId === "antigravity" && servers?.length > 0) {
+        return this.originateWarmAntigravity(admitted);
+      }
       return this.originateImpl(this.client, admitted);
     };
     return admitted.freshProviderContext === true || admitted.fixedTitle === true
@@ -456,7 +652,7 @@ export class LoopbackRuntimeAdapter {
     const cursor = instanceId === "cursor" && botConnectorProviders().includes("cursor");
     const antigravity = instanceId === "antigravity" && botConnectorProviders().includes("antigravity");
     if (servers !== undefined && prepared === true) checkBotConnectorPaths(workspace, { opencode, cursor, antigravity });
-    if (restartIdleSession && connectorsNeedRestart(workspace, servers)) await restartIdleSession();
+    if (restartIdleSession && connectorsNeedRestart(workspace, servers, { instanceId })) await restartIdleSession();
     const written = writeBotConnectors(workspace, prepared, servers, { codexTrust, opencode, cursor, antigravity });
     // The marker records the table Tentacles itself added, so only that one is ever removed.
     // It also names the Grok home written to, so a later GROK_HOME change cannot strand the table.
@@ -489,8 +685,70 @@ export class LoopbackRuntimeAdapter {
       // private non-Bot threads never leak projectId or model-selection errors,
       // while valid in-scope idempotent replays still skip prepareTalkWorkspace.
       const scoped = await this.requireThreadInScope(input.threadId);
-      return this.continueImpl(this.client, input, {
-        prepareTalkWorkspace: (workspace, { restartIdleSession } = {}) => this.writeConnectors(workspace, { servers, scope, instanceId: input.instanceId, restartIdleSession }),
+      const effectiveInstanceId = input.instanceId ?? scoped.thread?.modelSelection?.instanceId ?? scoped.thread?.session?.providerInstanceId;
+      const isReplay = Boolean(input.messageId && Array.isArray(scoped.thread?.messages)
+        && scoped.thread.messages.some((entry) => entry?.id === input.messageId));
+      const moveFreshToWarmup = !isReplay && effectiveInstanceId === "antigravity"
+        && servers?.length > 0 && input.freshProviderContext === true;
+      const continueInput = moveFreshToWarmup
+        ? (({ freshProviderContext: _ignored, ...rest }) => rest)(input)
+        : input;
+      return this.continueImpl(this.client, continueInput, {
+        prepareTalkWorkspace: async (workspace, { restartIdleSession } = {}) => {
+          let restarted = false;
+          const trackedRestart = restartIdleSession
+            ? async () => {
+              await restartIdleSession();
+              restarted = true;
+              this.warmAntigravityThreads.delete(input.threadId);
+            }
+            : undefined;
+          const written = await this.writeConnectors(workspace, {
+            servers,
+            scope,
+            instanceId: effectiveInstanceId,
+            restartIdleSession: trackedRestart,
+          });
+          if (effectiveInstanceId !== "antigravity" || !servers?.length) {
+            if (effectiveInstanceId !== "antigravity" || servers !== undefined) {
+              this.warmAntigravityThreads.delete(input.threadId);
+            }
+            return written;
+          }
+          if (moveFreshToWarmup || this.isAntigravityCold(input.threadId, scoped.thread, { restarted })) {
+            const warmupParams = {
+              threadId: input.threadId,
+              message: ANTIGRAVITY_WARMUP_PROMPT,
+              instanceId: effectiveInstanceId,
+              ...(input.model !== undefined ? { model: input.model } : {}),
+              ...(input.options !== undefined ? { options: input.options } : {}),
+              ...(input.budget !== undefined ? { budget: input.budget } : {}),
+              runtimeMode: input.runtimeMode,
+              ...(moveFreshToWarmup ? { freshProviderContext: true } : {}),
+              turnCommandId: randomUUID(),
+              messageId: randomUUID(),
+            };
+            const controller = new AbortController();
+            this.activeWarmups.set(input.threadId, controller);
+            let warmed = false;
+            try {
+              const warmupTurn = await this.continueImpl(this.client, warmupParams, {
+                prepareTalkWorkspace: async () => false,
+                prefetchedWorkspace: workspace,
+              });
+              warmed = await this.waitForAntigravityWarmup(
+                { threadId: input.threadId, ...(isRecord(warmupTurn) ? warmupTurn : {}) },
+                { signal: controller.signal },
+              );
+            } finally {
+              if (this.activeWarmups.get(input.threadId) === controller) {
+                this.activeWarmups.delete(input.threadId);
+              }
+            }
+            if (warmed) this.warmAntigravityThreads.add(input.threadId);
+          }
+          return written;
+        },
         prefetchedThread: scoped.thread,
         prefetchedWorkspace: scoped.workspace,
       });
@@ -565,6 +823,11 @@ export class LoopbackRuntimeAdapter {
   }
 
   interrupt(params) {
+    // If a synthetic Antigravity warm-up is running on this thread, abort it immediately
+    // so the lock frees cleanly and the real user turn is never dispatched after Stop.
+    if (isRecord(params) && typeof params.threadId === "string") {
+      this.activeWarmups.get(params.threadId)?.abort();
+    }
     return this.interrupter.interrupt(params);
   }
 

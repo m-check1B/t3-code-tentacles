@@ -7,11 +7,14 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
-import { BOT_CONNECTOR_CAPABILITIES, GROK_TRUST_MARKER, PUBLIC_MCP_URL, codexHomeAllowed, checkCodexLaunchArgs, codexHomeFor, readT3ServiceEnv, codexOuterFiles, codexHomeFromSettings, codexServerNames, commitCodexTrust, grokHomeFor, planGrokTrust, planGrokUntrust, trustCodexWorkspace } from "../src/bot-connectors.mjs";
+import { ANTIGRAVITY_BRIDGE_PATH, ANTIGRAVITY_TURN_FILE, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PROVIDERS, GROK_TRUST_MARKER, PUBLIC_MCP_URL, codexHomeAllowed, checkCodexLaunchArgs, codexHomeFor, connectorsNeedRestart, readT3ServiceEnv, codexOuterFiles, codexHomeFromSettings, codexServerNames, commitCodexTrust, grokHomeFor, planGrokTrust, planGrokUntrust, trustCodexWorkspace } from "../src/bot-connectors.mjs";
 import { continueThread, doctor, formatDoctor, readSmallRegularFile } from "../src/bridge.mjs";
 import { freshCapability } from "./helpers/fresh-context-wire.mjs";
 import { ensureLocalTalkWorkspace } from "../src/local-talk-workspace.mjs";
-import { LoopbackRuntimeAdapter, OutboundPairer, readPairOffer } from "../src/outbound-pairer.mjs";
+import { ANTIGRAVITY_WARMUP_PROMPT, LoopbackRuntimeAdapter, OutboundPairer, readPairOffer } from "../src/outbound-pairer.mjs";
+import { refusalOf } from "../src/refusal-codes.mjs";
+import { threadDetailToV1 } from "../src/t3-v2.mjs";
+import { projectThreadEvents } from "../src/thread-events.mjs";
 
 const ORIGIN = "https://jack.example";
 const scope = { businessId: "11111111-1111-4111-8111-111111111111", seatId: "22222222-2222-4222-8222-222222222222", agentId: "33333333-3333-4333-8333-333333333333" };
@@ -147,7 +150,7 @@ test("anything Jack's gate would not admit is refused before the workspace or T3
     [connectors([learn], { mcpScope: { ...scope, agentId: "nope" } }), /exact ownership/],
     [connectors([learn], { mcpExpiresAt: Date.now() - 1 }), /expired/],
     [connectors([learn], { mcpExpiresAt: Date.now() + 600_000 }), /expired/],
-    [connectors([learn], { instanceId: "antigravity" }), /This lab cannot use Jack tools on Local yet; run this Bot on Server to use them$/],
+    [connectors([learn], { instanceId: "grok" }), /This lab cannot use Jack tools on Local yet; run this Bot on Server to use them$/],
     [connectors([learn], { instanceId: undefined }), /cannot use Jack tools on Local yet/],
     [connectors([{ ...jack, headers: [] }]), /not an admitted list/],
     [connectors([{ ...jack, name: "jack2" }]), /not an admitted list/],
@@ -230,7 +233,7 @@ test("doctor-status advertises exactly what Jack's gate reads, only with Local T
   };
   const { capabilities } = await report({ talkTurnResult: "v1", turnInterrupt: null });
   assert.deepEqual({ ...capabilities, jackMcpProviders: [...capabilities.jackMcpProviders], jackMcpPublicUrls: [...capabilities.jackMcpPublicUrls] },
-    { talkTurnResult: "v1", turnInterrupt: null, jackMcpConfig: "v1", jackMcpProviders: ["claudeAgent", "codex"], jackMcpHeaders: false, jackMcpPublicUrls: [PUBLIC_MCP_URL], jackMcpProxy: "v1", jackMcpSelf: "v1" });
+    { talkTurnResult: "v1", turnInterrupt: null, jackMcpConfig: "v1", jackMcpProviders: ["claudeAgent", "codex", "antigravity"], jackMcpHeaders: false, jackMcpPublicUrls: [PUBLIC_MCP_URL], jackMcpProxy: "v1", jackMcpSelf: "v1" });
   assert.equal(JSON.parse(JSON.stringify(capabilities)).jackMcpConfig, BOT_CONNECTOR_CAPABILITIES.jackMcpConfig);
   assert.deepEqual((await report({ talkTurnResult: null, turnInterrupt: null })).capabilities, { talkTurnResult: null, turnInterrupt: null });
 });
@@ -261,8 +264,8 @@ test("B3 P3-2 on #109: opencode is advertised only when T3 reports OpenCode 2 or
     assert.equal(Object.hasOwn(report.labs.find(lab => lab.instanceId === "opencode"), "version"), false); // kept off the wire
     return [...capabilities.jackMcpProviders];
   };
-  for (const version of ["2.3.0", "2.0.0", "10.1.0"]) assert.deepEqual(await providersFor(version), ["claudeAgent", "codex", "opencode"], version);
-  for (const version of ["1.14.2", "0.9.0", null, "garbage"]) assert.deepEqual(await providersFor(version), ["claudeAgent", "codex"], String(version));
+  for (const version of ["2.3.0", "2.0.0", "10.1.0"]) assert.deepEqual(await providersFor(version), ["claudeAgent", "codex", "antigravity", "opencode"], version);
+  for (const version of ["1.14.2", "0.9.0", null, "garbage"]) assert.deepEqual(await providersFor(version), ["claudeAgent", "codex", "antigravity"], String(version));
 });
 
 test("Jack's own tools and a connector reach Local Codex through a trusted per-folder config", async () => {
@@ -484,7 +487,7 @@ test("B3 P2-1 on #102: a pairing without a pinned Jack origin invites no Jack-ho
   assert.equal(Object.hasOwn(unpinned, "jackMcpSelf"), false);
   // The public docs server road is unchanged.
   assert.deepEqual([unpinned.jackMcpConfig, [...unpinned.jackMcpProviders], unpinned.jackMcpHeaders, [...unpinned.jackMcpPublicUrls]],
-    ["v1", ["claudeAgent", "codex"], false, [PUBLIC_MCP_URL]]);
+    ["v1", ["claudeAgent", "codex", "antigravity"], false, [PUBLIC_MCP_URL]]);
   // A pairing from an Agent Jack that pins its origin gets the whole advert.
   adapter.jackOrigin = ORIGIN;
   const pinned = (await adapter.doctorStatus()).capabilities;
@@ -575,7 +578,7 @@ test("KRA-10869: with the switch unset, OpenCode is main: no advert, a list refu
   assert.equal(reads, 0);
   const report = { capabilities: { talkTurnResult: "v1" }, labs: [] };
   const status = await new LoopbackRuntimeAdapter({ client: {}, doctorImpl: async () => report }).doctorStatus();
-  assert.deepEqual([...status.capabilities.jackMcpProviders], ["claudeAgent", "codex"]);
+  assert.deepEqual([...status.capabilities.jackMcpProviders], ["claudeAgent", "codex", "antigravity"]);
 });
 
 // Grok's road is unproven (no signed-in Grok on dev-workers): the owner opts in for a proof run.
@@ -595,9 +598,9 @@ test("KRA-10869: Grok is unproven, so it is refused and not advertised unless th
   assert.deepEqual(sent, []);
   assert.equal(fs.existsSync(path.join(workspace, ".mcp.json")), false);
   const doctor = new LoopbackRuntimeAdapter({ client: {}, doctorImpl: async () => ({ capabilities: { talkTurnResult: "v1" } }) });
-  assert.deepEqual([...(await doctor.doctorStatus()).capabilities.jackMcpProviders], ["claudeAgent", "codex"]);
+  assert.deepEqual([...(await doctor.doctorStatus()).capabilities.jackMcpProviders], ["claudeAgent", "codex", "antigravity"]);
   process.env.TENTACLES_JACK_TOOLS_TRY = "grok, cursor, kiro";
-  assert.deepEqual([...(await doctor.doctorStatus()).capabilities.jackMcpProviders], ["claudeAgent", "codex", "grok", "cursor"]);
+  assert.deepEqual([...(await doctor.doctorStatus()).capabilities.jackMcpProviders], ["claudeAgent", "codex", "antigravity", "grok", "cursor"]);
 });
 
 test("KRA-10869: Jack's tools reach Local Grok through the folder's .mcp.json once Grok trusts the Bot workspace", async (t) => {
@@ -1632,40 +1635,83 @@ test("KRA-10869: Jack's tools reach Local Cursor through the folder's .cursor/mc
   assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")).mcpServers, {});
 });
 
-test("KRA-10869: Jack's tools reach Local Antigravity as a workspace plugin, opt-in until a signed-in turn proves it", async (t) => {
+test("Antigravity is promoted by default and uses the secret-free stdio bridge with dynamic turn-token rotation", async (t) => {
+  const before = process.env.TENTACLES_JACK_TOOLS_TRY;
+  delete process.env.TENTACLES_JACK_TOOLS_TRY;
+  t.after(() => { if (before === undefined) delete process.env.TENTACLES_JACK_TOOLS_TRY; else process.env.TENTACLES_JACK_TOOLS_TRY = before; });
+  assert.equal(BOT_CONNECTOR_PROVIDERS.includes("antigravity"), true);
   const { home, workspace, sent, stops, adapter } = setup();
   const plugin = path.join(workspace, ".agents", "plugins", "jack-tools");
-  // Another lab's turn never creates the plugin.
+  const turnFile = path.join(workspace, ANTIGRAVITY_TURN_FILE);
+  // Another lab's turn never creates the plugin or turn-servers file.
   await adapter.originate({ workspace, message: "hi", ...claude, ...connectors([learn]) });
   assert.equal(fs.existsSync(path.join(workspace, ".agents")), false);
-  await assert.rejects(async () => adapter.continue({ threadId: "t1", message: "hi", ...antigravity, ...connectors([learn]) }), /cannot use Jack tools on Local yet/);
-  tryGrok(t, "antigravity");
+  assert.equal(fs.existsSync(turnFile), false);
+
+  // Admitted by default without TENTACLES_JACK_TOOLS_TRY.
   await adapter.continue({ threadId: "t1", message: "weather?", ...antigravity, ...connectors([jack, linear, learn]) });
   for (const directory of [".agents", ".agents/plugins", ".agents/plugins/jack-tools"]) assert.equal(fs.lstatSync(path.join(workspace, directory)).isDirectory(), true);
+  assert.deepEqual(fs.readdirSync(plugin).sort(), ["mcp_config.json", "plugin.json"]);
   assert.equal(fs.statSync(path.join(plugin, "mcp_config.json")).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(turnFile).mode & 0o777, 0o600);
   assert.equal(JSON.parse(fs.readFileSync(path.join(plugin, "plugin.json"), "utf8")).name, "jack-tools");
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(plugin, "mcp_config.json"), "utf8")).mcpServers, {
-    jack: { url: `${ORIGIN}/mcp`, headers: { Authorization: "Bearer synthetic-turn-token" } },
-    linear: { url: `${ORIGIN}/mcp/connectors/linear`, headers: { Authorization: "Bearer synthetic-turn-token" } },
-    "microsoft-learn": { url: PUBLIC_MCP_URL },
+  const configText = fs.readFileSync(path.join(plugin, "mcp_config.json"), "utf8");
+  // Zero secrets in mcp_config.json.
+  assert.equal(configText.includes("synthetic-turn-token"), false);
+  assert.equal(configText.includes(ORIGIN), false);
+  assert.deepEqual(JSON.parse(configText).mcpServers, {
+    jack: { command: process.execPath, args: [ANTIGRAVITY_BRIDGE_PATH, turnFile, "jack"], env: { ELECTRON_RUN_AS_NODE: "1" } },
+    linear: { command: process.execPath, args: [ANTIGRAVITY_BRIDGE_PATH, turnFile, "linear"], env: { ELECTRON_RUN_AS_NODE: "1" } },
+    "microsoft-learn": { command: process.execPath, args: [ANTIGRAVITY_BRIDGE_PATH, turnFile, "microsoft-learn"], env: { ELECTRON_RUN_AS_NODE: "1" } },
   });
+  assert.deepEqual(JSON.parse(fs.readFileSync(turnFile, "utf8")), {
+    servers: {
+      jack: { url: `${ORIGIN}/mcp`, headers: { Authorization: "Bearer synthetic-turn-token" } },
+      linear: { url: `${ORIGIN}/mcp/connectors/linear`, headers: { Authorization: "Bearer synthetic-turn-token" } },
+      "microsoft-learn": { url: PUBLIC_MCP_URL },
+    },
+  });
+  // First turn with servers stopped any prior session because mcp_config.json went from [] -> 3 servers.
   assert.deepEqual(stops, ["t1"]);
   // T3's shared Antigravity profile is never touched.
   assert.equal(fs.existsSync(path.join(home, ".gemini")), false);
-  // Another lab's turn leaves it as it is; an Antigravity clear empties it.
+
+  // Token-only rotation on the same server names MUST NOT restart antigravity acp.
+  const rotatedBearer = [{ name: "Authorization", value: "Bearer synthetic-turn-token-2" }];
+  const rotatedJack = { ...jack, headers: rotatedBearer };
+  const rotatedLinear = { ...linear, headers: rotatedBearer };
+  assert.equal(connectorsNeedRestart(workspace, [learn, rotatedLinear, rotatedJack], { instanceId: "antigravity" }), false);
+  // Backwards compatibility: omitting options still returns true for non-empty lists (Claude/Codex behavior).
+  assert.equal(connectorsNeedRestart(workspace, [rotatedJack]), true);
+  await adapter.continue({ threadId: "t1", message: "follow-up", ...antigravity, ...connectors([rotatedJack, rotatedLinear, learn]) });
+  assert.deepEqual(stops, ["t1"]); // No restart!
+  assert.equal(JSON.parse(fs.readFileSync(turnFile, "utf8")).servers.jack.headers.Authorization, "Bearer synthetic-turn-token-2");
+  assert.equal(fs.readFileSync(path.join(plugin, "mcp_config.json"), "utf8"), configText);
+
+  // Changing the server name list DOES restart antigravity acp.
+  assert.equal(connectorsNeedRestart(workspace, [rotatedJack], { instanceId: "antigravity" }), true);
+  await adapter.continue({ threadId: "t1", message: "only-jack", ...antigravity, ...connectors([rotatedJack]) });
+  assert.deepEqual(stops, ["t1", "t1"]);
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(plugin, "mcp_config.json"), "utf8")).mcpServers), ["jack"]);
+
+  // Another lab's turn leaves Antigravity's files as they are; an Antigravity clear empties both.
   const written = fs.readFileSync(path.join(plugin, "mcp_config.json"), "utf8");
   await adapter.continue({ threadId: "t1", message: "again", ...claude, ...connectors([]) });
   assert.equal(fs.readFileSync(path.join(plugin, "mcp_config.json"), "utf8"), written);
+  assert.deepEqual(stops, ["t1", "t1", "t1"]);
   await adapter.continue({ threadId: "t1", message: "again", ...antigravity, ...connectors([]) });
+  assert.deepEqual(stops, ["t1", "t1", "t1", "t1"]);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(plugin, "mcp_config.json"), "utf8")).mcpServers, {});
+  assert.deepEqual(JSON.parse(fs.readFileSync(turnFile, "utf8")), { servers: {} });
+  assert.equal(fs.readFileSync(turnFile, "utf8").includes("synthetic-turn-token"), false);
   assert.equal(JSON.stringify(sent).includes("synthetic-turn-token"), false);
 });
 
-test("B3 P3-1/P3-2 on #113: Antigravity refuses inside a git repository and never adopts an owner's jack-tools folder", async (t) => {
-  tryLab(t, "antigravity");
+test("B3 P3-1/P3-2 on #113: Antigravity refuses inside a git repository, never adopts an owner's jack-tools folder, and refuses symlink/directory turn file", async () => {
   const { home, workspace, stops, adapter } = setup();
   await adapter.originate({ workspace, message: "plain", ...antigravity });
   const dir = path.join(workspace, ".agents", "plugins", "jack-tools");
+  const turnFile = path.join(workspace, ANTIGRAVITY_TURN_FILE);
   const notOurs = /^Error: This Bot workspace has a \.agents\/plugins\/jack-tools plugin that Tentacles did not write; remove that folder, then send again$/;
   const inGit = /^Error: This Bot workspace is inside a git repository, where Antigravity reads the repository's own \.agents plugins; run this Bot on Server to use Jack tools$/;
   // P3-2: a hooks.json-only folder, and our two files plus one extra entry, refuse whatever the marker says.
@@ -1684,6 +1730,18 @@ test("B3 P3-1/P3-2 on #113: Antigravity refuses inside a git repository and neve
   assert.equal(fs.readFileSync(path.join(dir, "mcp_config.json"), "utf8"), config);
   assert.equal(stops.length, stopped);
   fs.rmSync(path.join(dir, "rules"), { recursive: true });
+  // Custody of ANTIGRAVITY_TURN_FILE: symlink or directory refuses before any stop.
+  const target = path.join(home, "outside-servers.json");
+  fs.writeFileSync(target, '{"servers":{}}\n');
+  fs.rmSync(turnFile);
+  fs.symlinkSync(target, turnFile);
+  await assert.rejects(adapter.continue({ threadId: "t1", message: "again", ...antigravity, ...connectors([jack]) }), /turn servers file must not be a symlink/);
+  assert.equal(stops.length, stopped);
+  fs.rmSync(turnFile);
+  fs.mkdirSync(turnFile);
+  await assert.rejects(adapter.continue({ threadId: "t1", message: "again", ...antigravity, ...connectors([jack]) }), /must not be a directory/);
+  assert.equal(stops.length, stopped);
+  fs.rmSync(turnFile, { recursive: true });
   // P3-1: a .git in a parent or in the Bot workspace itself refuses before the stop, and nothing is written.
   for (const repo of [home, workspace]) {
     fs.mkdirSync(path.join(repo, ".git"));
@@ -1697,24 +1755,19 @@ test("B3 P3-1/P3-2 on #113: Antigravity refuses inside a git repository and neve
   await adapter.continue({ threadId: "t1", message: "docs", ...claude, ...connectors([learn]) });
 });
 
-test("KRA-10869: an Antigravity plugin Tentacles did not write refuses before the stop; switched off, nothing is read or written", async (t) => {
-  const before = process.env.TENTACLES_JACK_TOOLS_TRY;
-  t.after(() => { if (before === undefined) delete process.env.TENTACLES_JACK_TOOLS_TRY; else process.env.TENTACLES_JACK_TOOLS_TRY = before; });
+test("KRA-10869: an Antigravity plugin Tentacles did not write refuses before the stop; other labs never touch .agents", async () => {
   const { home, workspace, stops, adapter } = setup();
   const dir = path.join(workspace, ".agents", "plugins", "jack-tools");
   const config = path.join(dir, "mcp_config.json");
   await adapter.originate({ workspace, message: "plain", ...antigravity });
-  // Switched off: an Antigravity clear and other labs' lists never create, read or refuse the plugin, even through a link.
-  delete process.env.TENTACLES_JACK_TOOLS_TRY;
+  // Other labs' lists never create, read or refuse the Antigravity plugin, even through a link.
   const elsewhere = fs.mkdtempSync(path.join(home, "elsewhere-"));
   fs.symlinkSync(elsewhere, path.join(workspace, ".agents"));
-  await adapter.continue({ threadId: "t1", message: "clear", ...antigravity, ...connectors([]) });
   for (const lab of [claude, codex]) await adapter.continue({ threadId: "t1", message: "docs", ...lab, ...connectors([learn]) });
   assert.deepEqual(fs.readdirSync(elsewhere), []);
   assert.equal(fs.existsSync(path.join(workspace, ".jack-antigravity-mcp")), false);
   fs.rmSync(path.join(workspace, ".agents"));
-  // Switched on: a plugin of the owner's refuses and keeps its bytes; once removed, ours is written and rewritten.
-  process.env.TENTACLES_JACK_TOOLS_TRY = "antigravity";
+  // A plugin of the owner's refuses and keeps its bytes; once removed, ours is written and rewritten.
   fs.mkdirSync(dir, { recursive: true });
   const owner = '{"mcpServers":{"mine":{"url":"https://mine.example/mcp"}}}\n';
   fs.writeFileSync(config, owner);
@@ -1790,4 +1843,365 @@ test("T3 0.1.11 default omitted providerInstances.codex passes Codex connector t
   await adapter.continue({ threadId: "t1", message: "again", ...codex, ...connectors([jack]) });
   assert.equal(sent.length, 2);
   assert.deepEqual(stops, ["t1"]);
+});
+
+test("Antigravity cold-session warm-up runs once on cold turns with servers and never on warm turns or non-Antigravity labs", async () => {
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "bot-connectors-warmup-")));
+  fs.chmodSync(home, 0o700);
+  const workspace = path.join(home, ".jack-local-scratch", "seats", seatDigest(), "agents", scope.agentId);
+  const dispatched = [];
+  const stops = [];
+  let seq = 0;
+  let sessionState = { status: "ready", providerInstanceId: "antigravity", activeTurnId: null };
+  const turnStates = new Map();
+
+  const adapter = new LoopbackRuntimeAdapter({
+    client: {
+      getSettings: async () => ({}),
+      thread: async (id) => ({ thread: { id, projectId: "proj-1", worktreePath: workspace, session: sessionState } }),
+      turnResult: async ({ messageId, turnCommandId, threadId }) => turnStates.get(turnCommandId) ?? {
+        threadId,
+        messageId,
+        turnCommandId,
+        state: "succeeded",
+        outputText: "READY",
+        turnId: "turn-warmup",
+        assistantMessageId: "asst-warmup",
+        instanceId: "antigravity",
+        model: antigravity.model,
+        effort: null,
+      },
+    },
+    workspaceHome: home,
+    antigravityWarmupTimeoutMs: 2_000,
+    antigravityWarmupPollMs: 10,
+    prepareTalkWorkspaceImpl: value => ensureLocalTalkWorkspace(value, { home }),
+    originateImpl: async (_client, params) => {
+      seq += 1;
+      const turn = {
+        threadId: "thread-ag-1",
+        projectId: "proj-1",
+        messageId: `orig-msg-${seq}`,
+        turnCommandId: `orig-cmd-${seq}`,
+        projectCreated: true,
+      };
+      dispatched.push({ op: "originate", message: params.message, instanceId: params.instanceId, turn });
+      return turn;
+    },
+    continueImpl: async (_client, params, { prepareTalkWorkspace } = {}) => {
+      if (prepareTalkWorkspace) {
+        await prepareTalkWorkspace(workspace, {
+          restartIdleSession: async () => { stops.push(params.threadId); },
+        });
+      }
+      seq += 1;
+      const turn = {
+        threadId: params.threadId,
+        projectId: "proj-1",
+        messageId: params.messageId ?? `cont-msg-${seq}`,
+        turnCommandId: params.turnCommandId ?? `cont-cmd-${seq}`,
+      };
+      dispatched.push({ op: "continue", message: params.message, instanceId: params.instanceId, turn });
+      return turn;
+    },
+  });
+  adapter.jackOrigin = ORIGIN;
+
+  // 1. Cold originate on Antigravity with servers: runs warm-up turn FIRST, then real user turn, and returns REAL turn receipt!
+  const first = await adapter.originate({ workspace, title: "Bot Talk", message: "Real Turn 1 prompt", ...antigravity, ...connectors([jack]) });
+  assert.equal(dispatched.length, 2);
+  assert.equal(dispatched[0].op, "originate");
+  assert.equal(dispatched[0].message, ANTIGRAVITY_WARMUP_PROMPT);
+  assert.equal(dispatched[1].op, "continue");
+  assert.equal(dispatched[1].message, "Real Turn 1 prompt");
+  assert.equal(first.threadId, "thread-ag-1");
+  assert.equal(first.messageId, dispatched[1].turn.messageId);
+  assert.equal(first.turnCommandId, dispatched[1].turn.turnCommandId);
+  assert.equal(first.projectCreated, true);
+  assert.equal(adapter.warmAntigravityThreads.has("thread-ag-1"), true);
+
+  // 2. Warm continue with rotated bearer token (same server name): NO restart, NO warm-up!
+  const rotatedJack = { ...jack, headers: [{ name: "Authorization", value: "Bearer synthetic-rotated-2" }] };
+  const second = await adapter.continue({ threadId: "thread-ag-1", message: "Real Turn 2 prompt", ...antigravity, ...connectors([rotatedJack]) });
+  assert.equal(stops.length, 0);
+  assert.equal(dispatched.length, 3);
+  assert.equal(dispatched[2].message, "Real Turn 2 prompt");
+  assert.equal(second.messageId, dispatched[2].turn.messageId);
+
+  // 3. Server list changes (add linear): restarts session, clears warm flag, runs ONE warm-up, then real turn!
+  await adapter.continue({ threadId: "thread-ag-1", message: "Real Turn 3 prompt", ...antigravity, ...connectors([rotatedJack, linear]) });
+  assert.deepEqual(stops, ["thread-ag-1"]);
+  assert.equal(dispatched.length, 5);
+  assert.equal(dispatched[3].message, ANTIGRAVITY_WARMUP_PROMPT);
+  assert.equal(dispatched[4].message, "Real Turn 3 prompt");
+  assert.equal(adapter.warmAntigravityThreads.has("thread-ag-1"), true);
+
+  // 4. External session exit/stop on T3: detects cold session, runs ONE warm-up, then real turn!
+  sessionState = { status: "stopped", providerInstanceId: "antigravity", activeTurnId: null };
+  await adapter.continue({ threadId: "thread-ag-1", message: "Real Turn 4 after restart", ...antigravity, ...connectors([rotatedJack, linear]) });
+  assert.equal(stops.length, 1); // No extra stop needed for token-only config, but warm-up STILL runs because session stopped!
+  assert.equal(dispatched.length, 7);
+  assert.equal(dispatched[5].message, ANTIGRAVITY_WARMUP_PROMPT);
+  assert.equal(dispatched[6].message, "Real Turn 4 after restart");
+
+  // 5. Non-Antigravity lab NEVER runs warm-up; Antigravity with empty/no servers NEVER runs warm-up!
+  sessionState = { status: "ready", providerInstanceId: "claudeAgent", activeTurnId: null };
+  await adapter.originate({ workspace, title: "Claude Talk", message: "Claude prompt", ...claude, ...connectors([jack]) });
+  assert.equal(dispatched.length, 8);
+  assert.equal(dispatched[7].message, "Claude prompt");
+  await adapter.originate({ workspace, title: "Plain AG", message: "Plain AG prompt", ...antigravity });
+  assert.equal(dispatched.length, 9);
+  assert.equal(dispatched[8].message, "Plain AG prompt");
+
+  // 6. Failed warm-up does NOT mark thread warm and never leaks bearer tokens.
+  const failingAdapter = new LoopbackRuntimeAdapter({
+    client: {
+      getSettings: async () => ({}),
+      thread: async (id) => ({ thread: { id, projectId: "proj-1", worktreePath: workspace, session: { status: "error", providerInstanceId: "antigravity", activeTurnId: null } } }),
+      turnResult: async ({ threadId, messageId, turnCommandId }) => ({ threadId, messageId, turnCommandId, state: "failed", outputText: null, turnId: "t-fail", assistantMessageId: null, instanceId: "antigravity", model: antigravity.model, effort: null }),
+    },
+    workspaceHome: home,
+    antigravityWarmupTimeoutMs: 500,
+    antigravityWarmupPollMs: 10,
+    prepareTalkWorkspaceImpl: value => ensureLocalTalkWorkspace(value, { home }),
+    originateImpl: async () => ({ threadId: "thread-fail", projectId: "proj-1", messageId: "m-warm", turnCommandId: "c-warm" }),
+    continueImpl: async (_client, params) => ({ threadId: params.threadId, projectId: "proj-1", messageId: "m-real", turnCommandId: "c-real" }),
+  });
+  failingAdapter.jackOrigin = ORIGIN;
+  const failRes = await failingAdapter.originate({ workspace, title: "Fail AG", message: "Real after failed warmup", ...antigravity, ...connectors([jack]) });
+  assert.equal(failRes.messageId, "m-real");
+  assert.equal(failingAdapter.warmAntigravityThreads.has("thread-fail"), false);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test("B3 P0-1/P1-5: continue warm-up timeout uses lock-free interrupt (no deadlock) and user Stop aborts warm-up without sending real turn", async () => {
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "bot-connectors-p0-")));
+  fs.chmodSync(home, 0o700);
+  const workspace = path.join(home, ".jack-local-scratch", "seats", seatDigest(), "agents", scope.agentId);
+  const interrupted = [];
+  const sent = [];
+  let stuckWarmup = true;
+  const adapter = new LoopbackRuntimeAdapter({
+    client: {
+      getSettings: async () => ({}),
+      thread: async (id) => ({
+        thread: {
+          id,
+          projectId: "proj-1",
+          worktreePath: workspace,
+          session: stuckWarmup
+            ? { status: "running", providerInstanceId: "antigravity", activeTurnId: "run-warm" }
+            : { status: "ready", providerInstanceId: "antigravity", activeTurnId: null },
+        },
+      }),
+      turnResult: async ({ threadId, messageId, turnCommandId }) => ({
+        threadId,
+        messageId,
+        turnCommandId,
+        turnId: "run-warm",
+        assistantMessageId: stuckWarmup ? null : "asst-warm",
+        instanceId: "antigravity",
+        model: antigravity.model,
+        effort: null,
+        state: stuckWarmup ? "pending" : "succeeded",
+        outputText: stuckWarmup ? null : "READY",
+      }),
+      dispatch: async (cmd) => {
+        if (cmd.type === "thread.turn.interrupt") {
+          interrupted.push(cmd);
+          stuckWarmup = false;
+        }
+        return { sequence: 1 };
+      },
+    },
+    workspaceHome: home,
+    antigravityWarmupTimeoutMs: 60,
+    antigravityWarmupPollMs: 10,
+    interruptOptions: { startWaitMs: 100, terminalWaitMs: 100, intervalMs: 10 },
+    prepareTalkWorkspaceImpl: value => ensureLocalTalkWorkspace(value, { home }),
+    continueImpl: async (_client, params, { prepareTalkWorkspace } = {}) => {
+      if (prepareTalkWorkspace) {
+        await prepareTalkWorkspace(workspace, { restartIdleSession: async () => {} });
+      }
+      sent.push(params.message);
+      return { threadId: params.threadId, projectId: "proj-1", messageId: params.messageId ?? "m1", turnCommandId: params.turnCommandId ?? "c1" };
+    },
+  });
+  adapter.jackOrigin = ORIGIN;
+
+  // Default timeout is 15_000 (below Sphere 30s and TurnInterrupter 22s).
+  assert.equal(new LoopbackRuntimeAdapter({ client: {} }).antigravityWarmupTimeoutMs, 15_000);
+  // P3-2: timeout error maps to try_again refusal code.
+  assert.equal(refusalOf(new Error("Antigravity session warm-up timed out")).code, "try_again");
+
+  // P0-1: continue warm-up times out -> interrupts lock-free (MUST NOT deadlock!), never dispatches real turn!
+  await assert.rejects(
+    adapter.continue({ threadId: "t-deadlock", message: "Real prompt", ...antigravity, ...connectors([jack]) }),
+    /Antigravity session warm-up timed out/,
+  );
+  assert.equal(interrupted.length, 1);
+  assert.deepEqual(sent, [ANTIGRAVITY_WARMUP_PROMPT]);
+
+  // Subsequent continue AND interrupt on the same thread succeed immediately (lock was released!).
+  stuckWarmup = false;
+  await adapter.continue({ threadId: "t-deadlock", message: "Recovered prompt", ...antigravity, ...connectors([jack]) });
+  assert.equal(sent.at(-1), "Recovered prompt");
+  const stopRes = await adapter.interrupt({ requestId: "req-after", threadId: "t-deadlock", messageId: "m1", turnCommandId: "c1", reason: "user_stop" });
+  assert.equal(stopRes.status, "already_terminal");
+
+  // P1-5: user Stop during warm-up aborts warm-up immediately and NEVER dispatches real turn!
+  adapter.warmAntigravityThreads.delete("t-deadlock");
+  stuckWarmup = true;
+  adapter.antigravityWarmupTimeoutMs = 5_000;
+  const countBefore = sent.length;
+  const pendingContinue = adapter.continue({ threadId: "t-deadlock", message: "Should not send", ...antigravity, ...connectors([jack]) });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  const abortPromise = adapter.interrupt({ requestId: "req-stop-warm", threadId: "t-deadlock", messageId: "m-other", turnCommandId: "c-other", reason: "user_stop" });
+  await assert.rejects(pendingContinue, /Antigravity session warm-up cancelled/);
+  await abortPromise;
+  assert.equal(sent.slice(countBefore).includes("Should not send"), false);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test("B3 P1-1/P2-4/P2-5: T3 V2 providerThread liveness, fail-closed missing session, transient retry, and freshProviderContext handoff", async () => {
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "bot-connectors-v2-")));
+  fs.chmodSync(home, 0o700);
+  const workspace = path.join(home, ".jack-local-scratch", "seats", seatDigest(), "agents", scope.agentId);
+
+  // Verify T3 V2 threadDetailToV1 preserves live providerThreads status even when session.status === "stopped".
+  const v2Idle = threadDetailToV1({
+    projection: {
+      thread: { id: "t-v2", projectId: "p1", title: "T", modelSelection: { instanceId: "antigravity", model: antigravity.model }, worktreePath: workspace },
+      runs: [{ id: "run-1", ordinal: 1, status: "completed" }],
+      providerThreads: [{ providerInstanceId: "antigravity", status: "idle", pendingBackgroundTasks: [] }],
+    },
+  }, "t-v2").thread;
+  assert.equal(v2Idle.session.status, "stopped");
+  assert.equal(v2Idle.session.providerThreadStatus, "idle");
+
+  const v2Crashed = threadDetailToV1({
+    projection: {
+      thread: { id: "t-v2", projectId: "p1", title: "T", modelSelection: { instanceId: "antigravity", model: antigravity.model }, worktreePath: workspace },
+      runs: [{ id: "run-1", ordinal: 1, status: "completed" }],
+      providerThreads: [{ providerInstanceId: "antigravity", status: "not_loaded", pendingBackgroundTasks: [] }],
+    },
+  }, "t-v2").thread;
+  assert.equal(v2Crashed.session.providerThreadStatus, "not_loaded");
+
+  let currentThread = v2Idle;
+  let transientFailures = 2;
+  const dispatched = [];
+  const adapter = new LoopbackRuntimeAdapter({
+    client: {
+      getSettings: async () => ({}),
+      thread: async () => ({ thread: currentThread }),
+      turnResult: async ({ threadId, messageId, turnCommandId }) => {
+        if (transientFailures > 0) {
+          transientFailures -= 1;
+          throw new Error("transient network hiccup");
+        }
+        return { threadId, messageId, turnCommandId, turnId: "run-w", assistantMessageId: "a-w", instanceId: "antigravity", model: antigravity.model, effort: null, state: "succeeded", outputText: "READY" };
+      },
+      request: async () => ({ talkTurnResult: "v1", talkFreshProviderContext: "v1", talkFreshProviderContextProviders: ["antigravity"] }),
+    },
+    workspaceHome: home,
+    antigravityWarmupTimeoutMs: 2_000,
+    antigravityWarmupPollMs: 10,
+    prepareTalkWorkspaceImpl: value => ensureLocalTalkWorkspace(value, { home }),
+    originateImpl: async (_client, params) => {
+      dispatched.push({ op: "originate", message: params.message, freshProviderContext: params.freshProviderContext });
+      return { threadId: "t-v2", projectId: "p1", messageId: "m-w", turnCommandId: "c-w" };
+    },
+    continueImpl: async (_client, params, { prepareTalkWorkspace } = {}) => {
+      if (prepareTalkWorkspace) await prepareTalkWorkspace(workspace, { restartIdleSession: async () => {} });
+      dispatched.push({ op: "continue", message: params.message, freshProviderContext: params.freshProviderContext });
+      return { threadId: params.threadId, projectId: "p1", messageId: params.messageId ?? "m-c", turnCommandId: params.turnCommandId ?? "c-c" };
+    },
+  });
+  adapter.jackOrigin = ORIGIN;
+
+  // P2-4 & P2-5: transient turnResult errors retry cleanly; freshProviderContext goes ONLY to warm-up, NOT real turn!
+  await adapter.originate({ workspace, title: "V2 AG", message: "Real V2 Turn 1", freshProviderContext: true, ...antigravity, ...connectors([jack]) });
+  assert.equal(transientFailures, 0);
+  assert.equal(dispatched[0].message, ANTIGRAVITY_WARMUP_PROMPT);
+  assert.equal(dispatched[0].freshProviderContext, true);
+  assert.equal(dispatched[1].message, "Real V2 Turn 1");
+  assert.equal(dispatched[1].freshProviderContext, undefined);
+
+  // P1-1: V2 idle live providerThread -> WARM (NO re-warm)!
+  const rotated = { ...jack, headers: [{ name: "Authorization", value: "Bearer v2-rot-2" }] };
+  await adapter.continue({ threadId: "t-v2", message: "Real V2 Turn 2", ...antigravity, ...connectors([rotated]) });
+  assert.equal(dispatched.length, 3);
+  assert.equal(dispatched[2].message, "Real V2 Turn 2");
+
+  // P1-1: V2 background crash -> providerThreadStatus === "not_loaded" -> RE-WARMS!
+  currentThread = v2Crashed;
+  await adapter.continue({ threadId: "t-v2", message: "Real V2 Turn 3", ...antigravity, ...connectors([rotated]) });
+  assert.equal(dispatched.length, 5);
+  assert.equal(dispatched[3].message, ANTIGRAVITY_WARMUP_PROMPT);
+  assert.equal(dispatched[4].message, "Real V2 Turn 3");
+
+  // P1-1: missing thread.session fails CLOSED -> cold (RE-WARMS)!
+  assert.equal(adapter.isAntigravityCold("t-v2", { id: "t-v2", worktreePath: workspace }), true);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test("B3 P1-2: thread-events excludes synthetic Antigravity warm-up prompt, READY reply, warm-up tool activity, and warm-up turn_end", () => {
+  const threadId = "11111111-1111-4111-8111-111111111111";
+  const projected = projectThreadEvents({
+    id: threadId,
+    session: { status: "ready", activeTurnId: null },
+    messages: [
+      { id: "m-warm-u", role: "user", text: ANTIGRAVITY_WARMUP_PROMPT, turnId: "run-warm", createdAt: "2026-11-27T10:00:00.000Z" },
+      { id: "m-warm-a", role: "assistant", text: "READY", turnId: "run-warm", createdAt: "2026-11-27T10:00:01.000Z" },
+      { id: "m-real-u", role: "user", text: "Hello Jack", turnId: "run-real", createdAt: "2026-11-27T10:00:02.000Z" },
+      { id: "m-real-a", role: "assistant", text: "Hi there!", turnId: "run-real", createdAt: "2026-11-27T10:00:03.000Z" },
+    ],
+    activities: [
+      { id: "act-warm", kind: "tool.completed", summary: "Spurious tool", turnId: "run-warm", createdAt: "2026-11-27T10:00:00.500Z" },
+      { id: "act-real", kind: "tool.completed", summary: "Used tool: ping (jack)", turnId: "run-real", createdAt: "2026-11-27T10:00:02.500Z" },
+    ],
+    latestTurn: { turnId: "run-real", state: "completed", completedAt: "2026-11-27T10:00:03.500Z" },
+  });
+  assert.deepEqual(
+    projected.events.map((event) => [event.kind, event.eventId]),
+    [
+      ["message", "message:m-real-u"],
+      ["tool_summary", "tool:act-real"],
+      ["message", "message:m-real-a"],
+      ["turn_end", "turn:run-real"],
+    ],
+  );
+  assert.equal(JSON.stringify(projected).includes("READY"), false);
+  assert.equal(JSON.stringify(projected).includes(ANTIGRAVITY_WARMUP_PROMPT), false);
+});
+
+test("B3 P1-3: retained-selection continue with mcpServers: [] and lab-switch away from Antigravity both wipe .jack-antigravity-servers.json", async () => {
+  const { workspace, stops, adapter } = setup();
+  const turnFile = path.join(workspace, ANTIGRAVITY_TURN_FILE);
+  const configFile = path.join(workspace, ".agents", "plugins", "jack-tools", "mcp_config.json");
+  // Report retained Antigravity modelSelection on the thread.
+  const baseThread = adapter.client.thread;
+  adapter.client.thread = async (id) => {
+    const res = await baseThread(id);
+    return { thread: { ...res.thread, modelSelection: { instanceId: "antigravity", model: antigravity.model } } };
+  };
+
+  // Seed Antigravity with jack token.
+  await adapter.continue({ threadId: "t1", message: "first", ...antigravity, ...connectors([jack]) });
+  assert.equal(JSON.parse(fs.readFileSync(turnFile, "utf8")).servers.jack.headers.Authorization, "Bearer synthetic-turn-token");
+
+  // 1. Retained-selection continue (instanceId omitted!) with mcpServers: [] MUST clear both mcp_config.json and .jack-antigravity-servers.json.
+  const stopsBeforeClear = stops.length;
+  await adapter.continue({ threadId: "t1", message: "clear retained", ...connectors([]) });
+  assert.equal(stops.length, stopsBeforeClear + 1);
+  assert.deepEqual(JSON.parse(fs.readFileSync(configFile, "utf8")).mcpServers, {});
+  assert.deepEqual(JSON.parse(fs.readFileSync(turnFile, "utf8")), { servers: {} });
+
+  // 2. Re-seed Antigravity, then switch lab to Codex -> .jack-antigravity-servers.json MUST be wiped immediately!
+  await adapter.continue({ threadId: "t1", message: "reseed", ...antigravity, ...connectors([jack]) });
+  assert.equal(JSON.parse(fs.readFileSync(turnFile, "utf8")).servers.jack.headers.Authorization, "Bearer synthetic-turn-token");
+  await adapter.continue({ threadId: "t1", message: "switch to codex", ...codex, ...connectors([jack]) });
+  assert.deepEqual(JSON.parse(fs.readFileSync(turnFile, "utf8")), { servers: {} });
+  assert.equal(fs.readFileSync(turnFile, "utf8").includes("synthetic-turn-token"), false);
 });

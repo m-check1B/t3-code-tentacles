@@ -7,7 +7,7 @@ import { BOT_CONNECTOR_REFUSALS } from "./bot-connector-refusals.mjs";
 
 export const REFUSALS = Object.freeze({
   "bot_connectors.pair_again": "Pair this computer again from the Agent Jack you use, on its latest release (Settings > Local labs > pair this computer).",
-  "bot_connectors.lab_not_covered": "This Local lab can't use Agent Jack's tools yet; run this Bot on Local Claude Code, Local Codex or Server.",
+  "bot_connectors.lab_not_covered": "This Local lab can't use Agent Jack's tools yet; run this Bot on Local Claude Code, Local Codex, Local Antigravity or Server.",
   "bot_connectors.new_talk": "This Talk can't take tools on this computer; start a new Talk for this Bot.",
   "bot_connectors.bot_folder": "A folder or file in this Bot's workspace on this computer is a link or the wrong type; make it a plain folder or file, then send again.",
   "bot_connectors.codex_home": "Trust this Bot's folder in Codex first, or check config.toml in the Codex home T3 uses, then send again.",
@@ -61,6 +61,7 @@ export const BOT_CONNECTOR_CODES = Object.freeze({
   antigravityGitRepo: "bot_connectors.lab_not_covered",
   cursorFileNotOurs: "bot_connectors.bot_folder",
   antigravityFileNotOurs: "bot_connectors.bot_folder",
+  antigravityTurnFileLink: "bot_connectors.bot_folder",
 });
 
 const BY_TEXT = new Map([
@@ -76,6 +77,8 @@ const BY_TEXT = new Map([
   ["Remote turn refused: workspace is outside the Bot workspace root", "talk.workspace_outside_bot_root"],
   ["Thread workspace could not be resolved; continue refused before T3", "bot_connectors.new_talk"],
   ["Bridge state is busy; retry originate after the active watcher operation completes", "try_again"],
+  ["Antigravity session warm-up timed out", "try_again"],
+  ["Antigravity session warm-up cancelled", "try_again"],
 ]);
 
 // Texts that carry a value: matched by shape, and the value is never logged.
