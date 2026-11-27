@@ -689,10 +689,12 @@ async function waitForMessage(client, threadId, messageId) {
 }
 
 const OPAQUE_PROJECT_TITLE = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+const UNSAFE_PROJECT_TITLE_CHARS = /[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]+/g;
 
 function sanitizeProjectTitle(value) {
   if (typeof value !== "string") return "";
-  return value.replace(/[\x00-\x1f\x7f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+  const cleaned = value.replace(UNSAFE_PROJECT_TITLE_CHARS, " ").replace(/\s+/g, " ").trim();
+  return [...cleaned].slice(0, 120).join("").trim();
 }
 
 /** True when a T3 project title is a raw UUID or 32-char hex scratch-folder id. */
@@ -712,8 +714,11 @@ export function resolveProjectTitle(workspace, threadTitle) {
 
 async function upgradeOpaqueProjectTitle(client, project, desiredTitle) {
   const nextTitle = sanitizeProjectTitle(desiredTitle);
-  if (!project?.id || !nextTitle || nextTitle === project.title) return project;
+  if (!project?.id || project.deletedAt != null || !nextTitle || nextTitle === project.title) return project;
   if (!isOpaqueProjectTitle(project.title) || isOpaqueProjectTitle(nextTitle)) return project;
+  if (typeof project.workspaceRoot === "string" && !isOpaqueProjectTitle(path.basename(project.workspaceRoot))) {
+    return project;
+  }
   try {
     await client.dispatch({
       type: "project.meta.update",
