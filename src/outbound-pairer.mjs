@@ -26,6 +26,7 @@ import {
 } from "./pair-state.mjs";
 import { boundDoctorInventories, withoutDoctorInventories } from "./inventory-budget.mjs";
 import { ANTIGRAVITY_WARMUP_PROMPT } from "./antigravity.mjs";
+import { createAntigravityMcpProxy } from "./antigravity-mcp-proxy.mjs";
 import { createThreadLock, TurnInterrupter } from "./turn-interrupt.mjs";
 import { boundForPublish, MAX_PUBLISH_BYTES } from "./capabilities.mjs";
 
@@ -318,6 +319,7 @@ export class LoopbackRuntimeAdapter {
     capabilityCache = null,
     frameBytes = DEFAULT_MAX_FRAME_BYTES,
     codexFiles = codexOuterFiles(),
+    antigravityProxy = createAntigravityMcpProxy(),
     antigravityWarmupTimeoutMs = 15_000,
     antigravityWarmupPollMs = 150,
   }) {
@@ -341,6 +343,7 @@ export class LoopbackRuntimeAdapter {
     this.capabilityCache = capabilityCache;
     this.frameBytes = frameBytes;
     this.codexFiles = codexFiles;
+    this.antigravityProxy = antigravityProxy;
     this.antigravityWarmupTimeoutMs = antigravityWarmupTimeoutMs;
     this.antigravityWarmupPollMs = antigravityWarmupPollMs;
     // Tracks threadIds whose live antigravity acp session has already completed Turn 1
@@ -357,6 +360,10 @@ export class LoopbackRuntimeAdapter {
       assertThreadInScope: (threadId) => this.requireThreadInScope(threadId),
       ...interruptOptions,
     });
+  }
+
+  async close() {
+    await this.antigravityProxy?.close?.();
   }
 
   isWorkspaceAllowed(workspace) {
@@ -652,8 +659,9 @@ export class LoopbackRuntimeAdapter {
     const cursor = instanceId === "cursor" && botConnectorProviders().includes("cursor");
     const antigravity = instanceId === "antigravity" && botConnectorProviders().includes("antigravity");
     if (servers !== undefined && prepared === true) checkBotConnectorPaths(workspace, { opencode, cursor, antigravity });
-    if (restartIdleSession && connectorsNeedRestart(workspace, servers, { instanceId })) await restartIdleSession();
-    const written = writeBotConnectors(workspace, prepared, servers, { codexTrust, opencode, cursor, antigravity });
+    if (antigravity && servers?.length > 0) await this.antigravityProxy.ensureStarted();
+    if (restartIdleSession && connectorsNeedRestart(workspace, servers, { instanceId, antigravityProxy: this.antigravityProxy })) await restartIdleSession();
+    const written = writeBotConnectors(workspace, prepared, servers, { codexTrust, opencode, cursor, antigravity, antigravityProxy: this.antigravityProxy });
     // The marker records the table Tentacles itself added, so only that one is ever removed.
     // It also names the Grok home written to, so a later GROK_HOME change cannot strand the table.
     if (instanceId === "grok" && codexTrust && servers?.length) writePrivate(marker, `${codexTrust.decidedAt}\n${path.dirname(codexTrust.file)}\n`);

@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
-import { ANTIGRAVITY_BRIDGE_PATH, ANTIGRAVITY_TURN_FILE, BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PROVIDERS, GROK_TRUST_MARKER, PUBLIC_MCP_URL, codexHomeAllowed, checkCodexLaunchArgs, codexHomeFor, connectorsNeedRestart, readT3ServiceEnv, codexOuterFiles, codexHomeFromSettings, codexServerNames, commitCodexTrust, grokHomeFor, planGrokTrust, planGrokUntrust, trustCodexWorkspace } from "../src/bot-connectors.mjs";
+import { BOT_CONNECTOR_CAPABILITIES, BOT_CONNECTOR_PROVIDERS, GROK_TRUST_MARKER, PUBLIC_MCP_URL, codexHomeAllowed, checkCodexLaunchArgs, codexHomeFor, connectorsNeedRestart, readT3ServiceEnv, codexOuterFiles, codexHomeFromSettings, codexServerNames, commitCodexTrust, grokHomeFor, planGrokTrust, planGrokUntrust, trustCodexWorkspace, writeBotConnectors } from "../src/bot-connectors.mjs";
 import { continueThread, doctor, formatDoctor, readSmallRegularFile } from "../src/bridge.mjs";
 import { freshCapability } from "./helpers/fresh-context-wire.mjs";
 import { ensureLocalTalkWorkspace } from "../src/local-talk-workspace.mjs";
@@ -1635,83 +1635,99 @@ test("KRA-10869: Jack's tools reach Local Cursor through the folder's .cursor/mc
   assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")).mcpServers, {});
 });
 
-test("Antigravity is promoted by default and uses the secret-free stdio bridge with dynamic turn-token rotation", async (t) => {
+test("Antigravity is promoted by default and uses the in-process loopback HTTP proxy with RAM-only token rotation", async (t) => {
   const before = process.env.TENTACLES_JACK_TOOLS_TRY;
   delete process.env.TENTACLES_JACK_TOOLS_TRY;
   t.after(() => { if (before === undefined) delete process.env.TENTACLES_JACK_TOOLS_TRY; else process.env.TENTACLES_JACK_TOOLS_TRY = before; });
   assert.equal(BOT_CONNECTOR_PROVIDERS.includes("antigravity"), true);
   const { home, workspace, sent, stops, adapter } = setup();
+  t.after(() => adapter.close());
   const plugin = path.join(workspace, ".agents", "plugins", "jack-tools");
-  const turnFile = path.join(workspace, ANTIGRAVITY_TURN_FILE);
-  // Another lab's turn never creates the plugin or turn-servers file.
+  const legacyTurnFile = path.join(workspace, ".jack-antigravity-servers.json");
+  // Another lab's turn never creates the plugin or starts the Antigravity proxy.
   await adapter.originate({ workspace, message: "hi", ...claude, ...connectors([learn]) });
   assert.equal(fs.existsSync(path.join(workspace, ".agents")), false);
-  assert.equal(fs.existsSync(turnFile), false);
+  assert.equal(adapter.antigravityProxy.port, null);
+
+  // Plant a legacy `.jack-antigravity-servers.json` regular file to verify clean upgrade removal.
+  fs.writeFileSync(legacyTurnFile, '{"servers":{"jack":{"url":"https://old.example/mcp"}}}\n');
 
   // Admitted by default without TENTACLES_JACK_TOOLS_TRY.
   await adapter.continue({ threadId: "t1", message: "weather?", ...antigravity, ...connectors([jack, linear, learn]) });
   for (const directory of [".agents", ".agents/plugins", ".agents/plugins/jack-tools"]) assert.equal(fs.lstatSync(path.join(workspace, directory)).isDirectory(), true);
   assert.deepEqual(fs.readdirSync(plugin).sort(), ["mcp_config.json", "plugin.json"]);
   assert.equal(fs.statSync(path.join(plugin, "mcp_config.json")).mode & 0o777, 0o600);
-  assert.equal(fs.statSync(turnFile).mode & 0o777, 0o600);
+  // Zero Jack per-turn bearer tokens touch disk; legacy turn file removed.
+  assert.equal(fs.existsSync(legacyTurnFile), false);
   assert.equal(JSON.parse(fs.readFileSync(path.join(plugin, "plugin.json"), "utf8")).name, "jack-tools");
   const configText = fs.readFileSync(path.join(plugin, "mcp_config.json"), "utf8");
-  // Zero secrets in mcp_config.json.
   assert.equal(configText.includes("synthetic-turn-token"), false);
   assert.equal(configText.includes(ORIGIN), false);
-  assert.deepEqual(JSON.parse(configText).mcpServers, {
-    jack: { command: process.execPath, args: [ANTIGRAVITY_BRIDGE_PATH, turnFile, "jack"], env: { ELECTRON_RUN_AS_NODE: "1" } },
-    linear: { command: process.execPath, args: [ANTIGRAVITY_BRIDGE_PATH, turnFile, "linear"], env: { ELECTRON_RUN_AS_NODE: "1" } },
-    "microsoft-learn": { command: process.execPath, args: [ANTIGRAVITY_BRIDGE_PATH, turnFile, "microsoft-learn"], env: { ELECTRON_RUN_AS_NODE: "1" } },
-  });
-  assert.deepEqual(JSON.parse(fs.readFileSync(turnFile, "utf8")), {
-    servers: {
-      jack: { url: `${ORIGIN}/mcp`, headers: { Authorization: "Bearer synthetic-turn-token" } },
-      linear: { url: `${ORIGIN}/mcp/connectors/linear`, headers: { Authorization: "Bearer synthetic-turn-token" } },
-      "microsoft-learn": { url: PUBLIC_MCP_URL },
-    },
-  });
+  assert.ok(Number.isInteger(adapter.antigravityProxy.port) && adapter.antigravityProxy.port > 0);
+  const parsedServers = JSON.parse(configText).mcpServers;
+  assert.deepEqual(Object.keys(parsedServers).sort(), ["jack", "linear", "microsoft-learn"]);
+  for (const name of ["jack", "linear", "microsoft-learn"]) {
+    assert.deepEqual(parsedServers[name], adapter.antigravityProxy.entryFor(workspace, name));
+    assert.match(parsedServers[name].serverUrl, new RegExp(`^http://127\\.0\\.0\\.1:${adapter.antigravityProxy.port}/mcp/[A-Za-z0-9_-]{16,128}$`));
+    assert.match(parsedServers[name].headers.Authorization, /^Bearer [A-Za-z0-9_-]{32,}$/);
+  }
   // First turn with servers stopped any prior session because mcp_config.json went from [] -> 3 servers.
   assert.deepEqual(stops, ["t1"]);
   // T3's shared Antigravity profile is never touched.
   assert.equal(fs.existsSync(path.join(home, ".gemini")), false);
 
-  // Token-only rotation on the same server names MUST NOT restart antigravity acp.
+  // Token-only rotation on the same server names MUST NOT restart antigravity acp and keeps mcp_config.json byte-identical.
   const rotatedBearer = [{ name: "Authorization", value: "Bearer synthetic-turn-token-2" }];
   const rotatedJack = { ...jack, headers: rotatedBearer };
   const rotatedLinear = { ...linear, headers: rotatedBearer };
-  assert.equal(connectorsNeedRestart(workspace, [learn, rotatedLinear, rotatedJack], { instanceId: "antigravity" }), false);
+  assert.equal(connectorsNeedRestart(workspace, [learn, rotatedLinear, rotatedJack], { instanceId: "antigravity", antigravityProxy: adapter.antigravityProxy }), false);
+  // Without a matching proxy (e.g. after Tentacles restart), connectorsNeedRestart returns true!
+  assert.equal(connectorsNeedRestart(workspace, [learn, rotatedLinear, rotatedJack], { instanceId: "antigravity" }), true);
   // Backwards compatibility: omitting options still returns true for non-empty lists (Claude/Codex behavior).
   assert.equal(connectorsNeedRestart(workspace, [rotatedJack]), true);
   await adapter.continue({ threadId: "t1", message: "follow-up", ...antigravity, ...connectors([rotatedJack, rotatedLinear, learn]) });
   assert.deepEqual(stops, ["t1"]); // No restart!
-  assert.equal(JSON.parse(fs.readFileSync(turnFile, "utf8")).servers.jack.headers.Authorization, "Bearer synthetic-turn-token-2");
   assert.equal(fs.readFileSync(path.join(plugin, "mcp_config.json"), "utf8"), configText);
+  assert.equal(fs.readFileSync(path.join(plugin, "mcp_config.json"), "utf8").includes("synthetic-turn-token-2"), false);
 
-  // Changing the server name list DOES restart antigravity acp.
-  assert.equal(connectorsNeedRestart(workspace, [rotatedJack], { instanceId: "antigravity" }), true);
+  // Changing the server name list DOES restart antigravity acp and revokes dropped routes in RAM.
+  const droppedLinearEntry = parsedServers.linear;
+  assert.equal(connectorsNeedRestart(workspace, [rotatedJack], { instanceId: "antigravity", antigravityProxy: adapter.antigravityProxy }), true);
   await adapter.continue({ threadId: "t1", message: "only-jack", ...antigravity, ...connectors([rotatedJack]) });
   assert.deepEqual(stops, ["t1", "t1"]);
   assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(plugin, "mcp_config.json"), "utf8")).mcpServers), ["jack"]);
+  assert.equal(adapter.antigravityProxy.entryFor(workspace, "linear"), null);
+  const droppedRes = await fetch(droppedLinearEntry.serverUrl, {
+    method: "POST",
+    headers: { Authorization: droppedLinearEntry.headers.Authorization, "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "server/discover" }),
+  });
+  assert.equal(droppedRes.status, 401);
 
-  // Another lab's turn leaves Antigravity's files as they are; an Antigravity clear empties both.
+  // Fail closed: writeBotConnectors with antigravity + non-empty servers refuses without a started proxy.
+  assert.throws(
+    () => writeBotConnectors(workspace, true, [rotatedJack], { antigravity: true }),
+    /Antigravity MCP proxy is required and must be started/,
+  );
+
+  // Another lab's turn leaves Antigravity's files as they are (while revoking RAM routes); an Antigravity clear empties mcp_config.json.
   const written = fs.readFileSync(path.join(plugin, "mcp_config.json"), "utf8");
   await adapter.continue({ threadId: "t1", message: "again", ...claude, ...connectors([]) });
   assert.equal(fs.readFileSync(path.join(plugin, "mcp_config.json"), "utf8"), written);
+  assert.equal(adapter.antigravityProxy.entryFor(workspace, "jack"), null);
   assert.deepEqual(stops, ["t1", "t1", "t1"]);
   await adapter.continue({ threadId: "t1", message: "again", ...antigravity, ...connectors([]) });
   assert.deepEqual(stops, ["t1", "t1", "t1", "t1"]);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(plugin, "mcp_config.json"), "utf8")).mcpServers, {});
-  assert.deepEqual(JSON.parse(fs.readFileSync(turnFile, "utf8")), { servers: {} });
-  assert.equal(fs.readFileSync(turnFile, "utf8").includes("synthetic-turn-token"), false);
   assert.equal(JSON.stringify(sent).includes("synthetic-turn-token"), false);
 });
 
-test("B3 P3-1/P3-2 on #113: Antigravity refuses inside a git repository, never adopts an owner's jack-tools folder, and refuses symlink/directory turn file", async () => {
+test("B3 P3-1/P3-2 on #113: Antigravity refuses inside a git repository, never adopts an owner's jack-tools folder, and never unlinks a symlink legacy turn file", async (t) => {
   const { home, workspace, stops, adapter } = setup();
+  t.after(() => adapter.close());
   await adapter.originate({ workspace, message: "plain", ...antigravity });
   const dir = path.join(workspace, ".agents", "plugins", "jack-tools");
-  const turnFile = path.join(workspace, ANTIGRAVITY_TURN_FILE);
+  const legacyTurnFile = path.join(workspace, ".jack-antigravity-servers.json");
   const notOurs = /^Error: This Bot workspace has a \.agents\/plugins\/jack-tools plugin that Tentacles did not write; remove that folder, then send again$/;
   const inGit = /^Error: This Bot workspace is inside a git repository, where Antigravity reads the repository's own \.agents plugins; run this Bot on Server to use Jack tools$/;
   // P3-2: a hooks.json-only folder, and our two files plus one extra entry, refuse whatever the marker says.
@@ -1730,18 +1746,14 @@ test("B3 P3-1/P3-2 on #113: Antigravity refuses inside a git repository, never a
   assert.equal(fs.readFileSync(path.join(dir, "mcp_config.json"), "utf8"), config);
   assert.equal(stops.length, stopped);
   fs.rmSync(path.join(dir, "rules"), { recursive: true });
-  // Custody of ANTIGRAVITY_TURN_FILE: symlink or directory refuses before any stop.
+  // A planted symlink at legacy .jack-antigravity-servers.json is never followed or unlinked.
   const target = path.join(home, "outside-servers.json");
-  fs.writeFileSync(target, '{"servers":{}}\n');
-  fs.rmSync(turnFile);
-  fs.symlinkSync(target, turnFile);
-  await assert.rejects(adapter.continue({ threadId: "t1", message: "again", ...antigravity, ...connectors([jack]) }), /turn servers file must not be a symlink/);
-  assert.equal(stops.length, stopped);
-  fs.rmSync(turnFile);
-  fs.mkdirSync(turnFile);
-  await assert.rejects(adapter.continue({ threadId: "t1", message: "again", ...antigravity, ...connectors([jack]) }), /must not be a directory/);
-  assert.equal(stops.length, stopped);
-  fs.rmSync(turnFile, { recursive: true });
+  fs.writeFileSync(target, '{"servers":{"keep":true}}\n');
+  fs.symlinkSync(target, legacyTurnFile);
+  await adapter.continue({ threadId: "t1", message: "again", ...antigravity, ...connectors([learn]) });
+  assert.equal(fs.readFileSync(target, "utf8"), '{"servers":{"keep":true}}\n');
+  assert.equal(fs.lstatSync(legacyTurnFile).isSymbolicLink(), true);
+  fs.rmSync(legacyTurnFile);
   // P3-1: a .git in a parent or in the Bot workspace itself refuses before the stop, and nothing is written.
   for (const repo of [home, workspace]) {
     fs.mkdirSync(path.join(repo, ".git"));
@@ -2176,9 +2188,9 @@ test("B3 P1-2: thread-events excludes synthetic Antigravity warm-up prompt, READ
   assert.equal(JSON.stringify(projected).includes(ANTIGRAVITY_WARMUP_PROMPT), false);
 });
 
-test("B3 P1-3: retained-selection continue with mcpServers: [] and lab-switch away from Antigravity both wipe .jack-antigravity-servers.json", async () => {
+test("B3 P1-3: retained-selection continue with mcpServers: [] and lab-switch away from Antigravity both immediately revoke in-RAM proxy routes", async (t) => {
   const { workspace, stops, adapter } = setup();
-  const turnFile = path.join(workspace, ANTIGRAVITY_TURN_FILE);
+  t.after(() => adapter.close());
   const configFile = path.join(workspace, ".agents", "plugins", "jack-tools", "mcp_config.json");
   // Report retained Antigravity modelSelection on the thread.
   const baseThread = adapter.client.thread;
@@ -2189,19 +2201,88 @@ test("B3 P1-3: retained-selection continue with mcpServers: [] and lab-switch aw
 
   // Seed Antigravity with jack token.
   await adapter.continue({ threadId: "t1", message: "first", ...antigravity, ...connectors([jack]) });
-  assert.equal(JSON.parse(fs.readFileSync(turnFile, "utf8")).servers.jack.headers.Authorization, "Bearer synthetic-turn-token");
+  const seededEntry = adapter.antigravityProxy.entryFor(workspace, "jack");
+  assert.ok(seededEntry);
+  assert.deepEqual(JSON.parse(fs.readFileSync(configFile, "utf8")).mcpServers.jack, seededEntry);
 
-  // 1. Retained-selection continue (instanceId omitted!) with mcpServers: [] MUST clear both mcp_config.json and .jack-antigravity-servers.json.
+  // 1. Retained-selection continue (instanceId omitted!) with mcpServers: [] MUST clear mcp_config.json and revoke RAM route.
   const stopsBeforeClear = stops.length;
   await adapter.continue({ threadId: "t1", message: "clear retained", ...connectors([]) });
   assert.equal(stops.length, stopsBeforeClear + 1);
   assert.deepEqual(JSON.parse(fs.readFileSync(configFile, "utf8")).mcpServers, {});
-  assert.deepEqual(JSON.parse(fs.readFileSync(turnFile, "utf8")), { servers: {} });
+  assert.equal(adapter.antigravityProxy.entryFor(workspace, "jack"), null);
+  const revokedAfterClear = await fetch(seededEntry.serverUrl, {
+    method: "POST",
+    headers: { Authorization: seededEntry.headers.Authorization, "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "server/discover" }),
+  });
+  assert.equal(revokedAfterClear.status, 401);
 
-  // 2. Re-seed Antigravity, then switch lab to Codex -> .jack-antigravity-servers.json MUST be wiped immediately!
+  // 2. Re-seed Antigravity, then switch lab to Codex -> RAM route MUST be revoked immediately!
   await adapter.continue({ threadId: "t1", message: "reseed", ...antigravity, ...connectors([jack]) });
-  assert.equal(JSON.parse(fs.readFileSync(turnFile, "utf8")).servers.jack.headers.Authorization, "Bearer synthetic-turn-token");
+  const reseededEntry = adapter.antigravityProxy.entryFor(workspace, "jack");
+  assert.ok(reseededEntry);
   await adapter.continue({ threadId: "t1", message: "switch to codex", ...codex, ...connectors([jack]) });
-  assert.deepEqual(JSON.parse(fs.readFileSync(turnFile, "utf8")), { servers: {} });
-  assert.equal(fs.readFileSync(turnFile, "utf8").includes("synthetic-turn-token"), false);
+  assert.equal(adapter.antigravityProxy.entryFor(workspace, "jack"), null);
+  const revokedAfterSwitch = await fetch(reseededEntry.serverUrl, {
+    method: "POST",
+    headers: { Authorization: reseededEntry.headers.Authorization, "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "server/discover" }),
+  });
+  assert.equal(revokedAfterSwitch.status, 401);
+});
+
+test("B3 P3-1/P3-4: writeBotConnectors fail-closed proxy guard leaves zero partial disk writes, and refusing turns leave proxy state untouched", async (t) => {
+  // 1. P3-1: direct writeBotConnectors call without a started proxy throws BEFORE writing .mcp.json, .codex, .agents, or Codex trust.
+  const freshHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "bot-connectors-p31-")));
+  t.after(() => fs.rmSync(freshHome, { recursive: true, force: true }));
+  fs.chmodSync(freshHome, 0o700);
+  const freshWorkspace = path.join(freshHome, ".jack-local-scratch", "seats", seatDigest(), "agents", scope.agentId);
+  await ensureLocalTalkWorkspace(freshWorkspace, { home: freshHome });
+  const codexHome = path.join(freshHome, ".codex");
+  assert.throws(
+    () => writeBotConnectors(freshWorkspace, true, [jack], { antigravity: true, codexHome }),
+    /Antigravity MCP proxy is required and must be started/,
+  );
+  assert.equal(fs.existsSync(path.join(freshWorkspace, ".mcp.json")), false);
+  assert.equal(fs.existsSync(path.join(freshWorkspace, ".codex")), false);
+  assert.equal(fs.existsSync(path.join(freshWorkspace, ".agents")), false);
+  assert.equal(fs.existsSync(path.join(codexHome, "config.toml")), false);
+
+  // 2. Refusing turn via checkBotConnectorPaths does NOT start an unstarted proxy.
+  const unstarted = setup();
+  t.after(() => unstarted.adapter.close());
+  await unstarted.adapter.originate({ workspace: unstarted.workspace, message: "plain", ...antigravity });
+  fs.mkdirSync(path.join(unstarted.workspace, ".git"));
+  await assert.rejects(
+    unstarted.adapter.continue({ threadId: "t1", message: "blocked", ...antigravity, ...connectors([jack]) }),
+    /inside a git repository/,
+  );
+  assert.equal(unstarted.adapter.antigravityProxy.port, null);
+
+  // 3. Refusing turn (checkBotConnectorPaths AND busy restartIdleSession) leaves live RAM proxy routes untouched!
+  let busy = false;
+  const live = setup({ running: () => busy });
+  t.after(() => live.adapter.close());
+  await live.adapter.continue({ threadId: "t1", message: "seed", ...antigravity, ...connectors([jack]) });
+  const originalEntry = live.adapter.antigravityProxy.entryFor(live.workspace, "jack");
+  assert.ok(originalEntry);
+
+  // Refused by checkBotConnectorPaths (.git planted): live route stays intact.
+  fs.mkdirSync(path.join(live.workspace, ".git"));
+  await assert.rejects(
+    live.adapter.continue({ threadId: "t1", message: "blocked-git", ...antigravity, ...connectors([]) }),
+    /inside a git repository/,
+  );
+  assert.deepEqual(live.adapter.antigravityProxy.entryFor(live.workspace, "jack"), originalEntry);
+  fs.rmSync(path.join(live.workspace, ".git"), { recursive: true });
+
+  // Refused by busy restartIdleSession (changing server list while turn is running): live route stays intact.
+  busy = true;
+  await assert.rejects(
+    live.adapter.continue({ threadId: "t1", message: "blocked-busy", ...antigravity, ...connectors([jack, linear]) }),
+    /still answering/,
+  );
+  assert.deepEqual(live.adapter.antigravityProxy.entryFor(live.workspace, "jack"), originalEntry);
+  assert.equal(live.adapter.antigravityProxy.entryFor(live.workspace, "linear"), null);
 });

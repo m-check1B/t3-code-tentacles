@@ -1,12 +1,20 @@
-## 0.5.0-jack.25 — 2026-11-27
-
-- KRA-10869: Local · Antigravity Jack MCP tools promoted to default (`BOT_CONNECTOR_PROVIDERS` now includes `antigravity`). Added bundled zero-dependency stdio-to-Streamable-HTTP bridge (`src/antigravity-mcp-bridge.mjs`) reading rotating `0600` per-turn credentials from `.jack-antigravity-servers.json` (zero secrets in `mcp_config.json`, zero session restarts on token rotation) plus 1-time cold-session warm-up with `thread-events` filtering and T3 V2 live provider-thread detection.
-
 # Changelog
 
 All notable changes to this project are documented here.
 
 ## [Unreleased]
+
+## [0.5.0-jack.26] - 2026-11-27
+
+### Changed
+
+- KRA-10869: Replaced the Antigravity stdio MCP bridge (`src/antigravity-mcp-bridge.mjs` + `.jack-antigravity-servers.json`) with a hardened in-process loopback Streamable-HTTP proxy (`src/antigravity-mcp-proxy.mjs`, bound strictly to `127.0.0.1:0` with `Host` DNS-rebinding defense, `Origin` CSRF rejection, constant-time per-route Bearer auth, bounded timeouts/sizes/concurrency, single-flight upstream session rotation, and immediate in-flight revocation on `clearWorkspace`/`close`). Works inside packaged macOS Electron Desktop (`runAsNode: false`, `onlyLoadAppFromAsar: true`) with zero external Node dependency and zero Jack per-turn tokens written to disk.
+
+## [0.5.0-jack.25] - 2026-11-27
+
+### Added
+
+- KRA-10869: Local · Antigravity Jack MCP tools promoted to default (`BOT_CONNECTOR_PROVIDERS` now includes `antigravity`), with 1-time cold-session warm-up, `thread-events` filtering, and T3 V2 live provider-thread detection.
 
 ## [0.5.0-jack.24] - 2026-11-27
 

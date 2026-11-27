@@ -15,7 +15,6 @@ import { closeSync, constants, existsSync, fchmodSync, fstatSync, lstatSync, mkd
 import os from "node:os";
 import path from "node:path";
 import { createHash, randomBytes } from "node:crypto";
-import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
 import { BOT_CONNECTOR_REFUSALS as R } from "./bot-connector-refusals.mjs";
 import { GUARD_FILE } from "./talk-instruction-guard.mjs";
@@ -67,10 +66,8 @@ export const ANTIGRAVITY_FILE = path.join(".agents", "plugins", "jack-tools", "m
 // sha256 of the plugin.json and mcp_config.json Tentacles last wrote. Those two files
 // without a matching marker refuse, and so does any other entry in jack-tools.
 export const ANTIGRAVITY_MARKER = ".jack-antigravity-mcp";
-// Per-turn remote URL + bearer header map read dynamically by the stdio MCP bridge so
-// mcp_config.json stays secret-free and rotating tokens never restart antigravity acp.
-export const ANTIGRAVITY_TURN_FILE = ".jack-antigravity-servers.json";
-export const ANTIGRAVITY_BRIDGE_PATH = fileURLToPath(new URL("./antigravity-mcp-bridge.mjs", import.meta.url));
+// Legacy stdio-bridge turn-servers file from pre-proxy builds; best-effort removed on upgrade.
+const LEGACY_ANTIGRAVITY_TURN_FILE = ".jack-antigravity-servers.json";
 // sha256 of the opencode.json Tentacles last wrote; any other file there refuses (B3 P3-1 on #109).
 export const OPENCODE_MARKER = ".jack-opencode-mcp";
 
@@ -166,42 +163,36 @@ export function requireBotWorkspace(workspace, scope) {
   return typeof workspace === "string" && workspace.endsWith(`${path.sep}${botWorkspaceSuffix(scope)}`);
 }
 
-function antigravityStdioEntry(workspace, serverName) {
-  return {
-    command: process.execPath,
-    args: [ANTIGRAVITY_BRIDGE_PATH, path.join(workspace, ANTIGRAVITY_TURN_FILE), serverName],
-    env: { ELECTRON_RUN_AS_NODE: "1" },
-  };
-}
-
-function antigravityConfigMatches(workspace, servers) {
+function antigravityConfigMatches(workspace, servers, { antigravityProxy } = {}) {
   const existing = readJson(path.join(workspace, ANTIGRAVITY_FILE)).mcpServers;
   const map = existing && typeof existing === "object" && !Array.isArray(existing) ? existing : {};
   const existingNames = Object.keys(map).sort();
   const incomingNames = servers.map(server => server.name).sort();
   if (existingNames.length !== incomingNames.length) return false;
+  if (incomingNames.length === 0) return true;
+  if (!antigravityProxy || typeof antigravityProxy.entryFor !== "function") return false;
   for (let i = 0; i < incomingNames.length; i += 1) {
     const name = incomingNames[i];
     if (existingNames[i] !== name) return false;
     const current = map[name];
-    const expected = antigravityStdioEntry(workspace, name);
-    if (!current || typeof current !== "object" || Array.isArray(current)) return false;
-    if (current.command !== expected.command) return false;
-    if (!Array.isArray(current.args) || current.args.length !== expected.args.length
-        || current.args.some((value, index) => value !== expected.args[index])) return false;
-    if (!current.env || current.env.ELECTRON_RUN_AS_NODE !== "1") return false;
+    const expected = antigravityProxy.entryFor(workspace, name);
+    if (!expected) return false;
+    if (!exactKeys(current, ["serverUrl", "headers"])) return false;
+    if (current.serverUrl !== expected.serverUrl) return false;
+    if (!exactKeys(current.headers, ["Authorization"])) return false;
+    if (current.headers.Authorization !== expected.headers.Authorization) return false;
   }
   return true;
 }
 
 /** True when a live lab session would hold a stale list or token after this list is written. */
-export function connectorsNeedRestart(workspace, servers, { instanceId } = {}) {
+export function connectorsNeedRestart(workspace, servers, { instanceId, antigravityProxy } = {}) {
   if (servers === undefined) return false;
-  // Antigravity's stdio bridge reads per-turn tokens dynamically from ANTIGRAVITY_TURN_FILE,
-  // so token-only rotations keep the warm antigravity acp session alive. Only server-name
-  // changes (add/remove/clear) or migrating from a non-bridge entry require a restart.
+  // Antigravity connects to Tentacles' in-process loopback HTTP proxy, which rotates
+  // upstream Jack bearer tokens strictly in RAM. Only server-name changes, proxy restarts,
+  // or migrating from a non-proxy entry require restarting antigravity acp.
   if (instanceId === "antigravity") {
-    return !antigravityConfigMatches(workspace, servers);
+    return !antigravityConfigMatches(workspace, servers, { antigravityProxy });
   }
   // Tokens change every turn, so a non-empty list always needs a fresh session;
   // an empty list after an empty list changes nothing.
@@ -255,13 +246,9 @@ export function checkBotConnectorPaths(workspace, { opencode = false, cursor = f
     const info = kind(path.join(workspace, directory));
     if (info && (!info.isDirectory() || info.isSymbolicLink())) throw new Error(R.realDirectory);
   }
-  for (const file of [MCP_FILE, CODEX_FILE, GUARD_FILE, GROK_TRUST_MARKER, ANTIGRAVITY_TURN_FILE, ...(opencode ? [OPENCODE_FILE, OPENCODE_MARKER] : []), ...(cursor ? [CURSOR_FILE, CURSOR_MARKER] : []), ...(antigravity ? [ANTIGRAVITY_PLUGIN, ANTIGRAVITY_FILE, ANTIGRAVITY_MARKER] : [])]) {
+  for (const file of [MCP_FILE, CODEX_FILE, GUARD_FILE, GROK_TRUST_MARKER, ...(opencode ? [OPENCODE_FILE, OPENCODE_MARKER] : []), ...(cursor ? [CURSOR_FILE, CURSOR_MARKER] : []), ...(antigravity ? [ANTIGRAVITY_PLUGIN, ANTIGRAVITY_FILE, ANTIGRAVITY_MARKER] : [])]) {
     if (kind(path.join(workspace, file))?.isDirectory()) throw new Error(R.fileIsDirectory);
   }
-  // Always guard `.jack-antigravity-servers.json` custody (even when switching away from Antigravity to wipe it).
-  const turnInfo = kind(path.join(workspace, ANTIGRAVITY_TURN_FILE));
-  if (turnInfo?.isSymbolicLink()) throw new Error(R.antigravityTurnFileLink);
-  if (turnInfo && !turnInfo.isFile()) throw new Error(R.fileIsDirectory);
   // Unproven OpenCode road: only an admitted OpenCode turn looks at opencode.json.
   if (opencode) {
     const found = kind(path.join(workspace, OPENCODE_FILE));
@@ -765,11 +752,17 @@ function listedServers(workspace) {
  * `codexTrust` is a planCodexTrust plan made before the restart; it wins over `codexHome`.
  * The caller restarts a live session first (connectorsNeedRestart), then writes.
  */
-export function writeBotConnectors(workspace, prepared, servers, { codexHome, codexTrust, opencode = false, cursor = false, antigravity = false } = {}) {
+export function writeBotConnectors(workspace, prepared, servers, { codexHome, codexTrust, opencode = false, cursor = false, antigravity = false, antigravityProxy = null } = {}) {
   if (servers === undefined) return false;
   if (prepared !== true) {
     if (servers.length) throw new Error(R.notBotWorkspace);
     return false;
+  }
+  // Fail closed before any disk writes or Codex trust edits if Antigravity needs a started proxy.
+  if (antigravity && servers.length > 0) {
+    if (!antigravityProxy || typeof antigravityProxy.setWorkspaceServers !== "function" || !antigravityProxy.port) {
+      throw new Error("Antigravity MCP proxy is required and must be started");
+    }
   }
   if (codexTrust !== undefined && servers.length) commitCodexTrust(codexTrust);
   else if (codexHome && servers.length) trustCodexWorkspace(codexHome, workspace);
@@ -784,31 +777,33 @@ export function writeBotConnectors(workspace, prepared, servers, { codexHome, co
     writePrivate(path.join(workspace, CURSOR_FILE), text);
     writePrivate(path.join(workspace, CURSOR_MARKER), `${sha256(text)}\n`);
   }
-  // Only an Antigravity turn writes the plugin and turn-servers map (other labs may scan `.agents/`).
-  // When switching away from Antigravity to another lab, wipe any existing turn-servers token file.
+  // Only an Antigravity turn writes the plugin pointing at Tentacles' in-process
+  // loopback proxy (upstream Jack tokens stay in RAM only, never on disk).
+  // Switching away from Antigravity revokes this workspace's RAM proxy routes immediately.
   if (antigravity) {
-    const turnServers = Object.fromEntries(servers.map(server => [server.name, {
-      url: server.url,
-      ...(server.headers.length ? { headers: Object.fromEntries(server.headers.map(header => [header.name, header.value])) } : {}),
-    }]));
-    writePrivate(path.join(workspace, ANTIGRAVITY_TURN_FILE), `${JSON.stringify({ servers: turnServers }, null, 2)}\n`);
-    const plugin = `${JSON.stringify({ name: "jack-tools", description: "Agent Jack tools for this Bot, rewritten by Tentacles before every turn" }, null, 2)}\n`;
-    const config = `${JSON.stringify({ mcpServers: Object.fromEntries(servers.map(server => [server.name, antigravityStdioEntry(workspace, server.name)])) }, null, 2)}\n`;
     for (const directory of ANTIGRAVITY_DIRS) realDirectory(path.join(workspace, directory));
+    let entries = {};
+    if (servers.length > 0) {
+      entries = antigravityProxy.setWorkspaceServers(workspace, servers);
+    } else {
+      antigravityProxy?.clearWorkspace?.(workspace);
+    }
+    const plugin = `${JSON.stringify({ name: "jack-tools", description: "Agent Jack tools for this Bot, rewritten by Tentacles before every turn" }, null, 2)}\n`;
+    const config = `${JSON.stringify({ mcpServers: entries }, null, 2)}\n`;
     writePrivate(path.join(workspace, ANTIGRAVITY_PLUGIN), plugin);
     writePrivate(path.join(workspace, ANTIGRAVITY_FILE), config);
     writePrivate(path.join(workspace, ANTIGRAVITY_MARKER), `${sha256(plugin + config)}\n`);
   } else {
-    const turnFile = path.join(workspace, ANTIGRAVITY_TURN_FILE);
-    try {
-      const info = lstatSync(turnFile);
-      if (!info.isSymbolicLink() && info.isFile()) {
-        writePrivate(turnFile, `${JSON.stringify({ servers: {} }, null, 2)}\n`);
-      }
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-    }
+    antigravityProxy?.clearWorkspace?.(workspace);
   }
+  // Clean upgrade: best-effort remove any legacy `.jack-antigravity-servers.json` regular file.
+  const legacyTurnFile = path.join(workspace, LEGACY_ANTIGRAVITY_TURN_FILE);
+  try {
+    const info = lstatSync(legacyTurnFile);
+    if (!info.isSymbolicLink() && info.isFile()) {
+      unlinkSync(legacyTurnFile);
+    }
+  } catch { /* ignore ENOENT or transient errors */ }
   realDirectory(path.join(workspace, CODEX_DIR));
   writePrivate(path.join(workspace, CODEX_FILE), `# Written by Tentacles before every Jack Bot turn.\n${codexToml(servers)}`);
   // Unproven: only an admitted OpenCode turn reads or writes opencode.json.

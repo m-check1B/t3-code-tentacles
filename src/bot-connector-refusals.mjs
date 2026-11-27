@@ -28,7 +28,6 @@ export const BOT_CONNECTOR_REFUSALS = Object.freeze({
   cursorGitRepo: "This Bot workspace is inside a git repository, where Cursor reads the repository's own .cursor/mcp.json; run this Bot on Server to use Jack tools",
   antigravityGitRepo: "This Bot workspace is inside a git repository, where Antigravity reads the repository's own .agents plugins; run this Bot on Server to use Jack tools",
   antigravityFileNotOurs: "This Bot workspace has a .agents/plugins/jack-tools plugin that Tentacles did not write; remove that folder, then send again",
-  antigravityTurnFileLink: "Bot connector turn servers file must not be a symlink",
   cursorFileNotOurs: "This Bot workspace has a .cursor/mcp.json that Tentacles did not write; remove it, then send again",
   codexChanged: "Codex home config changed while trusting this Bot workspace; try again",
 });
