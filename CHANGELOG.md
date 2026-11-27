@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.5.0-jack.24] - 2026-11-27
+
+### Fixed
+
+- T3 Code project observability (`bridge.mjs`): prefer the human-readable Bot thread title (e.g. `Jack · Code Builder`) over opaque UUID / 32-hex scratch-folder basenames when originating or continuing Agent Jack Local Bot sessions in T3 Code, and best-effort upgrade legacy opaque-titled Bot projects via `project.meta.update` without ever overwriting user-chosen custom titles or normal repository folder names (PR #44).
+
 ## [0.5.0-jack.23] - 2026-11-26
 
 ### Fixed
