@@ -2112,7 +2112,19 @@ test("B3 P1-1/P2-4/P2-5: T3 V2 providerThread liveness, fail-closed missing sess
           transientFailures -= 1;
           throw new Error("transient network hiccup");
         }
-        return { threadId, messageId, turnCommandId, turnId: "run-w", assistantMessageId: "a-w", instanceId: "antigravity", model: antigravity.model, effort: null, state: "succeeded", outputText: "READY" };
+        return {
+          threadId,
+          messageId,
+          turnCommandId,
+          turnId: "run-w",
+          assistantMessageId: "a-w",
+          instanceId: "antigravity",
+          model: antigravity.model,
+          effort: null,
+          state: "succeeded",
+          outputText: "READY",
+          ...(turnCommandId === "c-w" ? { freshProviderContext: true, nativeContextGeneration: turnCommandId } : {}),
+        };
       },
       request: async () => ({ talkTurnResult: "v1", talkFreshProviderContext: "v1", talkFreshProviderContextProviders: ["antigravity"] }),
     },
@@ -2285,4 +2297,364 @@ test("B3 P3-1/P3-4: writeBotConnectors fail-closed proxy guard leaves zero parti
   );
   assert.deepEqual(live.adapter.antigravityProxy.entryFor(live.workspace, "jack"), originalEntry);
   assert.equal(live.adapter.antigravityProxy.entryFor(live.workspace, "linear"), null);
+});
+
+test("Antigravity freshProviderContext warm-up receipt propagates on continue & originate, fails closed, and stays bounded", async (t) => {
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "bot-connectors-fresh-warmup-")));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  fs.chmodSync(home, 0o700);
+  const workspace = path.join(home, ".jack-local-scratch", "seats", seatDigest(), "agents", scope.agentId);
+
+  const makeHarness = ({ caps = { talkTurnResult: "v1", talkFreshProviderContext: "v1", talkFreshProviderContextProviders: ["antigravity"] }, warmupResultOverride = null } = {}) => {
+    let currentCaps = caps;
+    let seq = 0;
+    const dispatched = [];
+    const messagesByThread = new Map();
+    const rawTurnResults = new Map();
+    const adapter = new LoopbackRuntimeAdapter({
+      client: {
+        getSettings: async () => ({}),
+        thread: async (id) => ({
+          thread: {
+            id,
+            projectId: "proj-1",
+            worktreePath: workspace,
+            modelSelection: { instanceId: "antigravity", model: antigravity.model },
+            session: { status: "ready", providerInstanceId: "antigravity", activeTurnId: null },
+            messages: messagesByThread.get(id) ?? [],
+          },
+        }),
+        turnResult: async ({ threadId, messageId, turnCommandId }) => {
+          if (rawTurnResults.has(turnCommandId)) return rawTurnResults.get(turnCommandId);
+          const base = {
+            threadId,
+            messageId,
+            turnCommandId,
+            turnId: `run-${turnCommandId}`,
+            assistantMessageId: `asst-${turnCommandId}`,
+            instanceId: "antigravity",
+            model: antigravity.model,
+            effort: null,
+            state: "succeeded",
+            outputText: "READY",
+          };
+          if (warmupResultOverride) return warmupResultOverride(base);
+          return base;
+        },
+        request: async () => currentCaps,
+      },
+      workspaceHome: home,
+      antigravityWarmupTimeoutMs: 2_000,
+      antigravityWarmupPollMs: 10,
+      prepareTalkWorkspaceImpl: value => ensureLocalTalkWorkspace(value, { home }),
+      originateImpl: async (_client, params) => {
+        seq += 1;
+        const threadId = `thread-orig-${seq}`;
+        const turn = {
+          threadId,
+          projectId: "proj-1",
+          messageId: `orig-msg-${seq}`,
+          turnCommandId: `orig-cmd-${seq}`,
+          projectCreated: true,
+        };
+        if (params.freshProviderContext === true && !warmupResultOverride) {
+          rawTurnResults.set(turn.turnCommandId, {
+            threadId,
+            messageId: turn.messageId,
+            turnCommandId: turn.turnCommandId,
+            turnId: `run-warm-${seq}`,
+            assistantMessageId: `asst-warm-${seq}`,
+            instanceId: "antigravity",
+            model: antigravity.model,
+            effort: null,
+            state: "succeeded",
+            outputText: "READY",
+            freshProviderContext: true,
+            nativeContextGeneration: turn.turnCommandId,
+          });
+        }
+        dispatched.push({ op: "originate", message: params.message, freshProviderContext: params.freshProviderContext, turn });
+        return turn;
+      },
+      continueImpl: async (_client, params, { prepareTalkWorkspace } = {}) => {
+        const list = messagesByThread.get(params.threadId) ?? [];
+        const existing = params.messageId && list.some((m) => m.id === params.messageId);
+        if (!existing && prepareTalkWorkspace) {
+          await prepareTalkWorkspace(workspace, { restartIdleSession: async () => {} });
+        }
+        seq += 1;
+        const turn = {
+          threadId: params.threadId,
+          projectId: "proj-1",
+          messageId: params.messageId ?? `cont-msg-${seq}`,
+          turnCommandId: params.turnCommandId ?? `cont-cmd-${seq}`,
+        };
+        if (!existing) {
+          list.push({ id: turn.messageId, role: "user", text: params.message });
+          messagesByThread.set(params.threadId, list);
+          if (params.freshProviderContext === true && !warmupResultOverride) {
+            rawTurnResults.set(turn.turnCommandId, {
+              threadId: params.threadId,
+              messageId: turn.messageId,
+              turnCommandId: turn.turnCommandId,
+              turnId: `run-warm-${seq}`,
+              assistantMessageId: `asst-warm-${seq}`,
+              instanceId: "antigravity",
+              model: antigravity.model,
+              effort: null,
+              state: "succeeded",
+              outputText: "READY",
+              freshProviderContext: true,
+              nativeContextGeneration: turn.turnCommandId,
+            });
+          }
+          dispatched.push({ op: "continue", message: params.message, freshProviderContext: params.freshProviderContext, turn });
+        }
+        return turn;
+      },
+    });
+    adapter.jackOrigin = ORIGIN;
+    t.after(() => adapter.close());
+    return { adapter, dispatched, rawTurnResults, setCaps: (next) => { currentCaps = next; } };
+  };
+
+  // 1. continue() with freshProviderContext: true on cold Antigravity + Jack MCP tools:
+  //    warm-up verifies T3 fresh receipt -> real turn runs without freshProviderContext ->
+  //    turnResult omits fresh fields while pending, and propagates them once terminal (succeeded & failed with turnId),
+  //    including across idempotent replay.
+  {
+    const { adapter, dispatched, rawTurnResults } = makeHarness();
+    const res = await adapter.continue({
+      threadId: "t-cont-fresh",
+      messageId: "m-real-1",
+      turnCommandId: "c-real-1",
+      message: "List my bots",
+      freshProviderContext: true,
+      ...antigravity,
+      ...connectors([jack]),
+    });
+    assert.equal(dispatched.length, 2);
+    assert.equal(dispatched[0].message, ANTIGRAVITY_WARMUP_PROMPT);
+    assert.equal(dispatched[0].freshProviderContext, true);
+    assert.equal(dispatched[1].message, "List my bots");
+    assert.equal(dispatched[1].freshProviderContext, undefined);
+    assert.equal(res.messageId, "m-real-1");
+    assert.equal(res.turnCommandId, "c-real-1");
+
+    const tuple = { threadId: "t-cont-fresh", messageId: "m-real-1", turnCommandId: "c-real-1" };
+    // Pending real turn MUST NOT emit fresh fields.
+    rawTurnResults.set("c-real-1", {
+      ...tuple, turnId: null, assistantMessageId: null, instanceId: "antigravity", model: antigravity.model, effort: null, state: "pending", outputText: null,
+    });
+    const pendingRes = await adapter.turnResult(tuple);
+    assert.equal(Object.hasOwn(pendingRes, "freshProviderContext"), false);
+    assert.equal(Object.hasOwn(pendingRes, "nativeContextGeneration"), false);
+
+    // Terminal succeeded real turn (raw T3 omits fresh fields) propagates verified fresh receipt!
+    rawTurnResults.set("c-real-1", {
+      ...tuple, turnId: "run-real-1", assistantMessageId: "asst-real-1", instanceId: "antigravity", model: antigravity.model, effort: null, state: "succeeded", outputText: "BOTS_LIST_OK count=7",
+    });
+    const succeededRes = await adapter.turnResult(tuple);
+    assert.equal(succeededRes.freshProviderContext, true);
+    assert.equal(succeededRes.nativeContextGeneration, "c-real-1");
+    assert.equal(succeededRes.outputText, "BOTS_LIST_OK count=7");
+
+    // Terminal failed real turn WITH turnId also propagates verified fresh receipt.
+    rawTurnResults.set("c-real-1", {
+      ...tuple, turnId: "run-real-1", assistantMessageId: null, instanceId: "antigravity", model: antigravity.model, effort: null, state: "failed", outputText: null,
+    });
+    const failedWithTurnRes = await adapter.turnResult(tuple);
+    assert.equal(failedWithTurnRes.freshProviderContext, true);
+    assert.equal(failedWithTurnRes.nativeContextGeneration, "c-real-1");
+
+    // Idempotent replay of the same continue() does not re-run warm-up and turnResult still finds the receipt.
+    const replay = await adapter.continue({
+      threadId: "t-cont-fresh",
+      messageId: "m-real-1",
+      turnCommandId: "c-real-1",
+      message: "List my bots",
+      freshProviderContext: true,
+      ...antigravity,
+      ...connectors([jack]),
+    });
+    assert.equal(dispatched.length, 2);
+    assert.equal(replay.turnCommandId, "c-real-1");
+    const replayTurnRes = await adapter.turnResult(tuple);
+    assert.equal(replayTurnRes.freshProviderContext, true);
+    assert.equal(replayTurnRes.nativeContextGeneration, "c-real-1");
+  }
+
+  // 2. originate() with freshProviderContext: true (both WITH and WITHOUT idempotencyKey).
+  {
+    const { adapter, dispatched, rawTurnResults } = makeHarness();
+    for (const extra of [{ idempotencyKey: "orig-idem-fresh-1" }, {}]) {
+      const before = dispatched.length;
+      const origRes = await adapter.originate({
+        workspace,
+        title: "TOP G · Antigravity",
+        message: "Originate fresh turn",
+        freshProviderContext: true,
+        ...extra,
+        ...antigravity,
+        ...connectors([jack]),
+      });
+      assert.equal(dispatched.length, before + 2);
+      assert.equal(dispatched[before].op, "originate");
+      assert.equal(dispatched[before].freshProviderContext, true);
+      assert.equal(dispatched[before + 1].op, "continue");
+      assert.equal(dispatched[before + 1].freshProviderContext, undefined);
+
+      rawTurnResults.set(origRes.turnCommandId, {
+        threadId: origRes.threadId,
+        messageId: origRes.messageId,
+        turnCommandId: origRes.turnCommandId,
+        turnId: `run-${origRes.turnCommandId}`,
+        assistantMessageId: `asst-${origRes.turnCommandId}`,
+        instanceId: "antigravity",
+        model: antigravity.model,
+        effort: null,
+        state: "succeeded",
+        outputText: "OK",
+      });
+      const turnRes = await adapter.turnResult({
+        threadId: origRes.threadId,
+        messageId: origRes.messageId,
+        turnCommandId: origRes.turnCommandId,
+      });
+      assert.equal(turnRes.freshProviderContext, true);
+      assert.equal(turnRes.nativeContextGeneration, origRes.turnCommandId);
+    }
+  }
+
+  // 3. Fail-closed: if warm-up turn-result lacks freshProviderContext, mismatches nativeContextGeneration,
+  //    has wrong instanceId, failed state, or missing turnId -> warm-up throws, real turn NEVER dispatches,
+  //    and freshAntigravityWarmupReceipts stays empty.
+  const badWarmupCases = [
+    { label: "missing fresh fields", patch: (base) => base },
+    { label: "mismatched nativeContextGeneration", patch: (base) => ({ ...base, freshProviderContext: true, nativeContextGeneration: "wrong-gen" }) },
+    { label: "wrong instanceId", patch: (base) => ({ ...base, freshProviderContext: true, nativeContextGeneration: base.turnCommandId, instanceId: "codex" }) },
+    { label: "failed warmup state", patch: (base) => ({ ...base, state: "failed", outputText: null, assistantMessageId: null, freshProviderContext: true, nativeContextGeneration: base.turnCommandId }) },
+    { label: "missing turnId", patch: (base) => ({ ...base, turnId: null, freshProviderContext: true, nativeContextGeneration: base.turnCommandId }) },
+  ];
+  for (const { label, patch } of badWarmupCases) {
+    const hCont = makeHarness({ warmupResultOverride: patch });
+    await assert.rejects(
+      hCont.adapter.continue({
+        threadId: "t-bad-cont",
+        messageId: "m-bad-1",
+        turnCommandId: "c-bad-1",
+        message: "Should never dispatch",
+        freshProviderContext: true,
+        ...antigravity,
+        ...connectors([jack]),
+      }),
+      /Antigravity warm-up did not establish fresh provider context/,
+      `continue fail-closed: ${label}`,
+    );
+    assert.equal(hCont.dispatched.length, 1, `continue real turn must not dispatch (${label})`);
+    assert.equal(hCont.dispatched[0].message, ANTIGRAVITY_WARMUP_PROMPT);
+    assert.equal(hCont.adapter.freshAntigravityWarmupReceipts.size, 0);
+    assert.equal(hCont.adapter.warmAntigravityThreads.has("t-bad-cont"), false);
+
+    const hOrig = makeHarness({ warmupResultOverride: patch });
+    await assert.rejects(
+      hOrig.adapter.originate({
+        workspace,
+        title: "Bad Warmup",
+        message: "Should never dispatch",
+        freshProviderContext: true,
+        ...antigravity,
+        ...connectors([jack]),
+      }),
+      /Antigravity warm-up did not establish fresh provider context/,
+      `originate fail-closed: ${label}`,
+    );
+    assert.equal(hOrig.dispatched.length, 1, `originate real turn must not dispatch (${label})`);
+    assert.equal(hOrig.dispatched[0].message, ANTIGRAVITY_WARMUP_PROMPT);
+    assert.equal(hOrig.adapter.freshAntigravityWarmupReceipts.size, 0);
+  }
+
+  // 4. Provider mismatch, missing turnId, pending state, and capability withdrawal guards in turnResult().
+  {
+    const { adapter, rawTurnResults, setCaps } = makeHarness();
+    const res = await adapter.continue({
+      threadId: "t-guard",
+      messageId: "m-guard",
+      turnCommandId: "c-guard",
+      message: "Guard test",
+      freshProviderContext: true,
+      ...antigravity,
+      ...connectors([jack]),
+    });
+    const tuple = { threadId: "t-guard", messageId: res.messageId, turnCommandId: res.turnCommandId };
+
+    // Wrong provider instanceId -> MUST NOT attach fresh fields.
+    rawTurnResults.set("c-guard", {
+      ...tuple, turnId: "run-g", assistantMessageId: "asst-g", instanceId: "codex", model: "gpt-5.6-sol", effort: null, state: "succeeded", outputText: "ok",
+    });
+    const wrongProvider = await adapter.turnResult(tuple);
+    assert.equal(Object.hasOwn(wrongProvider, "freshProviderContext"), false);
+    assert.equal(Object.hasOwn(wrongProvider, "nativeContextGeneration"), false);
+
+    // Failed without turnId -> MUST NOT attach fresh fields.
+    rawTurnResults.set("c-guard", {
+      ...tuple, turnId: null, assistantMessageId: null, instanceId: "antigravity", model: antigravity.model, effort: null, state: "failed", outputText: null,
+    });
+    const noTurnId = await adapter.turnResult(tuple);
+    assert.equal(Object.hasOwn(noTurnId, "freshProviderContext"), false);
+    assert.equal(Object.hasOwn(noTurnId, "nativeContextGeneration"), false);
+
+    // Pending even with turnId -> MUST NOT attach fresh fields.
+    rawTurnResults.set("c-guard", {
+      ...tuple, turnId: "run-g", assistantMessageId: null, instanceId: "antigravity", model: antigravity.model, effort: null, state: "pending", outputText: null,
+    });
+    const pendingWithTurn = await adapter.turnResult(tuple);
+    assert.equal(Object.hasOwn(pendingWithTurn, "freshProviderContext"), false);
+    assert.equal(Object.hasOwn(pendingWithTurn, "nativeContextGeneration"), false);
+
+    // Capability withdrawn between warm-up and turnResult -> fails closed!
+    rawTurnResults.set("c-guard", {
+      ...tuple, turnId: "run-g", assistantMessageId: "asst-g", instanceId: "antigravity", model: antigravity.model, effort: null, state: "succeeded", outputText: "ok",
+    });
+    setCaps({ talkTurnResult: "v1", talkFreshProviderContext: 0 });
+    await assert.rejects(adapter.turnResult(tuple), /unavailable/);
+  }
+
+  // 5. Bounded FIFO map: inserting > 256 receipts evicts oldest entries cleanly without unbounded growth.
+  {
+    const { adapter } = makeHarness();
+    for (let i = 0; i < 270; i += 1) {
+      adapter.recordFreshAntigravityWarmupReceipt("t-cap", `m-${i}`, `c-${i}`, {
+        warmupTurnCommandId: `w-${i}`,
+        warmupTurnId: `run-${i}`,
+        instanceId: "antigravity",
+      });
+    }
+    assert.equal(adapter.freshAntigravityWarmupReceipts.size, 256);
+    assert.equal(adapter.freshAntigravityWarmupReceipts.has("t-cap\0m-0\0c-0"), false);
+    assert.equal(adapter.freshAntigravityWarmupReceipts.has("t-cap\0m-13\0c-13"), false);
+    assert.equal(adapter.freshAntigravityWarmupReceipts.has("t-cap\0m-14\0c-14"), true);
+    assert.equal(adapter.freshAntigravityWarmupReceipts.has("t-cap\0m-269\0c-269"), true);
+  }
+
+  // 6. Normal Antigravity turn WITHOUT freshProviderContext: true does NOT attach fresh fields.
+  {
+    const { adapter, rawTurnResults } = makeHarness();
+    const normal = await adapter.continue({
+      threadId: "t-normal",
+      messageId: "m-normal",
+      turnCommandId: "c-normal",
+      message: "Regular turn",
+      ...antigravity,
+      ...connectors([jack]),
+    });
+    assert.equal(adapter.freshAntigravityWarmupReceipts.size, 0);
+    const tuple = { threadId: "t-normal", messageId: normal.messageId, turnCommandId: normal.turnCommandId };
+    rawTurnResults.set("c-normal", {
+      ...tuple, turnId: "run-normal", assistantMessageId: "asst-normal", instanceId: "antigravity", model: antigravity.model, effort: null, state: "succeeded", outputText: "Normal reply",
+    });
+    const turnRes = await adapter.turnResult(tuple);
+    assert.equal(Object.hasOwn(turnRes, "freshProviderContext"), false);
+    assert.equal(Object.hasOwn(turnRes, "nativeContextGeneration"), false);
+  }
 });
