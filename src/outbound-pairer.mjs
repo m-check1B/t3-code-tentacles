@@ -42,6 +42,16 @@ export const REMOTE_RPC_METHODS = Object.freeze(["seats", "originate", "continue
 const offerSecrets = new WeakMap();
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const MAX_TIMER_MS = 2_147_483_647;
+const MAX_FRESH_WARMUP_RECEIPTS = 256;
+
+function freshWarmupReceiptKey(threadId, messageId, turnCommandId) {
+  if (typeof threadId !== "string" || !threadId
+    || typeof messageId !== "string" || !messageId
+    || typeof turnCommandId !== "string" || !turnCommandId) {
+    return null;
+  }
+  return `${threadId}\0${messageId}\0${turnCommandId}`;
+}
 const ORIGINATE_PARAM_KEYS = new Set([
   "workspace", "title", "message", "instanceId", "model", "options", "budget", "runtimeMode", "idempotencyKey", "freshProviderContext", "fixedTitle", ...BOT_CONNECTOR_PARAM_KEYS,
 ]);
@@ -351,6 +361,9 @@ export class LoopbackRuntimeAdapter {
     this.warmAntigravityThreads = new Set();
     // Active warm-up AbortControllers per threadId so user Stop cancels warm-up cleanly.
     this.activeWarmups = new Map();
+    // Bounded FIFO map of verified T3 fresh-context receipts from synthetic Antigravity
+    // warm-up turns, keyed by `${threadId}\0${messageId}\0${turnCommandId}` of the real turn.
+    this.freshAntigravityWarmupReceipts = new Map();
     this.withThreadLock = createThreadLock();
     this.interrupter = new TurnInterrupter({
       readTurnResult: (tuple) => this.turnResult(tuple),
@@ -454,13 +467,34 @@ export class LoopbackRuntimeAdapter {
     return true;
   }
 
-  async waitForAntigravityWarmup(turn, { signal } = {}) {
-    if (!isRecord(turn) || typeof turn.threadId !== "string" || !turn.threadId) return false;
+  recordFreshAntigravityWarmupReceipt(threadId, messageId, turnCommandId, proof) {
+    if (!isRecord(proof) || proof.instanceId !== "antigravity") return;
+    const key = freshWarmupReceiptKey(threadId, messageId, turnCommandId);
+    if (!key) return;
+    if (this.freshAntigravityWarmupReceipts.has(key)) {
+      this.freshAntigravityWarmupReceipts.delete(key);
+    }
+    this.freshAntigravityWarmupReceipts.set(key, proof);
+    while (this.freshAntigravityWarmupReceipts.size > MAX_FRESH_WARMUP_RECEIPTS) {
+      const oldestKey = this.freshAntigravityWarmupReceipts.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.freshAntigravityWarmupReceipts.delete(oldestKey);
+    }
+  }
+
+  async waitForAntigravityWarmup(turn, { signal, requireFreshReceipt = false } = {}) {
+    if (!isRecord(turn) || typeof turn.threadId !== "string" || !turn.threadId) {
+      if (requireFreshReceipt) throw new Error("Antigravity warm-up did not establish fresh provider context");
+      return { warmed: false, freshProof: null };
+    }
     const hasTuple = typeof turn.messageId === "string" && turn.messageId !== ""
       && typeof turn.turnCommandId === "string" && turn.turnCommandId !== "";
     const canTurnResult = hasTuple && (typeof this.client.turnResult === "function" || typeof this.client.request === "function");
     const canReadThread = typeof this.client.thread === "function";
-    if (!canTurnResult && !canReadThread) return true;
+    if (requireFreshReceipt && !canTurnResult) {
+      throw new Error("Antigravity warm-up did not establish fresh provider context");
+    }
+    if (!canTurnResult && !canReadThread) return { warmed: true, freshProof: null };
 
     const deadline = Date.now() + this.antigravityWarmupTimeoutMs;
     const sleep = async (ms) => {
@@ -514,7 +548,28 @@ export class LoopbackRuntimeAdapter {
           const idle = await waitUntilIdle();
           if (signal?.aborted) break;
           if (!idle) break; // Still busy at deadline: interrupt & fail rather than dispatching onto busy session.
-          return result.state === "succeeded";
+          if (requireFreshReceipt) {
+            const verifiedFresh = result.state === "succeeded"
+              && result.threadId === turn.threadId
+              && result.messageId === turn.messageId
+              && result.turnCommandId === turn.turnCommandId
+              && typeof result.turnId === "string" && result.turnId.length > 0 && SAFE_ID.test(result.turnId)
+              && result.freshProviderContext === true
+              && result.nativeContextGeneration === turn.turnCommandId
+              && result.instanceId === "antigravity";
+            if (!verifiedFresh) {
+              throw new Error("Antigravity warm-up did not establish fresh provider context");
+            }
+            return {
+              warmed: true,
+              freshProof: Object.freeze({
+                warmupTurnCommandId: turn.turnCommandId,
+                warmupTurnId: result.turnId,
+                instanceId: "antigravity",
+              }),
+            };
+          }
+          return { warmed: result.state === "succeeded", freshProof: null };
         }
       } else if (canReadThread) {
         let response = null;
@@ -522,12 +577,12 @@ export class LoopbackRuntimeAdapter {
         if (response !== null) {
           const thread = response?.thread ?? response;
           if (!Array.isArray(thread?.messages)) {
-            if (sessionIsIdle(thread)) return true;
+            if (sessionIsIdle(thread)) return { warmed: true, freshProof: null };
           } else {
             const index = hasTuple ? thread.messages.findIndex((entry) => entry?.id === turn.messageId) : -1;
             const reply = index >= 0 ? thread.messages.slice(index + 1).find((entry) => entry?.role === "assistant") : undefined;
-            if (reply && sessionIsIdle(thread)) return true;
-            if (thread?.session?.status === "error" && sessionIsIdle(thread)) return false;
+            if (reply && sessionIsIdle(thread)) return { warmed: true, freshProof: null };
+            if (thread?.session?.status === "error" && sessionIsIdle(thread)) return { warmed: false, freshProof: null };
           }
         }
       }
@@ -540,6 +595,7 @@ export class LoopbackRuntimeAdapter {
   }
 
   async originateWarmAntigravity(admitted) {
+    const needsFresh = admitted.freshProviderContext === true;
     const warmupKey = typeof admitted.idempotencyKey === "string"
       ? (admitted.idempotencyKey.length <= 249
         ? `${admitted.idempotencyKey}:warmup`
@@ -551,13 +607,18 @@ export class LoopbackRuntimeAdapter {
       ...(warmupKey !== undefined ? { idempotencyKey: warmupKey } : {}),
     });
     if (!isRecord(warmup) || typeof warmup.threadId !== "string" || !warmup.threadId) {
+      if (needsFresh) throw new Error("Antigravity warm-up did not establish fresh provider context");
       return warmup;
     }
     const controller = new AbortController();
     this.activeWarmups.set(warmup.threadId, controller);
     let warmed = false;
+    let freshProof = null;
     try {
-      warmed = await this.waitForAntigravityWarmup(warmup, { signal: controller.signal });
+      ({ warmed, freshProof } = await this.waitForAntigravityWarmup(warmup, {
+        signal: controller.signal,
+        requireFreshReceipt: needsFresh,
+      }));
     } finally {
       if (this.activeWarmups.get(warmup.threadId) === controller) {
         this.activeWarmups.delete(warmup.threadId);
@@ -570,6 +631,14 @@ export class LoopbackRuntimeAdapter {
         messageId: deterministicUuid(`antigravity-real-msg:${admitted.idempotencyKey}`),
       }
       : {};
+    if (needsFresh && freshProof && deterministicIds.messageId && deterministicIds.turnCommandId) {
+      this.recordFreshAntigravityWarmupReceipt(
+        warmup.threadId,
+        deterministicIds.messageId,
+        deterministicIds.turnCommandId,
+        freshProof,
+      );
+    }
     // Omit freshProviderContext on the real turn: the warm-up turn already established
     // the fresh provider context, and passing it again would discard the warmed session.
     const realParams = {
@@ -586,6 +655,14 @@ export class LoopbackRuntimeAdapter {
       prepareTalkWorkspace: async () => false,
       prefetchedWorkspace: admitted.workspace,
     });
+    if (needsFresh && freshProof && isRecord(realResult)) {
+      this.recordFreshAntigravityWarmupReceipt(
+        warmup.threadId,
+        realResult.messageId,
+        realResult.turnCommandId,
+        freshProof,
+      );
+    }
     return {
       ...realResult,
       ...(warmup.projectCreated !== undefined ? { projectCreated: warmup.projectCreated } : {}),
@@ -701,7 +778,8 @@ export class LoopbackRuntimeAdapter {
       const continueInput = moveFreshToWarmup
         ? (({ freshProviderContext: _ignored, ...rest }) => rest)(input)
         : input;
-      return this.continueImpl(this.client, continueInput, {
+      let warmupFreshProof = null;
+      const res = await this.continueImpl(this.client, continueInput, {
         prepareTalkWorkspace: async (workspace, { restartIdleSession } = {}) => {
           let restarted = false;
           const trackedRestart = restartIdleSession
@@ -724,6 +802,7 @@ export class LoopbackRuntimeAdapter {
             return written;
           }
           if (moveFreshToWarmup || this.isAntigravityCold(input.threadId, scoped.thread, { restarted })) {
+            this.warmAntigravityThreads.delete(input.threadId);
             const warmupParams = {
               threadId: input.threadId,
               message: ANTIGRAVITY_WARMUP_PROMPT,
@@ -744,22 +823,39 @@ export class LoopbackRuntimeAdapter {
                 prepareTalkWorkspace: async () => false,
                 prefetchedWorkspace: workspace,
               });
-              warmed = await this.waitForAntigravityWarmup(
+              ({ warmed, freshProof: warmupFreshProof } = await this.waitForAntigravityWarmup(
                 { threadId: input.threadId, ...(isRecord(warmupTurn) ? warmupTurn : {}) },
-                { signal: controller.signal },
-              );
+                { signal: controller.signal, requireFreshReceipt: moveFreshToWarmup },
+              ));
             } finally {
               if (this.activeWarmups.get(input.threadId) === controller) {
                 this.activeWarmups.delete(input.threadId);
               }
             }
             if (warmed) this.warmAntigravityThreads.add(input.threadId);
+            if (moveFreshToWarmup && warmupFreshProof && input.messageId && input.turnCommandId) {
+              this.recordFreshAntigravityWarmupReceipt(
+                input.threadId,
+                input.messageId,
+                input.turnCommandId,
+                warmupFreshProof,
+              );
+            }
           }
           return written;
         },
         prefetchedThread: scoped.thread,
         prefetchedWorkspace: scoped.workspace,
       });
+      if (moveFreshToWarmup && warmupFreshProof && isRecord(res)) {
+        this.recordFreshAntigravityWarmupReceipt(
+          input.threadId,
+          res.messageId,
+          res.turnCommandId,
+          warmupFreshProof,
+        );
+      }
+      return res;
     };
     const dispatch = () => input.freshProviderContext === true
       ? requireFreshProviderContext(this.client, input).then(guarded)
@@ -862,11 +958,22 @@ export class LoopbackRuntimeAdapter {
       || (typeof result.outputText === "string" && Buffer.byteLength(result.outputText, "utf8") > 32 * 1024)) {
       throw new Error("Invalid correlated turn result");
     }
-    const fresh = Object.hasOwn(result, "freshProviderContext") || Object.hasOwn(result, "nativeContextGeneration");
-    if (fresh && (result.state === "pending" || !result.turnId || result.freshProviderContext !== true || result.nativeContextGeneration !== input.turnCommandId)) {
+    const nativeFresh = Object.hasOwn(result, "freshProviderContext") || Object.hasOwn(result, "nativeContextGeneration");
+    if (nativeFresh && (result.state === "pending" || !result.turnId || result.freshProviderContext !== true || result.nativeContextGeneration !== input.turnCommandId)) {
       throw new Error("Invalid applied fresh provider context receipt");
     }
-    if (fresh) await requireFreshProviderContext(this.client, { freshProviderContext: true, instanceId: result.instanceId });
+    if (nativeFresh) await requireFreshProviderContext(this.client, { freshProviderContext: true, instanceId: result.instanceId });
+    let warmupFresh = null;
+    if (!nativeFresh && result.state !== "pending"
+      && typeof result.turnId === "string" && result.turnId.length > 0
+      && result.instanceId === "antigravity") {
+      const receiptKey = freshWarmupReceiptKey(input.threadId, input.messageId, input.turnCommandId);
+      const stored = receiptKey ? this.freshAntigravityWarmupReceipts.get(receiptKey) : null;
+      if (stored && stored.instanceId === "antigravity") {
+        await requireFreshProviderContext(this.client, { freshProviderContext: true, instanceId: result.instanceId });
+        warmupFresh = { freshProviderContext: true, nativeContextGeneration: input.turnCommandId };
+      }
+    }
     // Closed projection excludes all upstream additions and internal diagnostics.
     // KRA-8958: failed/cancelled results add a typed code and static message;
     // the result error is pattern-matched only. Session detail is separately redacted.
@@ -876,7 +983,12 @@ export class LoopbackRuntimeAdapter {
     const prefetchedFailed = typeof scopedThread?.session?.lastError === "string" && scopedThread.session.lastError.trim().length > 0
       ? scopedThread : null;
     const failureDetail = result.state === "failed" ? redactFailureLine(await this.sessionFailureDetail(input.threadId, prefetchedFailed)) : null;
-    return { ...Object.fromEntries([...keys, "turnId", "assistantMessageId", "instanceId", "model", "effort", "state", "outputText"].map((key) => [key, result[key]])), ...(fresh ? { freshProviderContext: true, nativeContextGeneration: result.nativeContextGeneration } : {}), ...(typed ?? {}), ...(failureDetail ? { failureDetail } : {}) };
+    return {
+      ...Object.fromEntries([...keys, "turnId", "assistantMessageId", "instanceId", "model", "effort", "state", "outputText"].map((key) => [key, result[key]])),
+      ...(nativeFresh ? { freshProviderContext: true, nativeContextGeneration: result.nativeContextGeneration } : (warmupFresh ?? {})),
+      ...(typed ?? {}),
+      ...(failureDetail ? { failureDetail } : {}),
+    };
   }
   async sessionFailureDetail(threadId, prefetched = null) {
     if (prefetched && typeof prefetched === "object" && prefetched.id === threadId

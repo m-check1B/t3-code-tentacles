@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.5.0-jack.27] - 2026-11-28
+
+### Fixed
+
+- KRA-10869: Verify T3's `freshProviderContext` receipt on cold Antigravity warm-up turns (`waitForAntigravityWarmup`, fail-closed) and propagate the verified fresh-context receipt (`freshProviderContext: true`, `nativeContextGeneration: input.turnCommandId`) in `turnResult()` for the paired real user turn on both `originate()` and `continue()` (fixing `"Paired Talk has no matching fresh native context receipt"` on real production Local · Antigravity turns with Jack MCP tools).
+
 ## [0.5.0-jack.26] - 2026-11-27
 
 ### Changed
